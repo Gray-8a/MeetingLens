@@ -66,6 +66,10 @@ transcripts/local/
 *.flac
 *.ogg
 *.webm
+*.mp4
+*.mov
+*.mkv
+*.avi
 
 # Screenshots and local captures
 screenshots/
@@ -87,6 +91,7 @@ data/meetings/
 *.db
 *.db-shm
 *.db-wal
+*.db-journal
 *.sqlite
 *.sqlite3
 
@@ -96,6 +101,8 @@ logs/
 *.log.*
 *.pid
 *.pid.lock
+crash-dumps/
+*.dmp
 
 # Temporary files and caches
 .cache/
