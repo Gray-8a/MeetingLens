@@ -1,0 +1,114 @@
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+!.env.template
+secrets/
+.secrets/
+credentials/
+*credentials*.json
+*secret*.json
+.deepseek*
+deepseek_credentials*
+deepseek-credentials*
+*.pem
+*.key
+*.p12
+*.pfx
+.npmrc
+.pypirc
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+.venv/
+venv/
+env/
+ENV/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Node.js and frontend tooling
+node_modules/
+.npm/
+.pnpm-store/
+.yarn/
+.next/
+.nuxt/
+.svelte-kit/
+coverage/
+*.tsbuildinfo
+
+# Rust and Tauri build output
+target/
+src-tauri/target/
+src-tauri/gen/
+*.rs.bk
+
+# Local meeting recordings and generated media
+recordings/
+meeting-recordings/
+meeting_recordings/
+audio-recordings/
+transcripts/local/
+*.wav
+*.mp3
+*.m4a
+*.aac
+*.flac
+*.ogg
+*.webm
+
+# Screenshots and local captures
+screenshots/
+screenshots-*/
+captures/
+screen-captures/
+*.screenshot.png
+*.screenshot.jpg
+
+# Uploaded meeting files
+uploads/
+uploaded-files/
+meeting-files/
+meeting_uploads/
+data/uploads/
+data/meetings/
+
+# Local databases
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+
+# Logs and runtime files
+logs/
+*.log
+*.log.*
+*.pid
+*.pid.lock
+
+# Temporary files and caches
+.cache/
+tmp/
+temp/
+*.tmp
+*.temp
+
+# IDE and operating-system files
+.idea/
+.vscode/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+Desktop.ini
