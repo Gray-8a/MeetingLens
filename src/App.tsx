@@ -1,4 +1,7 @@
+import { isTauri } from "@tauri-apps/api/core";
+import { useState } from "react";
 import "./App.css";
+import { checkSidecarHealth } from "./lib/sidecar";
 
 type ModuleStatus = "Ready" | "Planned";
 
@@ -49,6 +52,37 @@ const modules: ProductModule[] = [
 ];
 
 function App() {
+  const desktopRuntime = isTauri();
+  const [healthStatus, setHealthStatus] = useState<
+    "idle" | "checking" | "healthy" | "unavailable"
+  >("idle");
+  const [sidecarVersion, setSidecarVersion] = useState<string | null>(null);
+
+  async function handleHealthCheck() {
+    if (!desktopRuntime) {
+      return;
+    }
+
+    setHealthStatus("checking");
+    try {
+      const health = await checkSidecarHealth();
+      setSidecarVersion(health.version);
+      setHealthStatus("healthy");
+    } catch {
+      setSidecarVersion(null);
+      setHealthStatus("unavailable");
+    }
+  }
+
+  const healthMessage = {
+    idle: desktopRuntime
+      ? "Ready to verify the local Python process."
+      : "Health verification is available in the Tauri desktop runtime.",
+    checking: "Checking the local Python process…",
+    healthy: `Healthy · sidecar ${sidecarVersion ?? "unknown"} · API v1`,
+    unavailable: "Unavailable · start the local sidecar and try again.",
+  }[healthStatus];
+
   return (
     <div className="app-shell">
       <header className="topbar">
@@ -95,13 +129,22 @@ function App() {
           </aside>
         </section>
 
-        <section className="section" id="modules" aria-labelledby="modules-title">
+        <section
+          className="section"
+          id="modules"
+          aria-labelledby="modules-title"
+        >
           <div className="section-heading">
             <div>
               <p className="eyebrow">Capability map</p>
-              <h2 id="modules-title">Independent modules, one meeting record.</h2>
+              <h2 id="modules-title">
+                Independent modules, one meeting record.
+              </h2>
             </div>
-            <p>Each processor can fail, retry, or evolve without blocking the others.</p>
+            <p>
+              Each processor can fail, retry, or evolve without blocking the
+              others.
+            </p>
           </div>
 
           <div className="module-grid">
@@ -120,10 +163,16 @@ function App() {
           </div>
         </section>
 
-        <section className="runtime-section" id="runtime" aria-labelledby="runtime-title">
+        <section
+          className="runtime-section"
+          id="runtime"
+          aria-labelledby="runtime-title"
+        >
           <div>
             <p className="eyebrow">Runtime foundation</p>
-            <h2 id="runtime-title">A narrow contract between desktop and AI.</h2>
+            <h2 id="runtime-title">
+              A narrow contract between desktop and AI.
+            </h2>
             <p>
               Tauri owns permissions and process lifecycle. The Python sidecar
               owns processing. SQLite keeps versioned, traceable state.
@@ -151,11 +200,32 @@ function App() {
               <dd>Disabled until the user confirms a text scope</dd>
             </div>
           </dl>
+          <div className="health-check">
+            <button
+              className="runtime-action"
+              disabled={!desktopRuntime || healthStatus === "checking"}
+              onClick={handleHealthCheck}
+              type="button"
+            >
+              {healthStatus === "checking"
+                ? "Checking…"
+                : "Check Python sidecar"}
+            </button>
+            <p
+              aria-live="polite"
+              className={`health-status health-status--${healthStatus}`}
+            >
+              {healthMessage}
+            </p>
+          </div>
         </section>
       </main>
 
       <footer>
-        <p>MeetingLens does not record, upload, or summarize without a clear user action.</p>
+        <p>
+          MeetingLens does not record, upload, or summarize without a clear user
+          action.
+        </p>
       </footer>
     </div>
   );

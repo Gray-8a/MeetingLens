@@ -58,6 +58,8 @@ recordings/
 meeting-recordings/
 meeting_recordings/
 audio-recordings/
+voice-samples/
+voice_samples/
 transcripts/local/
 *.wav
 *.mp3
@@ -83,9 +85,23 @@ screen-captures/
 uploads/
 uploaded-files/
 meeting-files/
+meeting-attachments/
 meeting_uploads/
 data/uploads/
 data/meetings/
+app-data/
+meeting-data/
+local-data/
+artifacts/
+*.doc
+*.docx
+*.pdf
+*.ppt
+*.pptx
+*.xls
+*.xlsx
+*.odt
+*.ods
 
 # Local databases
 *.db

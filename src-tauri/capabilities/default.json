@@ -3,7 +3,5 @@
   "identifier": "default",
   "description": "Minimum core capability for the local MeetingLens window",
   "windows": ["main"],
-  "permissions": [
-    "core:default"
-  ]
+  "permissions": ["core:default"]
 }

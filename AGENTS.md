@@ -27,16 +27,21 @@
 3. 若工具链缺失或某项检查无法运行，必须明确说明原因；不得把“未运行”写成“通过”。
 4. 测试失败时不得声称任务完成，不得提交明知失败的结果。
 5. 当前项目的标准检查命令为：
+   - `npm run format:check`
    - `npm run lint`
    - `npm run typecheck`
    - `npm run test`
    - `npm run test:sidecar`
    - `npm run build`
    - Rust 可用时：`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 和 `cargo check --manifest-path src-tauri/Cargo.toml`
+6. 直接依赖必须锁定精确版本并提交相应 lockfile；不得为解决兼容性问题擅自放宽版本范围或关闭安全检查。
+7. Windows 11 和 Python 3.12 是当前项目基线。其他平台/版本只能作为明确标注的额外验证，不得替代该基线。
 
 ## 敏感信息与私人数据
 
 每次提交前必须先展示 staged 文件列表，再检查 `git diff --cached` 中是否存在密钥或私人数据。发现后立即停止，不得提交，并告知用户。
+
+最低检查必须同时包含：`git diff --cached --name-status`、完整 staged diff、常见 secret/token/private-key 模式扫描，以及被跟踪文件中的会议媒体/数据库/日志扩展名检查。扫描结果不得回显疑似密钥原文。
 
 永远不得提交：
 
@@ -71,6 +76,7 @@
 - 将仓库设为公开或改变仓库所有权
 - 修改、削弱或绕过分支保护和安全检查
 - 引入会产生费用的外部服务或扩大数据发送范围
+- 采用需要商业许可的采集组件，或接受新的模型/数据处理条款
 - 执行不可逆迁移、破坏性数据库操作或凭据轮换
 
 ## 完成报告

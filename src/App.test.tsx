@@ -10,7 +10,9 @@ describe("MeetingLens application shell", () => {
         name: /turn meetings into evidence-backed action/i,
       }),
     ).toBeInTheDocument();
-    expect(screen.getByText(/raw meeting data stays local/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(/raw meeting data stays local/i),
+    ).toBeInTheDocument();
     expect(screen.getByText(/credentials never enter/i)).toBeInTheDocument();
   });
 
@@ -27,7 +29,9 @@ describe("MeetingLens application shell", () => {
     ];
 
     for (const moduleName of expectedModules) {
-      expect(screen.getByRole("heading", { name: moduleName })).toBeInTheDocument();
+      expect(
+        screen.getByRole("heading", { name: moduleName }),
+      ).toBeInTheDocument();
     }
   });
 
@@ -36,5 +40,11 @@ describe("MeetingLens application shell", () => {
 
     expect(screen.getByText("GET /health")).toBeInTheDocument();
     expect(screen.getByText("127.0.0.1:8765")).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: /check python sidecar/i }),
+    ).toBeDisabled();
+    expect(
+      screen.getByText(/available in the tauri desktop runtime/i),
+    ).toBeInTheDocument();
   });
 });
