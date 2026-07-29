@@ -48,6 +48,22 @@ erDiagram
 | `updated_at`           | TEXT      | 最近更新时间                                       |
 | `deleted_at`           | TEXT NULL | 软删除/清理协调标记                                |
 
+#### 会议生命周期
+
+会议状态由 Rust service 和专用 Tauri command 控制，普通更新接口只能修改标题、主要语言等可编辑元数据，不得直接写入 `status`、`started_at` 或 `ended_at`。
+
+| 操作                  | 前置状态    | 后置状态    | 时间规则                                    |
+| --------------------- | ----------- | ----------- | ------------------------------------------- |
+| 创建                  | 不适用      | `draft`     | `started_at`、`ended_at` 均为空             |
+| `start_meeting`       | `draft`     | `recording` | Rust 后端写入当前 UTC ISO 8601 `started_at` |
+| `end_meeting`（模拟） | `recording` | `ready`     | Rust 后端写入当前 UTC ISO 8601 `ended_at`   |
+
+- MVP 1A-2 的合成会议没有异步处理步骤，因此结束后直接进入 `ready`。
+- `processing` 保留给 MVP 1C 及后续真实异步处理，只能由受信任后端在创建相应 job 后进入，WebView 不得自行设置。
+- `failed` 与 `archived` 同样只能通过后续定义的专用 service 操作进入，不属于通用会议更新字段。
+- 重复开始、重复结束、`draft → ready`、`ready → recording` 等非法转换必须原子拒绝，并返回稳定错误码 `meeting_invalid_state`。
+- 时间戳由后端生成；前端传入的开始/结束时间不得作为状态转换依据。
+
 ### `artifacts`
 
 | 字段            | 类型    | 说明                                 |
@@ -265,12 +281,18 @@ app-data/
 
 ## 6. 删除与保留
 
-1. 用户发起删除后，会议进入 `deleted_at` 状态，禁止新任务。
+MVP 1A-1 尚无会议所有的 artifact、后台 job 或文件句柄。当前实现可在同一事务内设置 `deleted_at` 后硬删除 meeting；任一步失败则整笔回滚。此时 `deleted_at` 是删除协调边界的预留字段，不要求留下持久 tombstone。
+
+从首次引入 artifact、后台 job 或会议文件的阶段开始，删除必须升级为可重试的协调流程：
+
+1. 用户发起删除后，持久化 `deleted_at` tombstone，禁止新任务。
 2. 取消/等待正在运行的任务，并关闭文件句柄。
 3. 在事务中删除派生表记录，再删除 artifact 文件。
 4. 若文件删除失败，保留最小 tombstone 供下次启动重试。
 5. 完成后删除 meeting 记录和 tombstone。
 6. 外部 provider 已接收的数据无法通过本地删除撤回，发送前必须明确提示。
+
+引入 artifact 的 PR 必须同时迁移删除实现与测试，不得继续把无文件阶段的同事务硬删除语义当作完整删除流程。
 
 默认保留策略在实现前由产品决策确认；首个版本不进行静默自动删除。
 

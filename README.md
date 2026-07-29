@@ -2,7 +2,7 @@
 
 MeetingLens is a privacy-first desktop workspace for meeting capture, transcription, translation, document context, speaker diarization, and verifiable AI summaries.
 
-Phase 0 is complete: the repository contains the product specification, a Tauri 2 + React + TypeScript application shell, and a dependency-free Python runtime sidecar whose health contract is verified through a real React → Rust → Python call path. The next implementation PR is strictly `feat/meeting-data-core` (MVP 1A-1).
+Phase 0 and MVP 1A-1 are complete: the repository contains the product specification, a Tauri 2 + React + TypeScript application shell, a dependency-free Python runtime sidecar with a verified React → Rust → Python health path, and a tested local SQLite meeting data core. After the lifecycle documentation gate is merged, the next implementation PR is strictly `feat/meeting-command-api` (MVP 1A-2-1).
 
 ## Prerequisites
 
@@ -79,15 +79,16 @@ The fixed `127.0.0.1:8765` address is a Phase 0 development contract. MVP 1A-3 d
 ## Delivery roadmap
 
 1. **Phase 0 — complete:** specification and runnable technical baseline.
-2. **MVP 1A-1:** SQLite, migrations, meeting CRUD, deletion semantics, and persistence (`feat/meeting-data-core`).
-3. **MVP 1A-2:** desktop UI and complete synthetic meeting flow (`feat/meeting-ui-mock`).
-4. **MVP 1A-3:** Provider abstraction, session token, SecretStore, and security foundation (`feat/provider-security-foundation`).
-5. **MVP 1B-1:** isolated document validation and Docling parsing (`feat/document-processing`).
-6. **MVP 1B-2:** staged DeepSeek minutes, evidence links, and export (`feat/deepseek-summary`).
-7. **MVP 1C:** sidecar supervisor, Windows audio, and realtime transcription in separate PRs.
-8. **MVP 2:** realtime translation and speaker diarization.
-9. **MVP 3:** meeting-window selection, OCR, and screen context.
-10. **MVP 4:** Windows packaging and product hardening.
+2. **MVP 1A-1 — complete:** SQLite, migrations, meeting CRUD, deletion semantics, and persistence (`feat/meeting-data-core`, PR #3).
+3. **MVP 1A-2-1:** Meeting Tauri Command API and typed TypeScript client (`feat/meeting-command-api`).
+4. **MVP 1A-2-2:** desktop UI and complete synthetic meeting flow (`feat/meeting-ui-mock`).
+5. **MVP 1A-3:** Provider abstraction, session token, SecretStore, and security foundation (`feat/provider-security-foundation`).
+6. **MVP 1B-1:** isolated document validation and Docling parsing (`feat/document-processing`).
+7. **MVP 1B-2:** staged DeepSeek minutes, evidence links, and export (`feat/deepseek-summary`).
+8. **MVP 1C:** sidecar supervisor, Windows audio, and realtime transcription in separate PRs.
+9. **MVP 2:** realtime translation and speaker diarization.
+10. **MVP 3:** meeting-window selection, OCR, and screen context.
+11. **MVP 4:** Windows packaging and product hardening.
 
 The authoritative branch mapping, exclusions, and acceptance criteria are in [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md). Docling and DeepSeek are separate PRs. Screenpipe, if adopted, is an optional provider rather than a core dependency.
 

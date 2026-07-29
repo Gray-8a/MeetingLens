@@ -145,6 +145,12 @@ sequenceDiagram
 4. 返回结果连同模型、提示模板版本和来源片段 ID 写入 SQLite。
 5. UI 将 AI 输出标记为可编辑草稿，而非事实来源。
 
+### 6.3 Meeting command 边界
+
+MVP 1A-2-1 先建立独立的 Meeting Tauri Command API，再由 MVP 1A-2-2 的页面使用。WebView 只调用集中封装的 TypeScript `meetingApi`；Tauri command 负责 DTO 校验和稳定错误映射，再调用 Rust service，command 内不得包含 SQL。
+
+创建会议后状态为 `draft`。`start_meeting` 执行 `draft → recording`，`end_meeting` 在合成会议阶段执行 `recording → ready`；两个生命周期时间戳均由 Rust 以 UTC ISO 8601 写入。`processing` 保留给后续受信任的异步处理流程，普通更新 command 不得修改状态或时间戳。非法转换返回 `meeting_invalid_state`，不得泄漏 SQL、路径或底层数据库错误。
+
 ## 7. 仓库结构
 
 ```text
@@ -189,17 +195,18 @@ Phase 0 不提前写入 `externalBin`，因为仓库尚无可验证的平台二�
 
 ### 10.1 实施顺序与模块所有权
 
-| 阶段     | 架构交付                                                                   | 明确不包含              |
-| -------- | -------------------------------------------------------------------------- | ----------------------- |
-| MVP 1A-1 | SQLite、迁移、meeting repository/service、删除语义和持久化                 | UI、Provider、worker    |
-| MVP 1A-2 | React 页面、模拟转写、Tauri command 数据流                                 | 真实音频、外部 API      |
-| MVP 1A-3 | Provider 接口、随机端口/令牌基础、SecretStore、安全日志和 fail-closed 测试 | Docling、DeepSeek、音频 |
-| MVP 1B-1 | 隔离的 Docling document worker 和来源映射                                  | 总结模型                |
-| MVP 1B-2 | DeepSeek summary adapter、证据引用和导出                                   | 文档解析器变更          |
-| MVP 1C   | Sidecar supervisor、崩溃/孤儿进程回收、WASAPI 和实时 ASR                   | 翻译、说话人、屏幕      |
-| MVP 2    | 隔离的翻译、Diart 和 WhisperX worker                                       | 屏幕采集                |
-| MVP 3    | Window context、accessibility/OCR 和可选 Capture Provider                  | 核心强绑定 Screenpipe   |
-| MVP 4    | Windows 打包、签名、升级、诊断和产品加固                                   | 新核心业务范围          |
+| 阶段       | 架构交付                                                                   | 明确不包含                   |
+| ---------- | -------------------------------------------------------------------------- | ---------------------------- |
+| MVP 1A-1   | SQLite、迁移、meeting repository/service、删除语义和持久化                 | UI、Provider、worker         |
+| MVP 1A-2-1 | Meeting Tauri commands、DTO、状态机和 TypeScript `meetingApi`              | 完整页面、模拟字幕、Provider |
+| MVP 1A-2-2 | React 页面、模拟转写和完整合成会议数据流                                   | 真实音频、外部 API           |
+| MVP 1A-3   | Provider 接口、随机端口/令牌基础、SecretStore、安全日志和 fail-closed 测试 | Docling、DeepSeek、音频      |
+| MVP 1B-1   | 隔离的 Docling document worker 和来源映射                                  | 总结模型                     |
+| MVP 1B-2   | DeepSeek summary adapter、证据引用和导出                                   | 文档解析器变更               |
+| MVP 1C     | Sidecar supervisor、崩溃/孤儿进程回收、WASAPI 和实时 ASR                   | 翻译、说话人、屏幕           |
+| MVP 2      | 隔离的翻译、Diart 和 WhisperX worker                                       | 屏幕采集                     |
+| MVP 3      | Window context、accessibility/OCR 和可选 Capture Provider                  | 核心强绑定 Screenpipe        |
+| MVP 4      | Windows 打包、签名、升级、诊断和产品加固                                   | 新核心业务范围               |
 
 每一行仍须按 `DEVELOPMENT_PLAN.md` 拆成指定的小型 PR。上游阶段只能通过版本化接口为下游提供能力，不得把下游实现提前塞入当前 PR。
 
