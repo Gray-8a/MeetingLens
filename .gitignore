@@ -58,6 +58,8 @@ recordings/
 meeting-recordings/
 meeting_recordings/
 audio-recordings/
+voice-samples/
+voice_samples/
 transcripts/local/
 *.wav
 *.mp3
@@ -66,6 +68,10 @@ transcripts/local/
 *.flac
 *.ogg
 *.webm
+*.mp4
+*.mov
+*.mkv
+*.avi
 
 # Screenshots and local captures
 screenshots/
@@ -79,14 +85,29 @@ screen-captures/
 uploads/
 uploaded-files/
 meeting-files/
+meeting-attachments/
 meeting_uploads/
 data/uploads/
 data/meetings/
+app-data/
+meeting-data/
+local-data/
+artifacts/
+*.doc
+*.docx
+*.pdf
+*.ppt
+*.pptx
+*.xls
+*.xlsx
+*.odt
+*.ods
 
 # Local databases
 *.db
 *.db-shm
 *.db-wal
+*.db-journal
 *.sqlite
 *.sqlite3
 
@@ -96,6 +117,8 @@ logs/
 *.log.*
 *.pid
 *.pid.lock
+crash-dumps/
+*.dmp
 
 # Temporary files and caches
 .cache/
