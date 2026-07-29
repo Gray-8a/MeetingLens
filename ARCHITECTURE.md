@@ -42,7 +42,7 @@ flowchart LR
 - 提供版本化 loopback API。
 - 承载转录、文档提取、翻译、说话人分离和摘要预处理。
 - 任务处理器按接口解耦，单个模型失败不影响其他模块。
-- 首轮只实现无运行时第三方依赖的 `/health`，后续使用经过锁定和验证的打包方案生成 Windows sidecar 二进制。
+- Phase 0 只实现无运行时第三方依赖的 `/health`；MVP 1C 才实现 supervisor、崩溃恢复、孤儿进程回收和 Windows sidecar 打包生命周期。
 - Diart、WhisperX 等不兼容模型不得装入同一个 Python 环境，由独立 worker 进程和版本化消息协议隔离。
 
 ### 3.4 SQLite 与本地文件
@@ -69,7 +69,7 @@ flowchart LR
 
 ## 5. Sidecar API
 
-### 5.1 首轮健康检查
+### 5.1 Phase 0 健康检查
 
 `GET /health`
 
@@ -89,7 +89,7 @@ flowchart LR
 - 非法路径返回 JSON 404。
 - 后续除 `/health` 外的端点都要求每次启动生成的 bearer token。
 
-首轮调用链：
+Phase 0 调用链：
 
 ```mermaid
 sequenceDiagram
@@ -103,7 +103,7 @@ sequenceDiagram
     Rust-->>UI: typed health or stable error code
 ```
 
-Rust 使用 1 秒连接超时、2 秒总超时、禁止重定向，并且不把底层网络错误、路径或响应正文回显给 WebView。固定端口仅用于首轮开发验证；进入应用骨架阶段后改为 Rust 启动时选择随机端口并注入高熵会话 token。
+Rust 使用 1 秒连接超时、2 秒总超时、禁止重定向，并且不把底层网络错误、路径或响应正文回显给 WebView。固定端口仅用于 Phase 0 开发验证；MVP 1A-3 定义随机端口与高熵会话 token 契约，MVP 1C 的 supervisor 完成实际进程接线。
 
 ### 5.2 规划端点
 
@@ -170,7 +170,7 @@ MeetingLens/
 4. Rust 使用 sidecar API 启动进程，不允许 WebView 获得任意 shell 执行能力。
 5. 应用退出、崩溃恢复和更新时，Rust 负责回收孤儿 sidecar。
 
-首轮不提前写入 `externalBin`，因为仓库尚无可验证的平台二进制；这样避免生成一个无法打包的虚假配置。
+Phase 0 不提前写入 `externalBin`，因为仓库尚无可验证的平台二进制；MVP 1C 的 `feat/sidecar-supervisor` 必须在产生可验证 Windows 二进制后再接入。
 
 ## 9. 可观测性
 
@@ -187,13 +187,29 @@ MeetingLens/
 - **本地 HTTP + 会话令牌**：便于 Python 服务化测试，同时限制未授权本机进程访问。
 - **Provider adapter**：避免业务逻辑与 DeepSeek 单点绑定。
 
+### 10.1 实施顺序与模块所有权
+
+| 阶段     | 架构交付                                                                   | 明确不包含              |
+| -------- | -------------------------------------------------------------------------- | ----------------------- |
+| MVP 1A-1 | SQLite、迁移、meeting repository/service、删除语义和持久化                 | UI、Provider、worker    |
+| MVP 1A-2 | React 页面、模拟转写、Tauri command 数据流                                 | 真实音频、外部 API      |
+| MVP 1A-3 | Provider 接口、随机端口/令牌基础、SecretStore、安全日志和 fail-closed 测试 | Docling、DeepSeek、音频 |
+| MVP 1B-1 | 隔离的 Docling document worker 和来源映射                                  | 总结模型                |
+| MVP 1B-2 | DeepSeek summary adapter、证据引用和导出                                   | 文档解析器变更          |
+| MVP 1C   | Sidecar supervisor、崩溃/孤儿进程回收、WASAPI 和实时 ASR                   | 翻译、说话人、屏幕      |
+| MVP 2    | 隔离的翻译、Diart 和 WhisperX worker                                       | 屏幕采集                |
+| MVP 3    | Window context、accessibility/OCR 和可选 Capture Provider                  | 核心强绑定 Screenpipe   |
+| MVP 4    | Windows 打包、签名、升级、诊断和产品加固                                   | 新核心业务范围          |
+
+每一行仍须按 `DEVELOPMENT_PLAN.md` 拆成指定的小型 PR。上游阶段只能通过版本化接口为下游提供能力，不得把下游实现提前塞入当前 PR。
+
 ## 11. 依赖兼容性与采用门槛
 
 以下结论基于 2026-07-27 的官方仓库、包元数据和发行信息。这里记录候选版本，不代表本轮安装。
 
 | 组件           | 候选基线                                | 结论与门槛                                                                                |
 | -------------- | --------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Tauri / Rust   | Tauri `2.11.5`，Tauri build `2.6.3`     | 首轮已精确锁定；Windows CI 执行 fmt/test/check。                                          |
+| Tauri / Rust   | Tauri `2.11.5`，Tauri build `2.6.3`     | Phase 0 已精确锁定；Windows CI 执行 fmt/test/check。                                      |
 | Python         | `3.12.x`                                | 项目统一基线；业务 sidecar 后续不得静默退回其他版本。                                     |
 | DeepSeek       | `deepseek-v4-flash` / `deepseek-v4-pro` | 官方当前模型；旧模型名已弃用。启用前复核价格、数据条款和 base URL。                       |
 | Docling        | `2.115.0`                               | 支持 Python 3.12 与 Windows；模型下载、格式覆盖、内存和冷启动需在文档处理分支实测。       |
@@ -218,9 +234,13 @@ worker 之间只交换受控文件引用和版本化 JSON，不共享 site-packa
 
 ### 11.2 延后决策
 
-- Screenpipe 不在第一轮或 Phase 1 默认安装；商业授权、采集范围和 Windows 资源占用需要用户决定。
+- Screenpipe 在 MVP 3 也只能作为可替换的 Capture Provider；核心窗口选择、权限、事件模型和删除语义不得依赖它。采用前需用户决定商业授权、采集范围和 Windows 资源预算。
 - WhisperX 的 diarization 模型可能需要 Hugging Face token 和模型条款同意；不得把该 token 写入配置或仓库。
-- DeepSeek、Docling 和本地模型的真实调用/下载均在对应功能分支进行，本轮不产生费用或下载大模型。
+- Docling 只在 MVP 1B-1 引入，DeepSeek 只在 MVP 1B-2 引入；不得在同一 PR 同时改变解析与总结管线。真实调用/下载需要对应阶段授权。
+
+### 11.3 Windows 本地验收门槛
+
+CI 负责自动化构建与测试，但不能证明 WebView2 窗口、凭据库、文件对话框、音频设备、权限或进程回收在用户机器上可用。任何涉及上述能力的 PR 必须记录本机 `npm run tauri dev` 及阶段专用验收结果；没有本地证据时只能报告“CI 通过，本地验收待完成”。
 
 ## 12. 参考
 

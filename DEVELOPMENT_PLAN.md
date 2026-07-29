@@ -1,160 +1,168 @@
 # MeetingLens 开发计划
 
-## 1. 分支策略
+## 1. 工作流与阶段规则
 
-`main` 始终保持可构建、可演示。每个可验收任务在独立分支完成，通过 Pull Request 和 CI 后由用户决定是否合并。
+`main` 始终保持可构建、可演示。Codex 可以自主开发、测试、修复 CI、提交、推送和创建/更新 PR，但不得启用 auto-merge，也不得自动合并；最终 Merge 由用户决定。
 
-```text
-main
-├── docs/project-specification
-├── feat/app-scaffold
-├── feat/audio-capture
-├── feat/document-processing
-├── feat/deepseek-summary
-├── feat/realtime-translation
-├── feat/speaker-diarization
-└── feat/screen-context
-```
+每个实现 PR 必须：
 
-不得自动合并到 `main`，不得 force-push，不得绕过分支保护。较大阶段继续拆分小 PR，避免长期巨型分支。
+1. 只覆盖一个可验收范围，并使用本计划指定的分支名。
+2. 有独立的正常、失败和安全验收条件。
+3. 通过 formatter、lint、类型检查、测试、构建和敏感信息门禁。
+4. 涉及 Windows 桌面行为时，由用户本机实际运行验收，不能只凭 CI 声称完成。
+5. 合并后再从最新 `main` 创建下一个分支，不堆叠未审查的大型 PR。
 
-## 2. 第一轮：规格与可运行基线（当前工作）
+当前路线图对齐工作使用 `docs/align-mvp-roadmap`。它是产品开发前的治理门禁，不实现任何产品功能。
 
-分支：`docs/project-specification`
+## 2. 统一路线图
 
-交付：
+| 阶段     | 目标                                                | 计划分支/PR                                             | 状态         |
+| -------- | --------------------------------------------------- | ------------------------------------------------------- | ------------ |
+| Phase 0  | 规格与技术基线                                      | `docs/project-specification` / PR #1                    | 已完成并合并 |
+| MVP 1A-1 | SQLite、迁移、会议 CRUD、删除语义和持久化           | `feat/meeting-data-core`                                | 下一阶段     |
+| MVP 1A-2 | 桌面 UI、模拟转写和完整模拟会议流程                 | `feat/meeting-ui-mock`                                  | 待开始       |
+| MVP 1A-3 | Provider 抽象、本地会话令牌、SecretStore 和安全基础 | `feat/provider-security-foundation`                     | 待开始       |
+| MVP 1B-1 | 文档上传、验证、隔离和 Docling 解析                 | `feat/document-processing`                              | 待开始       |
+| MVP 1B-2 | DeepSeek 分阶段总结、证据引用和纪要导出             | `feat/deepseek-summary`                                 | 待开始       |
+| MVP 1C   | Windows 音频、实时转写、sidecar 生命周期            | 见 §8 的三个小 PR                                       | 待开始       |
+| MVP 2    | 实时翻译与说话人                                    | `feat/realtime-translation`、`feat/speaker-diarization` | 待开始       |
+| MVP 3    | 会议窗口、OCR 和屏幕上下文                          | `feat/window-context`、`feat/screen-ocr`                | 待开始       |
+| MVP 4    | 安装包与产品化                                      | `chore/windows-packaging`、`feat/product-hardening`     | 待开始       |
 
-- `PRODUCT_SPEC.md`、`ARCHITECTURE.md`、`DATA_MODEL.md`、`SECURITY.md`、`DEVELOPMENT_PLAN.md`、`AGENTS.md`
-- Tauri 2 + React + TypeScript + Vite 最小脚手架
-- Python 3.12 dependency-free runtime sidecar `/health`
-- React → Tauri command → Rust HTTP client → Python `/health` 的真实验证链路
-- 前端、Python 和 Rust 单元测试；ESLint、Ruff、Prettier、类型检查和构建
-- GitHub Actions（Linux 前端/Python 3.12，Windows Tauri core）
-- Windows 11 开发说明、精确版本依赖和 lockfile
+除上表和各阶段明确列出的子分支外，不再使用表外的历史任务名或笼统阶段称呼。
 
-验收：所有可运行检查通过；CI 通过；无真实凭据或会议数据；分支推送并更新 PR，但不合并。
+## 3. Phase 0：规格与技术基线（已完成）
 
-停止线：完成以上内容后停止，不在本分支实现录音、数据库业务表、文档解析、DeepSeek 调用、模型下载或屏幕采集。
+交付：核心规格文档、Tauri 2 + React + TypeScript 基线、Python 3.12 `/health`、React → Rust → Python 健康调用、精确依赖版本、lockfile 和 CI。
 
-## 3. Phase 1：MVP
+完成证据：PR #1 已通过前端/Python 和 Windows Rust CI；Windows 本机已实际运行 `npm run tauri dev` 并显示 MeetingLens 窗口。
 
-Phase 1 应拆成下列分支顺序；每个分支只依赖已合并的前置能力。
+## 4. MVP 1A-1：会议数据核心
 
-### 3.1 `feat/app-scaffold`
+分支：`feat/meeting-data-core`
 
-- 路由、首页/新建会议/会议中/结果/设置页面骨架
-- Rust command 类型契约和前端 client
-- SQLite migration、会议 CRUD 和应用私有数据目录
-- Sidecar supervisor、随机端口、会话 token、崩溃恢复和 path guard
-- 本地安全日志和合成数据测试
+范围仅限：
 
-### 3.2 `feat/audio-capture`
+- SQLite 连接与事务边界
+- `schema_migrations` 与首批迁移
+- meeting repository/service 的创建、读取、更新、列表和删除语义
+- 应用私有数据目录和规范化路径基础
+- 重启后的持久化验证、失败回滚和合成数据测试
 
-- Windows 11 系统音频与麦克风设备枚举
-- 明确开始/停止、持续录音指示、分块写入和异常恢复
-- 实时转录、时间戳片段持久化和人工修正入口
-- 同意事件与会议完整删除
+不得包含：页面 UI、模拟转写、Provider、SecretStore、文档处理、音频或屏幕能力。
 
-验收重点：不得后台静默录音；只使用合成音频测试；录音不进入 Git 或日志。
+验收：迁移可从空库执行且可重复检测；CRUD 与删除语义有 Rust 测试；数据库文件保持本地并被 Git 忽略；应用重启后数据仍存在；本机运行最小持久化验收。
 
-### 3.3 `feat/document-processing`
+## 5. MVP 1A-2：桌面 UI 与模拟会议
 
-- PDF/DOCX/PPTX/XLSX/TXT/Markdown/HTML/CSV/图片选择
-- 签名/MIME/大小校验、artifact 登记、哈希和受控路径
-- Docling worker、资源限制、进度、失败恢复和来源页/段落映射
+分支：`feat/meeting-ui-mock`
 
-采用门槛：固定 Docling 及其 worker 依赖，验证 Windows/Python 3.12、模型下载、冷启动、内存和恶意文件行为。
+范围：
 
-### 3.4 `feat/deepseek-summary`
+- 首页、新建会议、会议中、会议结果、设置等桌面页面和导航
+- 使用合成数据的模拟转写流
+- UI → Tauri command → 数据核心的完整模拟会议流程
+- 加载、空状态、错误、取消与可访问性
 
-- `SummaryProvider` 与 fake provider
-- Windows Credential Manager；开发 `.env` 仅作本地回退
-- 发送预览、同意、裁剪、脱敏、超时、限流、取消和重试
-- `deepseek-v4-pro` 分阶段摘要：事实 → 主题 → 决策/行动项/未决问题 → 合并
-- Markdown/DOCX 导出、来源映射、设置页和失败恢复
+不得包含真实音频、外部 Provider、Docling 或 DeepSeek。
 
-验收重点：无 key、无同意或范围为空时 fail closed；测试不调用真实付费 API。
+验收：React 测试覆盖关键状态；用户在 Windows 本机通过 `npm run tauri dev` 完成“新建 → 模拟会议 → 结束 → 查看 → 删除”流程；刷新/重启后状态符合数据层定义。
 
-Phase 1 不包含自动窗口检测、屏幕 OCR、实时名字识别、实时翻译、PDF 导出、托盘、自动更新或会议平台 API。
+## 6. MVP 1A-3：Provider 与安全基础
 
-## 4. Phase 2：说话人识别与实时翻译
+分支：`feat/provider-security-foundation`
 
-### 4.1 `feat/speaker-diarization`
+范围：
 
-- 独立 Diart worker 做匿名实时 diarization
-- 用户可选短 voice sample、人工命名、重录、删除和纠错
-- 独立 WhisperX worker 做会后时间对齐/说话人校正
-- 所有自动标签可回滚，不默认做跨会议真实身份识别
+- 版本化 Provider 接口和 Mock Provider
+- Rust 启动时生成随机 loopback 端口与高熵会话令牌
+- Windows Credential Manager `SecretStore` 抽象；测试不得读取真实凭据
+- 请求认证、超时、稳定脱敏错误和 fail-closed 测试
+- allowlist 本地安全日志基础：事件、匿名任务 ID、状态、耗时、错误码
 
-硬约束：Diart 与 WhisperX 当前 NumPy/pyannote 依赖冲突，必须使用独立环境、进程和 lockfile。
+不得调用真实付费 API，也不得实现 Docling、DeepSeek、音频或屏幕采集。
 
-### 4.2 `feat/realtime-translation`
+验收：无令牌、错误令牌、无凭据和空范围全部失败关闭；WebView/SQLite/日志不出现密钥；Mock Provider 正常/失败/取消路径均有测试；用户本机验证凭据写入/读取状态但不显示值。
 
-- 稳定流式片段协议、顺序、去重和取消
-- `deepseek-v4-flash` 中英实时翻译
-- 原文/译文对照 UI、语言切换、延迟和失败处理
+## 7. MVP 1B：文档与纪要（两个独立 PR）
 
-## 5. Phase 3：屏幕上下文
+### 7.1 MVP 1B-1：文档处理
 
-分支：`feat/screen-context`
+分支：`feat/document-processing`
 
-- 用户显式选择目标窗口，窗口身份变化时 fail closed
-- accessibility tree 优先、本地 OCR 回退、敏感内容遮蔽
-- 关键事件和结构化 screen event，不做全量 24/7 捕获
-- 截图仅作短期缓存，提取后默认删除；保存前预览和确认
+- 上传类型、签名/MIME/大小校验和隔离目录
+- artifact/document/document_chunk 持久化
+- 独立 Docling worker、固定依赖、模型下载策略和资源上限
+- 页码/章节来源映射、取消、失败恢复和完整删除
+- 畸形文件、路径逃逸、压缩炸弹和不支持格式测试
 
-若采用 Screenpipe，开始实现前必须单独复审商业授权、版本稳定性、Windows 资源占用、本地 API 权限和默认采集范围。
+验收：只使用合成文档；Windows/Python 3.12 本机验证解析、内存/冷启动和删除；本 PR 不接入任何总结模型。
 
-## 6. Phase 4：产品化
+### 7.2 MVP 1B-2：DeepSeek 会议纪要
 
-- 托盘、自动更新、崩溃恢复、诊断与隐私设置
-- PDF 导出、安装包签名、SBOM、性能与长期稳定性
-- 数据保留策略、删除验证和依赖/模型升级流程
+分支：`feat/deepseek-summary`
 
-## 7. 测试策略
+- 在 1B-1 的稳定结构化文档管线上接入 DeepSeek adapter
+- 分段事实提取 → 主题归并 → 决策/行动项/未决问题 → 最终合并
+- 时间戳、文档块和 evidence item 引用
+- 用户发送预览、明确同意、裁剪、脱敏、超时、重试、取消
+- Markdown 和 DOCX 纪要导出
 
-| 层级             | 工具/方式                      | 覆盖重点                           |
-| ---------------- | ------------------------------ | ---------------------------------- |
-| React unit       | Vitest + Testing Library       | 状态、可访问性、用户操作           |
-| Type/lint/format | TypeScript + ESLint + Prettier | 边界类型、一致格式、常见错误       |
-| Python           | unittest + Ruff                | API、任务状态、格式、错误与清理    |
-| Rust             | Cargo fmt/test/check           | command 校验、路径边界、超时、迁移 |
-| Contract         | JSON fixtures                  | UI/Rust/sidecar 版本兼容           |
-| E2E              | Tauri WebDriver（后续）        | Windows 11 关键桌面流程            |
-| Security         | secret/path/upload tests       | fail-closed、路径逃逸、敏感日志    |
+验收：默认使用 Mock Provider；真实 API 调用必须由用户单独授权；无 key/无同意/空范围 fail closed；长会议不得一次发送全部数据；Docling 与 DeepSeek 不在同一 PR 引入。
 
-测试数据只使用合成会议、占位参与者和生成音频，不使用真实会议文件。
+## 8. MVP 1C：真实音频、转写与 sidecar 生命周期
 
-## 8. CI 与发布门槛
+该阶段风险较高，固定拆为三个顺序 PR：
 
-每个 PR 至少执行：
+1. `feat/sidecar-supervisor`：sidecar 启停、随机端口/令牌接线、健康恢复、崩溃重启、退出清理、孤儿进程回收和生命周期安全日志。
+2. `feat/audio-capture`：WASAPI 系统音频与麦克风、设备枚举、明确开始/停止、持续录音指示、分块文件和异常恢复。
+3. `feat/realtime-transcription`：实时 ASR、片段顺序/去重、时间戳持久化、CPU 回退、取消与会后校正入口。
 
-- `npm ci`
-- `npm run format:check`
-- `npm run lint`
-- `npm run typecheck`
-- `npm run test`
-- `npm run test:sidecar`
-- `npm run build`
-- `cargo fmt --check`、`cargo test --locked` 和 `cargo check --locked`
+验收：每个 PR 使用合成音频自动测试，并在 Windows 本机验证真实设备/权限/窗口/进程行为；应用退出或崩溃后不得留下 sidecar 或文件句柄；日志不得包含音频、转录正文、设备 ID 或绝对用户路径。
 
-required checks 未通过时不得合并。生产发布后续加入 Windows Tauri bundle、签名、SBOM、依赖审计和安装包冒烟测试。
+## 9. MVP 2：实时翻译与说话人
 
-## 9. Definition of Done
+- `feat/realtime-translation`：流式片段协议、`deepseek-v4-flash` 中英翻译、原文/译文对照、延迟和失败处理。
+- `feat/speaker-diarization`：匿名实时 diarization、可选短 voice sample、人工命名/纠错，以及隔离的 WhisperX 会后校正 worker。
 
-1. 验收标准有可观察结果。
-2. 正常、失败和取消路径有测试或明确人工验证。
-3. 文档、类型和迁移与实现同步。
-4. 没有真实凭据、会议数据或被忽略产物进入 staged files。
-5. diff 已人工检查，提交单一且清晰。
-6. 分支已 push，PR 已创建/更新，CI 全部通过。
-7. 已报告限制，分支未自动合并到 `main`。
+Diart 与 WhisperX 必须保持独立环境、进程和 lockfile；不得默认做跨会议真实身份识别。
 
-## 10. 当前风险与决策点
+## 10. MVP 3：会议窗口、OCR 与屏幕上下文
 
-- 本机已有 Rust 工具链，但缺少 MSVC C++ Build Tools / `link.exe`；本地可运行 `cargo fmt`，编译与测试由 Windows CI 独立验证。
-- Diart `0.9.2` 与 WhisperX `3.8.6` 不能共享 Python 环境，必须隔离 worker。
-- Screenpipe 上游迭代快且商业使用涉及许可，采用前需要用户批准并锁定具体发行版。
-- faster-whisper GPU 路径依赖 CUDA 12/cuDNN 9；MVP 先建立 CPU 可用回退并测量性能。
-- SQLite 首版不承诺静态加密；如需抵御本机磁盘读取，再评估 SQLCipher 与密钥管理。
-- DeepSeek 的价格、生产数据条款和模型可用性在功能分支开始前重新核验。
+- `feat/window-context`：用户显式选择目标窗口、窗口身份验证、暂停/撤销和 accessibility tree 提取。
+- `feat/screen-ocr`：本地 OCR 回退、敏感内容遮蔽、关键事件/evidence 生成和截图短期缓存删除。
+
+Screenpipe 只能是可替换的可选 Capture Provider，不得成为核心强依赖。采用前必须获得用户批准，并复审商业许可、默认采集范围、本地 API 暴露和 Windows 资源占用。
+
+## 11. MVP 4：安装包与产品化
+
+- `chore/windows-packaging`：Windows 安装包、签名、SBOM、升级/回滚、安装与卸载冒烟测试。
+- `feat/product-hardening`：托盘、诊断/隐私设置、长期稳定性、性能、崩溃恢复和删除完整性。
+
+验收必须包含用户本机安装、启动、升级、卸载和残留数据检查；仅有 CI bundle 成功不算完成。
+
+## 12. 测试与验收矩阵
+
+| 层级   | 自动化                              | 本地人工验收                 |
+| ------ | ----------------------------------- | ---------------------------- |
+| 文档   | Prettier、链接与冲突扫描            | 路线图/分支名审阅            |
+| React  | Vitest、Testing Library、typecheck  | Tauri 窗口完整流程           |
+| Python | unittest、Ruff、Python 3.12         | worker 启停、模型/资源行为   |
+| Rust   | fmt、test/check `--locked`          | 权限、文件、进程、设备行为   |
+| 安全   | secret/path/upload/fail-closed 测试 | 凭据库、同意、日志和删除验证 |
+
+所有测试数据均为合成数据。CI 失败时不得声称完成；Windows 桌面能力未做本机验收时，必须明确标记“自动化通过，本地验收待完成”。
+
+## 13. Definition of Done
+
+1. PR 范围与本计划对应阶段一致，且没有夹带下一阶段功能。
+2. 正常、失败、取消和安全路径有测试或明确的本机验收记录。
+3. 文档、类型、迁移和实现同步，直接依赖精确锁定。
+4. staged files 不含凭据、会议数据、录音、截图、上传文件、数据库或日志。
+5. diff 已检查，提交清晰，分支已 push，PR 描述包含测试与限制。
+6. CI 全绿；涉及 Windows 桌面行为时本机验收完成。
+7. PR 保持未自动合并，等待用户决定。
+
+## 14. 当前下一步
+
+路线图对齐 PR 合并后，只能开始 `feat/meeting-data-core`。该 PR 仅实现 MVP 1A-1 的 SQLite、迁移、会议 CRUD、删除语义和持久化；不得提前实现 UI、Provider、文档、DeepSeek 或音频。
