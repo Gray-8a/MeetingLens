@@ -17,6 +17,15 @@
    - `chore/<task-name>`
 5. 同步远端时使用普通 pull/rebase；不得使用 `--force`、`--force-with-lease`，不得绕过分支保护。
 6. 提交信息使用 Conventional Commits，例如 `feat: add audio capture`、`docs: define security model`。
+7. 分支名称和任务范围必须与 `DEVELOPMENT_PLAN.md` 一致；若计划未定义或文档互相冲突，先创建纯文档 PR 对齐，不得自行混用旧阶段名称。
+8. 一个较大阶段必须拆成可独立验收的小型 PR；禁止把数据库、UI、Provider、文档解析、模型调用或音频采集塞入同一个实现 PR。
+
+## 自动化与合并边界
+
+- Codex 可以自主开发、测试、修复 CI、提交、推送以及创建或更新 Pull Request。
+- Codex 必须在 PR checks 全绿后停在待审状态；是否合并由用户决定。
+- 不得启用 auto-merge，不得把“用户最终决定”解释为预先授权自动合并。
+- 只有用户针对某个明确 PR 发出当次合并指令后，才能执行该次合并；不得顺带合并其他 PR 或开始下一阶段。
 
 ## 质量门槛
 
@@ -33,9 +42,10 @@
    - `npm run test`
    - `npm run test:sidecar`
    - `npm run build`
-   - Rust 可用时：`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check` 和 `cargo check --manifest-path src-tauri/Cargo.toml`
+   - Rust 可用时：`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`、`cargo test --locked --manifest-path src-tauri/Cargo.toml` 和 `cargo check --locked --manifest-path src-tauri/Cargo.toml`
 6. 直接依赖必须锁定精确版本并提交相应 lockfile；不得为解决兼容性问题擅自放宽版本范围或关闭安全检查。
 7. Windows 11 和 Python 3.12 是当前项目基线。其他平台/版本只能作为明确标注的额外验证，不得替代该基线。
+8. 涉及 Windows 桌面能力的 PR 必须在用户本机实际运行对应验收流程（至少包括 `npm run tauri dev`，并按功能验证窗口/权限/设备/进程行为）。CI 通过只能证明自动化构建与测试通过，不能替代本地桌面验收。
 
 ## 敏感信息与私人数据
 

@@ -50,7 +50,7 @@ MeetingLens 是一款面向 Windows 11 的本地优先 AI 会议助手。它在�
 
 ## 5. 功能范围
 
-### 5.1 第一轮：规格与技术基线（当前分支）
+### 5.1 Phase 0：规格与技术基线（已完成）
 
 - 完成产品、架构、数据、安全、开发计划与 Agent 工作流文档
 - 验证关键依赖、授权和 Python 兼容性，不安装重型 AI 组件
@@ -59,37 +59,49 @@ MeetingLens 是一款面向 Windows 11 的本地优先 AI 会议助手。它在�
 - React 经 Tauri command 调用 Rust，由 Rust 请求 sidecar `/health`
 - 单元测试、lint、formatter、type check、build 和 GitHub Actions
 
-本轮明确不实现录音、转录、上传解析、DeepSeek 调用、数据库业务表或屏幕采集。
+Phase 0 已通过 PR #1 合并，并在 Windows 本机实际启动 Tauri 窗口。该阶段没有实现录音、转录、上传解析、DeepSeek 调用、数据库业务表或屏幕采集。
 
-### 5.2 Phase 1：MVP
+### 5.2 MVP 1A：数据、模拟 UI 与安全基础
 
-- 会议列表、新建会议、本地 SQLite、手动开始/结束会议
-- 系统音频与麦克风采集、可见录音状态和实时转录
-- 上传 PDF、DOCX、PPTX、XLSX、TXT、Markdown、HTML、CSV 和图片，通过 Docling 提取文本
-- 保存完整时间戳转录
-- 用户确认后使用 `deepseek-v4-pro` 生成会后摘要
-- Markdown 与 DOCX 导出、设置页、本地安全日志和基础错误处理
-- 单次会议完整删除
+- **MVP 1A-1**：SQLite、迁移、会议 CRUD、删除语义和持久化，不做 UI 或 Provider。
+- **MVP 1A-2**：桌面页面、模拟转写和完整模拟会议流程，不接真实音频或外部 API。
+- **MVP 1A-3**：Provider 抽象、本地会话令牌、Windows Credential Manager `SecretStore`、安全测试和本地安全日志基础。
 
-Phase 1 不包含自动窗口检测、屏幕 OCR、实时名字识别、实时翻译、PDF 导出、托盘、自动更新或平台集成。
+### 5.3 MVP 1B：文档与会议纪要
 
-### 5.3 Phase 2：说话人与翻译
+- **MVP 1B-1**：上传 PDF、DOCX、PPTX、XLSX、TXT、Markdown、HTML、CSV 和图片，完成验证、隔离和 Docling 结构化解析。
+- **MVP 1B-2**：在稳定文档管线上使用 `deepseek-v4-pro` 做分阶段总结、证据引用以及 Markdown/DOCX 导出。
+
+Docling 与 DeepSeek 必须使用两个独立 PR，不得同时引入解析器和总结模型。
+
+### 5.4 MVP 1C：真实音频与转写
+
+- Sidecar supervisor、随机端口/会话令牌接线、崩溃恢复、孤儿进程回收和生命周期安全日志
+- Windows WASAPI 系统音频与麦克风、可见录音状态和异常恢复
+- 实时 ASR、完整时间戳转录、CPU 回退和会后校正入口
+
+以上内容必须继续拆成 sidecar supervisor、音频采集和实时转写三个小型 PR。
+
+### 5.5 MVP 2：实时翻译与说话人
 
 - 匿名实时说话人分离、人工重命名和会后 WhisperX 校正
 - 保存用户主动提供的短 voice sample，允许重录和删除
 - 使用 `deepseek-v4-flash` 做实时中英翻译，原文/译文并排显示
 - 决策和行动项反向链接到来源片段
 
-### 5.4 Phase 3：屏幕上下文
+### 5.6 MVP 3：会议窗口、OCR 与屏幕上下文
 
 - 用户显式选择目标会议窗口
 - accessibility tree / OCR 提取与关键事件检测
 - 只保存与会议相关的结构化事件和证据，截图短期缓存后默认删除
+- Screenpipe 只能作为可替换的可选 Capture Provider，不得成为核心依赖
 
-### 5.5 Phase 4：产品化
+### 5.7 MVP 4：安装包与产品化
 
 - 托盘、自动更新、崩溃恢复、诊断与隐私设置
 - PDF 导出、性能优化、长期稳定性与安装包签名
+
+各阶段的唯一分支名称、拆分顺序和验收条件见 `DEVELOPMENT_PLAN.md`。涉及 Windows 桌面行为时，必须由用户本机实际运行验收，CI 不能替代。
 
 ## 6. 明确不做
 
@@ -100,7 +112,7 @@ Phase 1 不包含自动窗口检测、屏幕 OCR、实时名字识别、实时�
 - 将全部会议数据一次发送给外部模型
 - 将 MeetingLens 视作遵守录音许可法律的替代品
 - 未经用户确认自动发送摘要、邮件或任务
-- Phase 1 的 SaaS 后端、账号体系、多人协作和跨平台优先开发
+- 当前 MVP 的 SaaS 后端、账号体系、多人协作和跨平台优先开发
 
 ## 7. 主要界面
 
@@ -138,7 +150,7 @@ Phase 1 不包含自动窗口检测、屏幕 OCR、实时名字识别、实时�
 - 禁止继续使用已弃用的 `deepseek-chat` 或 `deepseek-reasoner` 名称。
 - 长会议采用分段事实提取、主题归并、决策/行动项/未决问题提取和最终合并。
 
-## 11. 首轮验收标准
+## 11. Phase 0 验收标准
 
 - 五份核心规格文档相互一致。
 - Tauri 2 + React + TypeScript 脚手架通过前端类型检查和生产构建。
