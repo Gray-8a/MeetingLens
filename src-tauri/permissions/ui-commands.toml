@@ -1,0 +1,26 @@
+[[set]]
+identifier = "meeting-data-commands"
+description = "Allows the main MeetingLens UI to manage local meeting records."
+permissions = [
+  "allow-create-meeting",
+  "allow-get-meeting",
+  "allow-list-meetings",
+  "allow-update-meeting",
+  "allow-start-meeting",
+  "allow-end-meeting",
+  "allow-delete-meeting",
+]
+
+[[set]]
+identifier = "sidecar-status-command"
+description = "Allows the main MeetingLens UI to read the safe local Sidecar health status."
+permissions = ["allow-check-sidecar-health"]
+
+[[set]]
+identifier = "secret-status-management"
+description = "Allows the main MeetingLens UI to set, inspect status for, and delete an approved secret without reading it back."
+permissions = [
+  "allow-get-secret-status",
+  "allow-set-secret",
+  "allow-delete-secret",
+]

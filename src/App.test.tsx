@@ -8,6 +8,7 @@ import newSource from "./pages/NewMeetingPage.tsx?raw";
 import settingsSource from "./pages/SettingsPage.tsx?raw";
 import App from "./App";
 import { MeetingApiError } from "./api/meeting";
+import { SecretApiError } from "./api/secret";
 import type { AppServices } from "./app/services";
 import { formatLocalDate } from "./lib/presentation";
 import { SidecarApiError } from "./lib/sidecar";
@@ -29,6 +30,7 @@ import {
   meetingIds,
   syntheticMeeting,
 } from "./test/fakeMeetingApi";
+import { FakeSecretApi } from "./test/fakeSecretApi";
 
 const recordingMeeting = syntheticMeeting({
   id: meetingIds.recording,
@@ -139,6 +141,7 @@ function appServices(
 ): AppServices {
   return {
     meetingApi: api,
+    secretApi: new FakeSecretApi(),
     checkSidecarHealth: async () => ({
       status: "authenticated",
       binding: "loopback",
@@ -162,7 +165,15 @@ function renderAt(
   return render(<App services={appServices(api, transcriptionProvider)} />);
 }
 
+function renderSettings(secretApi: FakeSecretApi) {
+  const services = appServices(new FakeMeetingApi());
+  services.secretApi = secretApi;
+  window.history.replaceState(null, "", "#/settings");
+  return render(<App services={services} />);
+}
+
 afterEach(() => {
+  vi.restoreAllMocks();
   window.history.replaceState(null, "", "#/");
 });
 
@@ -567,6 +578,7 @@ describe("MeetingLens desktop UI", () => {
 
   it("does not expose a complete database path in settings", async () => {
     renderAt("/settings", new FakeMeetingApi());
+    await screen.findByText("Not configured");
 
     expect(
       screen.getByText(
@@ -574,6 +586,217 @@ describe("MeetingLens desktop UI", () => {
       ),
     ).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/[A-Z]:\\Users\\|\.sqlite3/i);
+  });
+
+  it("shows an unconfigured DeepSeek secret without revealing a value", async () => {
+    renderSettings(new FakeSecretApi());
+
+    expect(await screen.findByText("Not configured")).toBeInTheDocument();
+    const input = screen.getByLabelText("API key");
+    expect(input).toHaveAttribute("type", "password");
+    expect(input).toHaveAttribute("autocomplete", "off");
+    expect(input).toHaveValue("");
+    expect(screen.queryByRole("button", { name: /reveal|copy/i })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: /test connection/i }),
+    ).toBeNull();
+  });
+
+  it("shows configured status without prefilling the saved secret", async () => {
+    const api = new FakeSecretApi();
+    api.configured = true;
+    renderSettings(api);
+
+    expect(await screen.findByText("Configured")).toBeInTheDocument();
+    expect(screen.getByLabelText("API key")).toHaveValue("");
+    expect(
+      screen.getByRole("button", { name: "Delete stored key" }),
+    ).toBeEnabled();
+  });
+
+  it("shows SecretStore unavailable and disables secret actions", async () => {
+    const api = new FakeSecretApi();
+    api.available = false;
+    renderSettings(api);
+
+    expect(
+      await screen.findByText("SecretStore unavailable"),
+    ).toBeInTheDocument();
+    expect(screen.getByLabelText("API key")).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Save API key" })).toBeDisabled();
+  });
+
+  it("rejects ASCII-whitespace input before calling secretApi", async () => {
+    const user = userEvent.setup();
+    const api = new FakeSecretApi();
+    renderSettings(api);
+    await screen.findByText("Not configured");
+
+    await user.type(screen.getByLabelText("API key"), "   ");
+    await user.click(screen.getByRole("button", { name: "Save API key" }));
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Enter a non-empty API key.",
+    );
+    expect(api.setCallCount).toBe(0);
+  });
+
+  it("blocks duplicate saves while a secret write is pending", async () => {
+    const user = userEvent.setup();
+    const api = new FakeSecretApi();
+    const pending = deferred<void>();
+    api.setPending = pending.promise;
+    renderSettings(api);
+    await screen.findByText("Not configured");
+
+    await user.type(screen.getByLabelText("API key"), crypto.randomUUID());
+    await user.click(screen.getByRole("button", { name: "Save API key" }));
+    expect(screen.getByRole("button", { name: "Saving…" })).toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Saving…" }));
+    expect(api.setCallCount).toBe(1);
+
+    pending.resolve();
+    expect(await screen.findByText("Configured")).toBeInTheDocument();
+  });
+
+  it("clears the input after save and retains only configured status", async () => {
+    const user = userEvent.setup();
+    const api = new FakeSecretApi();
+    renderSettings(api);
+    await screen.findByText("Not configured");
+    const input = screen.getByLabelText("API key");
+
+    await user.type(input, crypto.randomUUID());
+    await user.click(screen.getByRole("button", { name: "Save API key" }));
+
+    expect(await screen.findByText("Configured")).toBeInTheDocument();
+    expect(input).toHaveValue("");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "API key saved to secure local storage.",
+    );
+  });
+
+  it("cancels deletion without changing configured status", async () => {
+    const user = userEvent.setup();
+    const api = new FakeSecretApi();
+    api.configured = true;
+    renderSettings(api);
+    await screen.findByText("Configured");
+
+    await user.click(screen.getByRole("button", { name: "Delete stored key" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(screen.getByText("Configured")).toBeInTheDocument();
+    expect(api.deleteCallCount).toBe(0);
+  });
+
+  it("deletes a configured secret after explicit confirmation", async () => {
+    const user = userEvent.setup();
+    const api = new FakeSecretApi();
+    api.configured = true;
+    renderSettings(api);
+    await screen.findByText("Configured");
+
+    await user.click(screen.getByRole("button", { name: "Delete stored key" }));
+    await user.click(screen.getByRole("button", { name: "Confirm delete" }));
+
+    expect(await screen.findByText("Not configured")).toBeInTheDocument();
+    expect(api.deleteCallCount).toBe(1);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Stored API key deleted.",
+    );
+  });
+
+  it("treats a missing secret delete as an idempotent unconfigured result", async () => {
+    const user = userEvent.setup();
+    const api = new FakeSecretApi();
+    api.configured = true;
+    const originalDelete = api.delete.bind(api);
+    api.delete = async (kind) => {
+      api.configured = false;
+      const result = await originalDelete(kind);
+      return { ...result, deleted: false };
+    };
+    renderSettings(api);
+    await screen.findByText("Configured");
+
+    await user.click(screen.getByRole("button", { name: "Delete stored key" }));
+    await user.click(screen.getByRole("button", { name: "Confirm delete" }));
+
+    expect(await screen.findByText("Not configured")).toBeInTheDocument();
+  });
+
+  it("renders a stable secret error without backend wording", async () => {
+    const user = userEvent.setup();
+    const api = new FakeSecretApi();
+    api.setError = new SecretApiError("secret_access_denied", false);
+    renderSettings(api);
+    await screen.findByText("Not configured");
+
+    await user.type(screen.getByLabelText("API key"), crypto.randomUUID());
+    await user.click(screen.getByRole("button", { name: "Save API key" }));
+
+    expect(await screen.findByText("Secure storage error")).toBeInTheDocument();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Secure local storage denied access.",
+    );
+  });
+
+  it("maps unknown secret failures without exposing the original object", async () => {
+    const user = userEvent.setup();
+    const api = new FakeSecretApi();
+    api.setError = new Error("private native credential details");
+    renderSettings(api);
+    await screen.findByText("Not configured");
+
+    await user.type(screen.getByLabelText("API key"), crypto.randomUUID());
+    await user.click(screen.getByRole("button", { name: "Save API key" }));
+
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "MeetingLens could not complete that action.",
+    );
+    expect(document.body.textContent).not.toContain("private native");
+  });
+
+  it("clears the password input when settings unmounts", async () => {
+    const user = userEvent.setup();
+    const view = renderSettings(new FakeSecretApi());
+    await screen.findByText("Not configured");
+    const input = screen.getByLabelText("API key") as HTMLInputElement;
+    await user.type(input, crypto.randomUUID());
+
+    view.unmount();
+
+    expect(input.value).toBe("");
+  });
+
+  it("does not write secret input to browser storage or console", async () => {
+    const user = userEvent.setup();
+    const storageSet = vi.spyOn(Storage.prototype, "setItem");
+    const consoleLog = vi
+      .spyOn(console, "log")
+      .mockImplementation(() => undefined);
+    const consoleInfo = vi
+      .spyOn(console, "info")
+      .mockImplementation(() => undefined);
+    const consoleWarn = vi
+      .spyOn(console, "warn")
+      .mockImplementation(() => undefined);
+    const consoleError = vi
+      .spyOn(console, "error")
+      .mockImplementation(() => undefined);
+    renderSettings(new FakeSecretApi());
+    await screen.findByText("Not configured");
+
+    await user.type(screen.getByLabelText("API key"), crypto.randomUUID());
+    await user.click(screen.getByRole("button", { name: "Save API key" }));
+    await screen.findByText("Configured");
+
+    expect(storageSet).not.toHaveBeenCalled();
+    expect(consoleLog).not.toHaveBeenCalled();
+    expect(consoleInfo).not.toHaveBeenCalled();
+    expect(consoleWarn).not.toHaveBeenCalled();
+    expect(consoleError).not.toHaveBeenCalled();
   });
 
   it("shows the authenticated Sidecar boundary without internal details", async () => {
@@ -587,7 +810,7 @@ describe("MeetingLens desktop UI", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("This device only")).toBeInTheDocument();
     expect(screen.getByText("Current application session")).toBeInTheDocument();
-    expect(screen.getByText("Not implemented")).toBeInTheDocument();
+    expect(screen.getByText("Disabled")).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(
       /Authorization|Bearer|127\.0\.0\.1|8765|MEETINGLENS_SESSION_TOKEN/i,
     );
@@ -620,8 +843,9 @@ describe("MeetingLens desktop UI", () => {
     expect(document.body.textContent).not.toContain("private runtime details");
   });
 
-  it("shows all five providers as explicit mocks in settings", () => {
+  it("shows all five providers as explicit mocks in settings", async () => {
     renderAt("/settings", new FakeMeetingApi());
+    await screen.findByText("Not configured");
 
     expect(screen.getByText("Capture")).toBeInTheDocument();
     expect(screen.getByText("Transcription")).toBeInTheDocument();
@@ -650,7 +874,7 @@ describe("MeetingLens desktop UI", () => {
     );
   });
 
-  it("shows a safe fallback when a provider reports a future status", () => {
+  it("shows a safe fallback when a provider reports a future status", async () => {
     const services = appServices(new FakeMeetingApi());
     vi.spyOn(services.providers.get("capture"), "getStatus").mockReturnValue(
       "future-provider-state" as ProviderStatus,
@@ -658,6 +882,7 @@ describe("MeetingLens desktop UI", () => {
     window.history.replaceState(null, "", "#/settings");
 
     render(<App services={services} />);
+    await screen.findByText("Not configured");
 
     expect(
       screen.getByText(/Mock · Unknown status · Not enabled/),

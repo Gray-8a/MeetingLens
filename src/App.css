@@ -1023,6 +1023,37 @@ input[aria-invalid="true"] {
   color: var(--subtle);
 }
 
+.secret-status {
+  margin: 0 0 14px;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.secret-status[data-status="configured"] {
+  color: #25634a;
+}
+
+.secret-status[data-status="unavailable"],
+.secret-status[data-status="error"] {
+  color: var(--danger);
+}
+
+.secret-form {
+  display: grid;
+  gap: 8px;
+}
+
+.secret-form label {
+  color: #354257;
+  font-size: 0.73rem;
+  font-weight: 750;
+}
+
+.secret-form + .confirm-panel,
+.secret-form ~ .field-help {
+  margin-top: 14px;
+}
+
 @media (max-width: 1100px) {
   .desktop-shell {
     grid-template-columns: 200px minmax(0, 1fr);

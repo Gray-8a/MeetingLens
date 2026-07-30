@@ -1,5 +1,7 @@
 pub mod data;
 mod meeting_commands;
+mod secret_commands;
+pub mod secret_store;
 mod sidecar;
 
 use tauri::Manager;
@@ -11,6 +13,7 @@ pub fn run() {
             let app_data_dir = app.path().app_data_dir()?;
             let meeting_service = data::MeetingService::initialize(app_data_dir)?;
             app.manage(meeting_service);
+            app.manage(secret_store::SecretStoreService::production());
             app.manage(sidecar::SidecarRuntime::start());
             Ok(())
         })
@@ -28,6 +31,9 @@ pub fn run() {
             meeting_commands::start_meeting,
             meeting_commands::end_meeting,
             meeting_commands::delete_meeting,
+            secret_commands::get_secret_status,
+            secret_commands::set_secret,
+            secret_commands::delete_secret,
         ])
         .run(tauri::generate_context!())
         .expect("error while running MeetingLens");
