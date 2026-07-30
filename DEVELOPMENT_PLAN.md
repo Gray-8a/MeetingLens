@@ -12,22 +12,23 @@
 4. 涉及 Windows 桌面行为时，由用户本机实际运行验收，不能只凭 CI 声称完成。
 5. 合并后再从最新 `main` 创建下一个分支，不堆叠未审查的大型 PR。
 
-当前路线图对齐工作使用 `docs/align-mvp-roadmap`。它是产品开发前的治理门禁，不实现任何产品功能。
+MVP 1A-2 实现前使用 `docs/define-meeting-lifecycle` 固定会议状态转换、删除演进策略和 PR 边界。该治理门禁只修改文档；合并后才可开始接口层实现。
 
 ## 2. 统一路线图
 
-| 阶段     | 目标                                                | 计划分支/PR                                             | 状态         |
-| -------- | --------------------------------------------------- | ------------------------------------------------------- | ------------ |
-| Phase 0  | 规格与技术基线                                      | `docs/project-specification` / PR #1                    | 已完成并合并 |
-| MVP 1A-1 | SQLite、迁移、会议 CRUD、删除语义和持久化           | `feat/meeting-data-core`                                | 下一阶段     |
-| MVP 1A-2 | 桌面 UI、模拟转写和完整模拟会议流程                 | `feat/meeting-ui-mock`                                  | 待开始       |
-| MVP 1A-3 | Provider 抽象、本地会话令牌、SecretStore 和安全基础 | `feat/provider-security-foundation`                     | 待开始       |
-| MVP 1B-1 | 文档上传、验证、隔离和 Docling 解析                 | `feat/document-processing`                              | 待开始       |
-| MVP 1B-2 | DeepSeek 分阶段总结、证据引用和纪要导出             | `feat/deepseek-summary`                                 | 待开始       |
-| MVP 1C   | Windows 音频、实时转写、sidecar 生命周期            | 见 §8 的三个小 PR                                       | 待开始       |
-| MVP 2    | 实时翻译与说话人                                    | `feat/realtime-translation`、`feat/speaker-diarization` | 待开始       |
-| MVP 3    | 会议窗口、OCR 和屏幕上下文                          | `feat/window-context`、`feat/screen-ocr`                | 待开始       |
-| MVP 4    | 安装包与产品化                                      | `chore/windows-packaging`、`feat/product-hardening`     | 待开始       |
+| 阶段       | 目标                                                | 计划分支/PR                                             | 状态         |
+| ---------- | --------------------------------------------------- | ------------------------------------------------------- | ------------ |
+| Phase 0    | 规格与技术基线                                      | `docs/project-specification` / PR #1                    | 已完成并合并 |
+| MVP 1A-1   | SQLite、迁移、会议 CRUD、删除语义和持久化           | `feat/meeting-data-core` / PR #3                        | 已完成并合并 |
+| MVP 1A-2-1 | Meeting Tauri Command API 与 TypeScript 客户端      | `feat/meeting-command-api`                              | 下一阶段     |
+| MVP 1A-2-2 | 桌面 UI、模拟转写和完整模拟会议流程                 | `feat/meeting-ui-mock`                                  | 待开始       |
+| MVP 1A-3   | Provider 抽象、本地会话令牌、SecretStore 和安全基础 | `feat/provider-security-foundation`                     | 待开始       |
+| MVP 1B-1   | 文档上传、验证、隔离和 Docling 解析                 | `feat/document-processing`                              | 待开始       |
+| MVP 1B-2   | DeepSeek 分阶段总结、证据引用和纪要导出             | `feat/deepseek-summary`                                 | 待开始       |
+| MVP 1C     | Windows 音频、实时转写、sidecar 生命周期            | 见 §8 的三个小 PR                                       | 待开始       |
+| MVP 2      | 实时翻译与说话人                                    | `feat/realtime-translation`、`feat/speaker-diarization` | 待开始       |
+| MVP 3      | 会议窗口、OCR 和屏幕上下文                          | `feat/window-context`、`feat/screen-ocr`                | 待开始       |
+| MVP 4      | 安装包与产品化                                      | `chore/windows-packaging`、`feat/product-hardening`     | 待开始       |
 
 除上表和各阶段明确列出的子分支外，不再使用表外的历史任务名或笼统阶段称呼。
 
@@ -37,7 +38,7 @@
 
 完成证据：PR #1 已通过前端/Python 和 Windows Rust CI；Windows 本机已实际运行 `npm run tauri dev` 并显示 MeetingLens 窗口。
 
-## 4. MVP 1A-1：会议数据核心
+## 4. MVP 1A-1：会议数据核心（已完成）
 
 分支：`feat/meeting-data-core`
 
@@ -53,7 +54,37 @@
 
 验收：迁移可从空库执行且可重复检测；CRUD 与删除语义有 Rust 测试；数据库文件保持本地并被 Git 忽略；应用重启后数据仍存在；本机运行最小持久化验收。
 
-## 5. MVP 1A-2：桌面 UI 与模拟会议
+完成证据：PR #3 已 squash merge；Rust 数据层测试覆盖迁移、CRUD、回滚、路径守卫和重启持久化，Windows 本机已生成并重启验证应用私有 SQLite 数据库。
+
+## 5. MVP 1A-2：Command API、桌面 UI 与模拟会议
+
+MVP 1A-2 固定拆成以下两个顺序 PR。前一个 PR 合并后，后一个 PR 才能从最新 `main` 开始。
+
+### 5.1 MVP 1A-2-1：Meeting Tauri Command API
+
+分支：`feat/meeting-command-api`
+
+范围：
+
+- 将现有 meeting service 暴露为 `create_meeting`、`get_meeting`、`list_meetings`、`update_meeting`、`start_meeting`、`end_meeting` 和 `delete_meeting`
+- 使用明确的 command/response DTO；command 不写 SQL，也不接受数据库路径
+- 在 React/TypeScript 侧提供集中、严格类型且可 mock 的 `meetingApi`
+- 使用稳定、脱敏的错误码，不向 WebView 泄漏 SQL、数据库路径或底层错误
+- 通过专用 command 执行状态转换和后端 UTC 时间戳写入
+
+生命周期契约：
+
+- 创建会议得到 `draft`，`started_at` 与 `ended_at` 均为空
+- `start_meeting` 只允许 `draft → recording`，并由 Rust 后端写入 `started_at`
+- 在合成会议阶段，`end_meeting` 只允许 `recording → ready`，并由 Rust 后端写入 `ended_at`
+- `processing` 保留给后续真实异步处理，只能由受信任后端进入；普通前端更新不能修改状态或生命周期时间戳
+- 重复开始、重复结束、`draft → ready` 和 `ready → recording` 等转换使用稳定错误码 `meeting_invalid_state` 拒绝
+
+不得包含：完整页面、表单、模拟字幕、participants、真实音频、Provider、SecretStore、Docling、DeepSeek、OCR 或 sidecar supervisor。
+
+验收：Rust 测试覆盖每个 command、校验、合法/非法转换和脱敏失败；TypeScript 测试覆盖 command 名称、序列化、响应解析和统一错误转换；Windows 本机实际调用 `create → list → start → end → delete`，重启后验证持久化。
+
+### 5.2 MVP 1A-2-2：桌面 UI 与模拟会议
 
 分支：`feat/meeting-ui-mock`
 
@@ -165,4 +196,4 @@ Screenpipe 只能是可替换的可选 Capture Provider，不得成为核心强�
 
 ## 14. 当前下一步
 
-路线图对齐 PR 合并后，只能开始 `feat/meeting-data-core`。该 PR 仅实现 MVP 1A-1 的 SQLite、迁移、会议 CRUD、删除语义和持久化；不得提前实现 UI、Provider、文档、DeepSeek 或音频。
+生命周期文档 PR 合并后，只能开始 `feat/meeting-command-api`。该 PR 仅实现 MVP 1A-2-1 的 Tauri commands、状态转换与 TypeScript 客户端；不得提前实现完整 UI、模拟字幕、Provider、文档、DeepSeek 或音频。该接口 PR 由用户决定合并后，才能从最新 `main` 创建 `feat/meeting-ui-mock`。
