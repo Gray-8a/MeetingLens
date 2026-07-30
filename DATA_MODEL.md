@@ -63,6 +63,7 @@ erDiagram
 - `failed` 与 `archived` 同样只能通过后续定义的专用 service 操作进入，不属于通用会议更新字段。
 - 重复开始、重复结束、`draft → ready`、`ready → recording` 等非法转换必须原子拒绝，并返回稳定错误码 `meeting_invalid_state`。
 - 时间戳由后端生成；前端传入的开始/结束时间不得作为状态转换依据。
+- 生命周期相关的非法操作统一使用对外错误码 `meeting_invalid_state`；不得再引入含义重复的 `invalid_state_transition`。
 
 ### `artifacts`
 
@@ -282,6 +283,13 @@ app-data/
 ## 6. 删除与保留
 
 MVP 1A-1 尚无会议所有的 artifact、后台 job 或文件句柄。当前实现可在同一事务内设置 `deleted_at` 后硬删除 meeting；任一步失败则整笔回滚。此时 `deleted_at` 是删除协调边界的预留字段，不要求留下持久 tombstone。
+
+MVP 1A-2-1 的删除状态契约固定如下：
+
+- `draft` 和 `ready` 允许事务内硬删除。
+- `recording` 禁止删除；用户必须先通过 `end_meeting` 正常结束，拒绝时返回 `meeting_invalid_state`。
+- `processing`、`failed` 和 `archived` 当前不能由 Meeting Command API 进入，也不允许删除；后续阶段必须先在文档中定义相应清理语义。
+- 删除格式正确但不存在的会议返回 `meeting_not_found`，不得将其伪装为删除成功。
 
 从首次引入 artifact、后台 job 或会议文件的阶段开始，删除必须升级为可重试的协调流程：
 

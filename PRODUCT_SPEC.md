@@ -70,6 +70,8 @@ Phase 0 已通过 PR #1 合并，并在 Windows 本机实际启动 Tauri 窗口�
 
 合成会议的产品状态固定为：创建后 `draft`，开始后 `recording`，结束后 `ready`。开始/结束时间由后端生成；`processing` 保留给未来真实异步处理，用户界面不能任意写入状态。
 
+当前阶段只允许删除尚未开始的 `draft` 或已正常结束的 `ready` 会议。`recording` 必须先结束再删除；其他保留状态在后续阶段定义清理语义前同样不可删除。
+
 ### 5.3 MVP 1B：文档与会议纪要
 
 - **MVP 1B-1**：上传 PDF、DOCX、PPTX、XLSX、TXT、Markdown、HTML、CSV 和图片，完成验证、隔离和 Docling 结构化解析。

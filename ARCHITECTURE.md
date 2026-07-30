@@ -151,6 +151,8 @@ MVP 1A-2-1 先建立独立的 Meeting Tauri Command API，再由 MVP 1A-2-2 的�
 
 创建会议后状态为 `draft`。`start_meeting` 执行 `draft → recording`，`end_meeting` 在合成会议阶段执行 `recording → ready`；两个生命周期时间戳均由 Rust 以 UTC ISO 8601 写入。`processing` 保留给后续受信任的异步处理流程，普通更新 command 不得修改状态或时间戳。非法转换返回 `meeting_invalid_state`，不得泄漏 SQL、路径或底层数据库错误。
 
+`delete_meeting` 复用 service 的事务边界，只允许删除 `draft` 或 `ready`。`recording` 以及当前不可进入的 `processing`、`failed`、`archived` 返回 `meeting_invalid_state`；不存在的会议返回 `meeting_not_found`。对外协议不使用含义重复的 `invalid_state_transition`。
+
 ## 7. 仓库结构
 
 ```text
