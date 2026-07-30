@@ -67,7 +67,6 @@ pub(crate) fn update(
     transaction: &Transaction<'_>,
     id: &str,
     title: &str,
-    status: MeetingStatus,
     primary_language: &str,
 ) -> DataResult<()> {
     let changed = transaction
@@ -75,17 +74,64 @@ pub(crate) fn update(
             "
             UPDATE meetings
             SET title = ?2,
-                status = ?3,
-                primary_language = ?4,
+                primary_language = ?3,
                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
             WHERE id = ?1 AND deleted_at IS NULL
             ",
-            params![id, title, status.as_str(), primary_language],
+            params![id, title, primary_language],
         )
         .map_err(DataError::from)?;
 
     if changed == 0 {
         return Err(DataError::NotFound);
+    }
+    Ok(())
+}
+
+pub(crate) fn start(transaction: &Transaction<'_>, id: &str) -> DataResult<()> {
+    let changed = transaction
+        .execute(
+            "
+            UPDATE meetings
+            SET status = 'recording',
+                started_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE id = ?1
+              AND deleted_at IS NULL
+              AND status = 'draft'
+              AND started_at IS NULL
+              AND ended_at IS NULL
+            ",
+            [id],
+        )
+        .map_err(DataError::from)?;
+
+    if changed == 0 {
+        return Err(DataError::InvalidState);
+    }
+    Ok(())
+}
+
+pub(crate) fn end(transaction: &Transaction<'_>, id: &str) -> DataResult<()> {
+    let changed = transaction
+        .execute(
+            "
+            UPDATE meetings
+            SET status = 'ready',
+                ended_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE id = ?1
+              AND deleted_at IS NULL
+              AND status = 'recording'
+              AND started_at IS NOT NULL
+              AND ended_at IS NULL
+            ",
+            [id],
+        )
+        .map_err(DataError::from)?;
+
+    if changed == 0 {
+        return Err(DataError::InvalidState);
     }
     Ok(())
 }

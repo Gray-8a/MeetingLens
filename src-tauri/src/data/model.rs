@@ -60,6 +60,5 @@ pub struct CreateMeeting {
 #[derive(Clone, Debug, Default, Deserialize, PartialEq, Eq, Serialize)]
 pub struct UpdateMeeting {
     pub title: Option<String>,
-    pub status: Option<MeetingStatus>,
     pub primary_language: Option<String>,
 }
