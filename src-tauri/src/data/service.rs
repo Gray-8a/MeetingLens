@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 use super::database::Database;
 use super::error::{DataError, DataResult};
-use super::model::{CreateMeeting, Meeting, UpdateMeeting};
+use super::model::{CreateMeeting, Meeting, MeetingStatus, UpdateMeeting};
 use super::paths::StoragePaths;
 use super::repository::{self, NewMeeting};
 
@@ -82,9 +82,47 @@ impl MeetingService {
             .map(|value| normalize_required(value, MAX_LANGUAGE_CHARS))
             .transpose()?
             .unwrap_or(current.primary_language);
-        let status = changes.status.unwrap_or(current.status);
+        repository::update(&transaction, id, &title, &primary_language)?;
+        let meeting = repository::get(&transaction, id)?;
+        transaction.commit().map_err(DataError::from)?;
+        Ok(meeting)
+    }
 
-        repository::update(&transaction, id, &title, status, &primary_language)?;
+    pub fn start(&self, id: &str) -> DataResult<Meeting> {
+        validate_id(id)?;
+        let mut connection = self.database.connect()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(DataError::from)?;
+        let current = repository::get(&transaction, id)?;
+        if current.status != MeetingStatus::Draft
+            || current.started_at.is_some()
+            || current.ended_at.is_some()
+        {
+            return Err(DataError::InvalidState);
+        }
+
+        repository::start(&transaction, id)?;
+        let meeting = repository::get(&transaction, id)?;
+        transaction.commit().map_err(DataError::from)?;
+        Ok(meeting)
+    }
+
+    pub fn end(&self, id: &str) -> DataResult<Meeting> {
+        validate_id(id)?;
+        let mut connection = self.database.connect()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(DataError::from)?;
+        let current = repository::get(&transaction, id)?;
+        if current.status != MeetingStatus::Recording
+            || current.started_at.is_none()
+            || current.ended_at.is_some()
+        {
+            return Err(DataError::InvalidState);
+        }
+
+        repository::end(&transaction, id)?;
         let meeting = repository::get(&transaction, id)?;
         transaction.commit().map_err(DataError::from)?;
         Ok(meeting)
@@ -96,6 +134,10 @@ impl MeetingService {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(DataError::from)?;
+        let current = repository::get(&transaction, id)?;
+        if !matches!(current.status, MeetingStatus::Draft | MeetingStatus::Ready) {
+            return Err(DataError::InvalidState);
+        }
         repository::delete(&transaction, id)?;
         transaction.commit().map_err(DataError::from)
     }
@@ -111,9 +153,11 @@ fn normalize_required(value: &str, max_chars: usize) -> DataResult<String> {
 }
 
 fn validate_id(id: &str) -> DataResult<()> {
-    Uuid::parse_str(id)
-        .map(|_| ())
-        .map_err(|_| DataError::InvalidInput)
+    let parsed = Uuid::parse_str(id).map_err(|_| DataError::InvalidId)?;
+    if parsed.to_string() != id {
+        return Err(DataError::InvalidId);
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -123,8 +167,6 @@ mod tests {
     use rusqlite::params;
 
     use super::*;
-    use crate::data::model::MeetingStatus;
-
     struct TestDirectory(PathBuf);
 
     impl TestDirectory {
@@ -167,19 +209,97 @@ mod tests {
                 &created.id,
                 UpdateMeeting {
                     title: Some("Synthetic project review".to_string()),
-                    status: Some(MeetingStatus::Ready),
                     primary_language: Some("zh-CN".to_string()),
                 },
             )
             .expect("meeting should update");
         assert_eq!(updated.title, "Synthetic project review");
-        assert_eq!(updated.status, MeetingStatus::Ready);
+        assert_eq!(updated.status, MeetingStatus::Draft);
         assert_eq!(updated.primary_language, "zh-CN");
         assert_eq!(service.list().expect("meetings should list"), vec![updated]);
 
         service.delete(&created.id).expect("meeting should delete");
         assert_eq!(service.get(&created.id), Err(DataError::NotFound));
         assert!(service.list().expect("meeting list should load").is_empty());
+    }
+
+    #[test]
+    fn enforces_the_synthetic_meeting_lifecycle_and_server_timestamps() {
+        let directory = TestDirectory::new();
+        let service = MeetingService::initialize(&directory.0).expect("service should initialize");
+        let draft = service
+            .create(create_input("Synthetic lifecycle meeting"))
+            .expect("meeting should be created");
+
+        assert_eq!(service.end(&draft.id), Err(DataError::InvalidState));
+
+        let recording = service.start(&draft.id).expect("draft should start");
+        let started_at = recording
+            .started_at
+            .clone()
+            .expect("start should set started_at");
+        assert_eq!(recording.status, MeetingStatus::Recording);
+        assert!(started_at.ends_with('Z'));
+        assert_eq!(recording.ended_at, None);
+        assert_eq!(service.start(&draft.id), Err(DataError::InvalidState));
+        assert_eq!(
+            service
+                .get(&draft.id)
+                .expect("recording meeting should remain")
+                .started_at,
+            Some(started_at.clone())
+        );
+
+        let ready = service.end(&draft.id).expect("recording should end");
+        let ended_at = ready.ended_at.expect("end should set ended_at");
+        assert_eq!(ready.status, MeetingStatus::Ready);
+        assert!(ended_at.ends_with('Z'));
+        assert!(ended_at >= started_at);
+        assert_eq!(service.end(&draft.id), Err(DataError::InvalidState));
+        assert_eq!(service.start(&draft.id), Err(DataError::InvalidState));
+    }
+
+    #[test]
+    fn only_deletes_draft_or_ready_meetings() {
+        let directory = TestDirectory::new();
+        let service = MeetingService::initialize(&directory.0).expect("service should initialize");
+
+        let draft = service
+            .create(create_input("Synthetic draft deletion"))
+            .expect("draft should be created");
+        service.delete(&draft.id).expect("draft should delete");
+        assert_eq!(service.get(&draft.id), Err(DataError::NotFound));
+
+        let meeting = service
+            .create(create_input("Synthetic ready deletion"))
+            .expect("meeting should be created");
+        service.start(&meeting.id).expect("meeting should start");
+        assert_eq!(service.delete(&meeting.id), Err(DataError::InvalidState));
+        service.end(&meeting.id).expect("meeting should end");
+        service.delete(&meeting.id).expect("ready should delete");
+        assert_eq!(service.get(&meeting.id), Err(DataError::NotFound));
+    }
+
+    #[test]
+    fn rejects_deletion_for_reserved_states() {
+        let directory = TestDirectory::new();
+        let service = MeetingService::initialize(&directory.0).expect("service should initialize");
+
+        for status in ["processing", "failed", "archived"] {
+            let meeting = service
+                .create(create_input("Synthetic reserved state"))
+                .expect("meeting should be created");
+            let connection = service.database.connect().expect("database should connect");
+            connection
+                .execute(
+                    "UPDATE meetings SET status = ?2 WHERE id = ?1",
+                    params![&meeting.id, status],
+                )
+                .expect("test should set reserved state");
+            drop(connection);
+
+            assert_eq!(service.delete(&meeting.id), Err(DataError::InvalidState));
+        }
     }
 
     #[test]
@@ -254,7 +374,11 @@ mod tests {
 
         assert_eq!(service.get(&missing_id), Err(DataError::NotFound));
         assert_eq!(service.delete(&missing_id), Err(DataError::NotFound));
-        assert_eq!(service.get("not-a-uuid"), Err(DataError::InvalidInput));
+        assert_eq!(service.get("not-a-uuid"), Err(DataError::InvalidId));
+        assert_eq!(
+            service.get(&Uuid::new_v4().simple().to_string()),
+            Err(DataError::InvalidId)
+        );
         assert_eq!(
             service.update(
                 &missing_id,
