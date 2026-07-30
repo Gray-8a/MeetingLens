@@ -58,6 +58,16 @@ flowchart LR
 - 外部调用失败时保留本地数据和可重试任务，不阻塞会议浏览。
 - 默认模型为实时翻译 `deepseek-v4-flash`、最终摘要 `deepseek-v4-pro`；base URL 可配置，默认 `https://api.deepseek.com`。
 
+### 3.6 Provider 契约与 Runtime
+
+MVP 1A-3A 在 React/TypeScript 应用边界定义五类能力契约：Capture、Transcription、Translation、Summary 和 DocumentParser。每个契约明确输入、输出、统一状态、稳定错误、取消和清理行为；页面只通过应用拥有的 `ProviderRegistry` 获取能力，不直接实例化第三方实现。
+
+当前只有确定性的纯内存 Mock Provider：不访问设备、文件系统或网络，不持久化转录/翻译/摘要/文档结果，并在设置页明确标为 Mock/未启用。旧 `MockTranscriptSource` 已迁移为 `MockTranscriptionProvider`，避免两套模拟字幕架构并存。Registry 不是全局单例，可由测试注入或重置，并在应用页面关闭时统一 dispose。
+
+本阶段契约只位于 TypeScript，因为尚无真实 Provider RPC。Rust 继续负责系统权限、Tauri command、数据库和未来进程/凭据边界；Python 继续只提供现有 sidecar 健康契约。真实实现出现时再在所属层增加版本化 adapter，不为形式对称提前复制无调用方的 Rust/Python 接口。
+
+未来替换关系保持可选：Screenpipe 只能是 Capture Provider；Whisper/Diart 属于 Transcription Provider；DeepSeek 只能实现 Translation/Summary Provider；Docling 只能实现 DocumentParser Provider。SecretStore、随机端口、会话令牌、认证与安全日志留在 MVP 1A-3B。
+
 ## 4. 信任边界
 
 | 边界            | 高信任侧        | 低信任侧       | 主要控制                                        |
@@ -103,7 +113,7 @@ sequenceDiagram
     Rust-->>UI: typed health or stable error code
 ```
 
-Rust 使用 1 秒连接超时、2 秒总超时、禁止重定向，并且不把底层网络错误、路径或响应正文回显给 WebView。固定端口仅用于 Phase 0 开发验证；MVP 1A-3 定义随机端口与高熵会话 token 契约，MVP 1C 的 supervisor 完成实际进程接线。
+Rust 使用 1 秒连接超时、2 秒总超时、禁止重定向，并且不把底层网络错误、路径或响应正文回显给 WebView。固定端口仅用于 Phase 0 开发验证；MVP 1A-3B 定义随机端口与高熵会话 token 契约，MVP 1C 的 supervisor 完成实际进程接线。
 
 ### 5.2 规划端点
 
@@ -158,6 +168,7 @@ MVP 1A-2-1 先建立独立的 Meeting Tauri Command API，再由 MVP 1A-2-2 的�
 ```text
 MeetingLens/
 ├── src/                       # React + TypeScript UI
+│   └── providers/             # Provider 契约、Registry 与纯内存 Mock
 ├── src-tauri/                 # Tauri/Rust core 与 capabilities
 ├── sidecar/
 │   ├── meetinglens_sidecar/   # Python 服务
@@ -197,18 +208,19 @@ Phase 0 不提前写入 `externalBin`，因为仓库尚无可验证的平台二�
 
 ### 10.1 实施顺序与模块所有权
 
-| 阶段       | 架构交付                                                                   | 明确不包含                   |
-| ---------- | -------------------------------------------------------------------------- | ---------------------------- |
-| MVP 1A-1   | SQLite、迁移、meeting repository/service、删除语义和持久化                 | UI、Provider、worker         |
-| MVP 1A-2-1 | Meeting Tauri commands、DTO、状态机和 TypeScript `meetingApi`              | 完整页面、模拟字幕、Provider |
-| MVP 1A-2-2 | React 页面、模拟转写和完整合成会议数据流                                   | 真实音频、外部 API           |
-| MVP 1A-3   | Provider 接口、随机端口/令牌基础、SecretStore、安全日志和 fail-closed 测试 | Docling、DeepSeek、音频      |
-| MVP 1B-1   | 隔离的 Docling document worker 和来源映射                                  | 总结模型                     |
-| MVP 1B-2   | DeepSeek summary adapter、证据引用和导出                                   | 文档解析器变更               |
-| MVP 1C     | Sidecar supervisor、崩溃/孤儿进程回收、WASAPI 和实时 ASR                   | 翻译、说话人、屏幕           |
-| MVP 2      | 隔离的翻译、Diart 和 WhisperX worker                                       | 屏幕采集                     |
-| MVP 3      | Window context、accessibility/OCR 和可选 Capture Provider                  | 核心强绑定 Screenpipe        |
-| MVP 4      | Windows 打包、签名、升级、诊断和产品加固                                   | 新核心业务范围               |
+| 阶段       | 架构交付                                                       | 明确不包含                   |
+| ---------- | -------------------------------------------------------------- | ---------------------------- |
+| MVP 1A-1   | SQLite、迁移、meeting repository/service、删除语义和持久化     | UI、Provider、worker         |
+| MVP 1A-2-1 | Meeting Tauri commands、DTO、状态机和 TypeScript `meetingApi`  | 完整页面、模拟字幕、Provider |
+| MVP 1A-2-2 | React 页面、模拟转写和完整合成会议数据流                       | 真实音频、外部 API           |
+| MVP 1A-3A  | TypeScript Provider 契约、Registry、纯内存 Mock 与模拟会议迁移 | 凭据、令牌、真实 Provider    |
+| MVP 1A-3B  | 随机端口/令牌基础、SecretStore、安全日志和 fail-closed 测试    | Docling、DeepSeek、音频      |
+| MVP 1B-1   | 隔离的 Docling document worker 和来源映射                      | 总结模型                     |
+| MVP 1B-2   | DeepSeek summary adapter、证据引用和导出                       | 文档解析器变更               |
+| MVP 1C     | Sidecar supervisor、崩溃/孤儿进程回收、WASAPI 和实时 ASR       | 翻译、说话人、屏幕           |
+| MVP 2      | 隔离的翻译、Diart 和 WhisperX worker                           | 屏幕采集                     |
+| MVP 3      | Window context、accessibility/OCR 和可选 Capture Provider      | 核心强绑定 Screenpipe        |
+| MVP 4      | Windows 打包、签名、升级、诊断和产品加固                       | 新核心业务范围               |
 
 每一行仍须按 `DEVELOPMENT_PLAN.md` 拆成指定的小型 PR。上游阶段只能通过版本化接口为下游提供能力，不得把下游实现提前塞入当前 PR。
 

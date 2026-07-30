@@ -1,3 +1,6 @@
+import { useEffect, useState } from "react";
+import { useServices } from "../app/services";
+import { providerStatusLabel, type ProviderKind } from "../providers/types";
 import type { DatabaseStatus } from "./HomePage";
 
 export type LocalServiceStatus =
@@ -26,6 +29,19 @@ export function SettingsPage({
   databaseStatus: DatabaseStatus;
   localServiceStatus: LocalServiceStatus;
 }) {
+  const { providers } = useServices();
+  const [providerSnapshots, setProviderSnapshots] = useState(() =>
+    providers.snapshots(),
+  );
+
+  useEffect(() => {
+    const refresh = () => setProviderSnapshots(providers.snapshots());
+    const unsubscribers = providerKinds.map((kind) =>
+      providers.get(kind).subscribeStatus(refresh),
+    );
+    return () => unsubscribers.forEach((unsubscribe) => unsubscribe());
+  }, [providers]);
+
   return (
     <section className="content-panel" aria-labelledby="settings-title">
       <div className="section-heading section-heading--stacked">
@@ -67,27 +83,46 @@ export function SettingsPage({
             </div>
           </dl>
         </article>
-        <article>
+        <article data-acceptance="provider-statuses">
           <span className="settings-icon" aria-hidden="true">
-            AI
+            PR
           </span>
-          <h2>Planned capabilities</h2>
+          <h2>Provider runtime</h2>
           <ul className="settings-list">
-            <li>
-              <strong>DeepSeek</strong>
-              <span>Not configured</span>
-            </li>
-            <li>
-              <strong>Audio</strong>
-              <span>Not enabled</span>
-            </li>
-            <li>
-              <strong>Document parsing</strong>
-              <span>Not enabled</span>
-            </li>
+            {providerSnapshots.map((provider) => (
+              <li key={provider.kind}>
+                <strong>{providerLabel(provider.kind)}</strong>
+                <span>
+                  Mock · {providerStatusLabel(provider.status)} · Not enabled
+                </span>
+              </li>
+            ))}
           </ul>
+          <p className="field-help">
+            Mock providers use synthetic memory-only data. No device, file, or
+            external AI access is enabled.
+          </p>
         </article>
       </div>
     </section>
   );
+}
+
+const providerKinds: readonly ProviderKind[] = [
+  "capture",
+  "transcription",
+  "translation",
+  "summary",
+  "document-parser",
+];
+
+function providerLabel(kind: ProviderKind): string {
+  const labels: Record<ProviderKind, string> = {
+    capture: "Capture",
+    transcription: "Transcription",
+    translation: "Translation",
+    summary: "Summary",
+    "document-parser": "Document parser",
+  };
+  return labels[kind];
 }

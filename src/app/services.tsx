@@ -2,29 +2,23 @@ import { isTauri } from "@tauri-apps/api/core";
 import { createContext, useContext, type ReactNode } from "react";
 import { meetingApi, type MeetingApi } from "../api/meeting";
 import { checkSidecarHealth, type SidecarHealth } from "../lib/sidecar";
-import type { TranscriptSource } from "../mock/MockTranscriptSource";
+import { ProviderRegistry } from "../providers/runtime";
 
 export interface AppServices {
   meetingApi: MeetingApi;
   checkSidecarHealth: () => Promise<SidecarHealth>;
-  createTranscriptSource: () => Promise<TranscriptSource>;
+  providers: ProviderRegistry;
   desktopRuntime: boolean;
 }
 
-export const defaultAppServices: AppServices = {
-  meetingApi,
-  checkSidecarHealth,
-  createTranscriptSource: async () => {
-    if (!import.meta.env.DEV) {
-      throw new Error("mock_transcript_unavailable");
-    }
-    const { MockTranscriptSource } = await import(
-      "../mock/MockTranscriptSource"
-    );
-    return new MockTranscriptSource();
-  },
-  desktopRuntime: isTauri(),
-};
+export function createDefaultAppServices(): AppServices {
+  return {
+    meetingApi,
+    checkSidecarHealth,
+    providers: new ProviderRegistry(),
+    desktopRuntime: isTauri(),
+  };
+}
 
 const ServicesContext = createContext<AppServices | null>(null);
 

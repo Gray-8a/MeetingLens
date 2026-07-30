@@ -64,9 +64,10 @@ Phase 0 已通过 PR #1 合并，并在 Windows 本机实际启动 Tauri 窗口�
 ### 5.2 MVP 1A：数据、模拟 UI 与安全基础
 
 - **MVP 1A-1（已完成）**：SQLite、迁移、会议 CRUD、删除语义和持久化，不做 UI 或 Provider；由 PR #3 交付。
-- **MVP 1A-2-1**：先提供 Meeting Tauri Command API、稳定 DTO/错误和可 mock 的 TypeScript 客户端，不做完整页面或模拟字幕。
-- **MVP 1A-2-2**：再实现桌面页面、模拟转写和完整模拟会议流程，不接真实音频或外部 API。
-- **MVP 1A-3**：Provider 抽象、本地会话令牌、Windows Credential Manager `SecretStore`、安全测试和本地安全日志基础。
+- **MVP 1A-2-1（已完成）**：Meeting Tauri Command API、稳定 DTO/错误和可 mock 的 TypeScript 客户端，由 PR #6 交付。
+- **MVP 1A-2-2（已完成）**：桌面页面、模拟转写和完整模拟会议流程，由 PR #7 交付。
+- **MVP 1A-3A**：Capture、Transcription、Translation、Summary、DocumentParser Provider 契约、Registry 与纯内存 Mock；不访问真实设备、文件或网络。
+- **MVP 1A-3B**：本地会话令牌、Windows Credential Manager `SecretStore`、安全测试和本地安全日志基础。
 
 合成会议的产品状态固定为：创建后 `draft`，开始后 `recording`，结束后 `ready`。开始/结束时间由后端生成；`processing` 保留给未来真实异步处理，用户界面不能任意写入状态。
 
