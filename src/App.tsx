@@ -1,234 +1,293 @@
-import { isTauri } from "@tauri-apps/api/core";
-import { useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import "./App.css";
-import { checkSidecarHealth } from "./lib/sidecar";
+import {
+  AppLink,
+  NavigationProvider,
+  useNavigation,
+  type AppRoute,
+} from "./app/navigation";
+import {
+  defaultAppServices,
+  ServicesProvider,
+  type AppServices,
+} from "./app/services";
+import { StatusBadge } from "./components/StatusBadge";
+import { HistoryPage } from "./pages/HistoryPage";
+import { HomePage, type DatabaseStatus } from "./pages/HomePage";
+import { LiveMeetingPage } from "./pages/LiveMeetingPage";
+import { MeetingDetailPage } from "./pages/MeetingDetailPage";
+import { NewMeetingPage } from "./pages/NewMeetingPage";
+import { SettingsPage, type LocalServiceStatus } from "./pages/SettingsPage";
 
-type ModuleStatus = "Ready" | "Planned";
-
-interface ProductModule {
-  title: string;
-  description: string;
-  status: ModuleStatus;
-  icon: string;
+export interface AppProps {
+  services?: AppServices;
 }
 
-const modules: ProductModule[] = [
-  {
-    title: "Audio capture",
-    description: "Visible, consent-driven recording with local storage.",
-    status: "Planned",
-    icon: "AC",
-  },
-  {
-    title: "Document context",
-    description: "Controlled uploads with type, size, and path validation.",
-    status: "Planned",
-    icon: "DC",
-  },
-  {
-    title: "DeepSeek summary",
-    description: "User-approved, minimal text sent for verifiable summaries.",
-    status: "Planned",
-    icon: "DS",
-  },
-  {
-    title: "Live translation",
-    description: "Source and translated segments kept side by side.",
-    status: "Planned",
-    icon: "LT",
-  },
-  {
-    title: "Speaker diarization",
-    description: "Anonymous speaker labels that remain user-correctable.",
-    status: "Planned",
-    icon: "SD",
-  },
-  {
-    title: "Screen context",
-    description: "Opt-in text capture with preview and redaction.",
-    status: "Planned",
-    icon: "SC",
-  },
-];
+function App({ services = defaultAppServices }: AppProps) {
+  return (
+    <ServicesProvider value={services}>
+      <NavigationProvider>
+        <MeetingLensApp services={services} />
+      </NavigationProvider>
+    </ServicesProvider>
+  );
+}
 
-function App() {
-  const desktopRuntime = isTauri();
-  const [healthStatus, setHealthStatus] = useState<
-    "idle" | "checking" | "healthy" | "unavailable"
-  >("idle");
-  const [sidecarVersion, setSidecarVersion] = useState<string | null>(null);
+function MeetingLensApp({ services }: { services: AppServices }) {
+  const { route } = useNavigation();
+  const [databaseStatus, setDatabaseStatus] =
+    useState<DatabaseStatus>("checking");
+  const [localServiceStatus, setLocalServiceStatus] =
+    useState<LocalServiceStatus>(
+      services.desktopRuntime ? "checking" : "desktop-only",
+    );
+  const [meetingStatus, setMeetingStatus] = useState<string | null>(null);
 
-  async function handleHealthCheck() {
-    if (!desktopRuntime) {
-      return;
-    }
+  useEffect(() => {
+    if (!services.desktopRuntime) return;
+    let active = true;
+    void services
+      .checkSidecarHealth()
+      .then(() => {
+        if (active) setLocalServiceStatus("healthy");
+      })
+      .catch(() => {
+        if (active) setLocalServiceStatus("unavailable");
+      });
+    return () => {
+      active = false;
+    };
+  }, [services]);
 
-    setHealthStatus("checking");
-    try {
-      const health = await checkSidecarHealth();
-      setSidecarVersion(health.version);
-      setHealthStatus("healthy");
-    } catch {
-      setSidecarVersion(null);
-      setHealthStatus("unavailable");
-    }
-  }
+  const updateDatabaseStatus = useCallback((status: DatabaseStatus) => {
+    setDatabaseStatus(status);
+  }, []);
+  const updateMeetingStatus = useCallback((status: string | null) => {
+    setMeetingStatus(status);
+  }, []);
 
-  const healthMessage = {
-    idle: desktopRuntime
-      ? "Ready to verify the local Python process."
-      : "Health verification is available in the Tauri desktop runtime.",
-    checking: "Checking the local Python process…",
-    healthy: `Healthy · sidecar ${sidecarVersion ?? "unknown"} · API v1`,
-    unavailable: "Unavailable · start the local sidecar and try again.",
-  }[healthStatus];
+  const pageTitle = useMemo(() => titleForRoute(route), [route]);
 
   return (
-    <div className="app-shell">
-      <header className="topbar">
-        <a className="brand" href="#overview" aria-label="MeetingLens home">
+    <div className="desktop-shell">
+      <a className="skip-link" href="#main-content">
+        Skip to content
+      </a>
+      <aside className="sidebar">
+        <AppLink aria-label="MeetingLens home" className="brand" to="/">
           <span className="brand-mark" aria-hidden="true">
             ML
           </span>
-          <span>MeetingLens</span>
-        </a>
-        <span className="local-badge">
-          <span className="status-dot" aria-hidden="true" />
-          Local-first workspace
-        </span>
-      </header>
-
-      <main id="overview">
-        <section className="hero" aria-labelledby="hero-title">
-          <div className="hero-copy">
-            <p className="eyebrow">Project foundation · v0.1</p>
-            <h1 id="hero-title">Turn meetings into evidence-backed action.</h1>
-            <p className="hero-text">
-              Capture only with consent, process locally by default, and keep
-              every decision connected to its source.
-            </p>
-            <div className="hero-actions">
-              <a className="primary-action" href="#modules">
-                Review modules
-              </a>
-              <a className="secondary-action" href="#runtime">
-                Runtime contract
-              </a>
-            </div>
-          </div>
-
-          <aside className="privacy-card" aria-label="Privacy boundary">
-            <p className="card-label">Privacy boundary</p>
-            <h2>Raw meeting data stays local.</h2>
-            <ul>
-              <li>Recording requires an explicit user action.</li>
-              <li>Screen context is off by default.</li>
-              <li>External AI receives only confirmed text.</li>
-              <li>Credentials never enter the frontend or database.</li>
-            </ul>
-          </aside>
-        </section>
-
-        <section
-          className="section"
-          id="modules"
-          aria-labelledby="modules-title"
-        >
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">Capability map</p>
-              <h2 id="modules-title">
-                Independent modules, one meeting record.
-              </h2>
-            </div>
-            <p>
-              Each processor can fail, retry, or evolve without blocking the
-              others.
-            </p>
-          </div>
-
-          <div className="module-grid">
-            {modules.map((module) => (
-              <article className="module-card" key={module.title}>
-                <div className="module-card-header">
-                  <span className="module-icon" aria-hidden="true">
-                    {module.icon}
-                  </span>
-                  <span className="module-status">{module.status}</span>
-                </div>
-                <h3>{module.title}</h3>
-                <p>{module.description}</p>
-              </article>
-            ))}
-          </div>
-        </section>
-
-        <section
-          className="runtime-section"
-          id="runtime"
-          aria-labelledby="runtime-title"
-        >
+          <span>
+            <strong>MeetingLens</strong>
+            <small>Local meeting workspace</small>
+          </span>
+        </AppLink>
+        <nav aria-label="Primary navigation">
+          <NavItem
+            active={route.name === "home"}
+            label="Home"
+            mark="HM"
+            to="/"
+          />
+          <NavItem
+            active={route.name === "new"}
+            label="New meeting"
+            mark="NM"
+            to="/new"
+          />
+          <NavItem
+            active={
+              route.name === "history" ||
+              route.name === "meeting" ||
+              route.name === "live"
+            }
+            label="History"
+            mark="HS"
+            to="/history"
+          />
+          <NavItem
+            active={route.name === "settings"}
+            label="Settings"
+            mark="ST"
+            to="/settings"
+          />
+        </nav>
+        <div className="privacy-note">
+          <span aria-hidden="true">LP</span>
           <div>
-            <p className="eyebrow">Runtime foundation</p>
-            <h2 id="runtime-title">
-              A narrow contract between desktop and AI.
-            </h2>
-            <p>
-              Tauri owns permissions and process lifecycle. The Python sidecar
-              owns processing. SQLite keeps versioned, traceable state.
-            </p>
+            <strong>Local-first</strong>
+            <p>No recording or external AI in this demo.</p>
           </div>
-          <dl className="runtime-list">
-            <div>
-              <dt>Desktop shell</dt>
-              <dd>Tauri 2 + React + TypeScript</dd>
-            </div>
-            <div>
-              <dt>Health endpoint</dt>
-              <dd>
-                <code>GET /health</code>
-              </dd>
-            </div>
-            <div>
-              <dt>Default bind</dt>
-              <dd>
-                <code>127.0.0.1:8765</code>
-              </dd>
-            </div>
-            <div>
-              <dt>External AI</dt>
-              <dd>Disabled until the user confirms a text scope</dd>
-            </div>
-          </dl>
-          <div className="health-check">
-            <button
-              className="runtime-action"
-              disabled={!desktopRuntime || healthStatus === "checking"}
-              onClick={handleHealthCheck}
-              type="button"
-            >
-              {healthStatus === "checking"
-                ? "Checking…"
-                : "Check Python sidecar"}
-            </button>
-            <p
-              aria-live="polite"
-              className={`health-status health-status--${healthStatus}`}
-            >
-              {healthMessage}
-            </p>
-          </div>
-        </section>
-      </main>
+        </div>
+      </aside>
 
-      <footer>
-        <p>
-          MeetingLens does not record, upload, or summarize without a clear user
-          action.
-        </p>
-      </footer>
+      <div className="workspace">
+        <header className="workspace-header">
+          <div>
+            <p className="breadcrumb">MeetingLens / {pageTitle}</p>
+            <h2>{pageTitle}</h2>
+          </div>
+          <div className="runtime-status" aria-label="Runtime status">
+            <StatusChip
+              label="Service"
+              status={
+                localServiceStatus === "healthy"
+                  ? "Healthy"
+                  : localServiceStatus === "checking"
+                    ? "Checking"
+                    : "Unavailable"
+              }
+              tone={
+                localServiceStatus === "healthy"
+                  ? "success"
+                  : localServiceStatus === "checking"
+                    ? "neutral"
+                    : "warning"
+              }
+            />
+            <StatusChip
+              label="Database"
+              status={
+                databaseStatus === "ready"
+                  ? "Ready"
+                  : databaseStatus === "checking"
+                    ? "Checking"
+                    : "Unavailable"
+              }
+              tone={
+                databaseStatus === "ready"
+                  ? "success"
+                  : databaseStatus === "checking"
+                    ? "neutral"
+                    : "warning"
+              }
+            />
+            {(route.name === "meeting" || route.name === "live") &&
+            meetingStatus ? (
+              <StatusBadge status={meetingStatus} />
+            ) : null}
+          </div>
+        </header>
+
+        <main id="main-content">
+          <RouteContent
+            databaseStatus={databaseStatus}
+            localServiceStatus={localServiceStatus}
+            onDatabaseStatus={updateDatabaseStatus}
+            onMeetingStatus={updateMeetingStatus}
+            route={route}
+          />
+        </main>
+      </div>
     </div>
   );
+}
+
+function RouteContent({
+  databaseStatus,
+  localServiceStatus,
+  onDatabaseStatus,
+  onMeetingStatus,
+  route,
+}: {
+  databaseStatus: DatabaseStatus;
+  localServiceStatus: LocalServiceStatus;
+  onDatabaseStatus: (status: DatabaseStatus) => void;
+  onMeetingStatus: (status: string | null) => void;
+  route: AppRoute;
+}) {
+  switch (route.name) {
+    case "home":
+      return <HomePage onDatabaseStatus={onDatabaseStatus} />;
+    case "new":
+      return <NewMeetingPage />;
+    case "history":
+      return <HistoryPage onDatabaseStatus={onDatabaseStatus} />;
+    case "meeting":
+      return (
+        <MeetingDetailPage
+          meetingId={route.meetingId}
+          onDatabaseStatus={onDatabaseStatus}
+          onMeetingStatus={onMeetingStatus}
+        />
+      );
+    case "live":
+      return (
+        <LiveMeetingPage
+          meetingId={route.meetingId}
+          onDatabaseStatus={onDatabaseStatus}
+          onMeetingStatus={onMeetingStatus}
+        />
+      );
+    case "settings":
+      return (
+        <SettingsPage
+          databaseStatus={databaseStatus}
+          localServiceStatus={localServiceStatus}
+        />
+      );
+  }
+}
+
+function NavItem({
+  active,
+  label,
+  mark,
+  to,
+}: {
+  active: boolean;
+  label: string;
+  mark: string;
+  to: string;
+}) {
+  return (
+    <AppLink
+      aria-current={active ? "page" : undefined}
+      className={active ? "nav-item nav-item--active" : "nav-item"}
+      to={to}
+    >
+      <span aria-hidden="true">{mark}</span>
+      {label}
+    </AppLink>
+  );
+}
+
+function StatusChip({
+  label,
+  status,
+  tone,
+}: {
+  label: string;
+  status: string;
+  tone: "success" | "warning" | "neutral";
+}) {
+  return (
+    <span className={`runtime-chip runtime-chip--${tone}`}>
+      <span className="runtime-chip__dot" aria-hidden="true" />
+      <span>
+        <small>{label}</small>
+        <strong>{status}</strong>
+      </span>
+    </span>
+  );
+}
+
+function titleForRoute(route: AppRoute): string {
+  switch (route.name) {
+    case "home":
+      return "Home";
+    case "new":
+      return "New meeting";
+    case "history":
+      return "Meeting history";
+    case "meeting":
+      return "Meeting details";
+    case "live":
+      return "Meeting in progress";
+    case "settings":
+      return "Settings";
+  }
 }
 
 export default App;
