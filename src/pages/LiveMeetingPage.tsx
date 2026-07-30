@@ -1,14 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { meetingPath, useNavigation } from "../app/navigation";
 import { useServices } from "../app/services";
 import type { MeetingResponse } from "../api/meeting";
 import { StatusBadge } from "../components/StatusBadge";
 import { ErrorNotice, InfoNotice, LoadingState } from "../components/UiState";
 import { formatDuration, uiError } from "../lib/presentation";
-import type {
-  TranscriptEntry,
-  TranscriptSource,
-} from "../mock/MockTranscriptSource";
+import { toProviderError, type ProviderError } from "../providers/errors";
+import type { TranscriptionSegment } from "../providers/contracts";
 import type { DatabaseStatus } from "./HomePage";
 
 interface LiveMeetingPageProps {
@@ -28,12 +26,13 @@ export function LiveMeetingPage({
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<ReturnType<typeof uiError> | null>(null);
-  const [transcriptError, setTranscriptError] = useState(false);
-  const [entries, setEntries] = useState<readonly TranscriptEntry[]>([]);
+  const [transcriptError, setTranscriptError] = useState<ProviderError | null>(
+    null,
+  );
+  const [entries, setEntries] = useState<readonly TranscriptionSegment[]>([]);
   const [paused, setPaused] = useState(false);
   const [elapsedMs, setElapsedMs] = useState(0);
   const [importantMarks, setImportantMarks] = useState(0);
-  const sourceRef = useRef<TranscriptSource | null>(null);
 
   const loadMeeting = useCallback(async () => {
     setLoading(true);
@@ -67,31 +66,55 @@ export function LiveMeetingPage({
 
   useEffect(() => {
     if (meeting?.status !== "recording") return;
+    const provider = services.providers.get("transcription");
     let active = true;
-    let unsubscribe: (() => void) | null = null;
+    const currentSegments = new Map<string, TranscriptionSegment>();
+    const unsubscribe = provider.subscribe((segment) => {
+      if (!active) return;
+      currentSegments.set(segment.segmentId, segment);
+      setEntries([...currentSegments.values()]);
+    });
+    const startedAt = meeting.startedAt;
 
-    void services
-      .createTranscriptSource()
-      .then((source) => {
-        if (!active) {
-          source.stop();
-          return;
+    if (startedAt === null) {
+      queueMicrotask(() => {
+        if (active) {
+          setTranscriptError(toProviderError(null, "transcription", "start"));
         }
-        sourceRef.current = source;
-        unsubscribe = source.subscribe(setEntries);
-        source.start();
-      })
-      .catch(() => {
-        if (active) setTranscriptError(true);
       });
+    } else {
+      void provider
+        .start({
+          meetingId: meeting.id,
+          language: meeting.primaryLanguage,
+          startedAt,
+        })
+        .catch((reason: unknown) => {
+          if (active) {
+            setTranscriptError(
+              toProviderError(reason, "transcription", "start"),
+            );
+          }
+        });
+    }
 
     return () => {
       active = false;
-      unsubscribe?.();
-      sourceRef.current?.stop();
-      sourceRef.current = null;
+      unsubscribe();
+      if (
+        provider.getStatus() === "running" ||
+        provider.getStatus() === "paused"
+      ) {
+        void provider.stop();
+      }
     };
-  }, [meeting?.id, meeting?.status, services]);
+  }, [
+    meeting?.id,
+    meeting?.primaryLanguage,
+    meeting?.startedAt,
+    meeting?.status,
+    services.providers,
+  ]);
 
   useEffect(() => {
     if (meeting?.status !== "recording" || meeting.startedAt === null) return;
@@ -124,7 +147,13 @@ export function LiveMeetingPage({
     setError(null);
     try {
       const ready = await services.meetingApi.end(meeting.id);
-      sourceRef.current?.stop();
+      const provider = services.providers.get("transcription");
+      if (
+        provider.getStatus() === "running" ||
+        provider.getStatus() === "paused"
+      ) {
+        await provider.stop();
+      }
       setMeeting(ready);
       onMeetingStatus(ready.status);
       navigate(meetingPath(ready.id));
@@ -134,14 +163,22 @@ export function LiveMeetingPage({
     }
   }
 
-  function pauseTranscript() {
-    sourceRef.current?.pause();
-    setPaused(true);
+  async function pauseTranscript() {
+    try {
+      await services.providers.get("transcription").pause();
+      setPaused(true);
+    } catch (reason: unknown) {
+      setTranscriptError(toProviderError(reason, "transcription", "pause"));
+    }
   }
 
-  function resumeTranscript() {
-    sourceRef.current?.resume();
-    setPaused(false);
+  async function resumeTranscript() {
+    try {
+      await services.providers.get("transcription").resume();
+      setPaused(false);
+    } catch (reason: unknown) {
+      setTranscriptError(toProviderError(reason, "transcription", "resume"));
+    }
   }
 
   if (loading) return <LoadingState label="Opening the meeting…" />;
@@ -259,10 +296,10 @@ export function LiveMeetingPage({
             </div>
             <span className="simulation-badge">Synthetic data</span>
           </div>
-          {transcriptError ? (
+          {transcriptError !== null ? (
             <ErrorNotice
-              code="internal_error"
-              message="The synthetic transcript is unavailable."
+              code={transcriptError.code}
+              message={transcriptError.message}
             />
           ) : null}
           {!transcriptError && entries.length === 0 ? (
@@ -275,13 +312,15 @@ export function LiveMeetingPage({
           >
             {entries.map((entry) => (
               <li
-                className={`transcript-entry transcript-entry--${entry.phase}`}
-                key={entry.id}
+                className={`transcript-entry transcript-entry--${entry.isFinal ? "final" : "provisional"}`}
+                key={entry.segmentId}
               >
                 <div className="transcript-entry__meta">
-                  <span>{formatDuration(entry.offsetMs)}</span>
-                  <strong>{entry.speaker}</strong>
-                  <span>{entry.phase}</span>
+                  <span>
+                    {formatTranscriptOffset(entry, meeting.startedAt)}
+                  </span>
+                  <strong>{entry.speakerLabel}</strong>
+                  <span>{entry.isFinal ? "final" : "provisional"}</span>
                 </div>
                 <p>{entry.text}</p>
               </li>
@@ -310,7 +349,7 @@ export function LiveMeetingPage({
           <button
             className="button button--secondary"
             data-acceptance="resume-transcript"
-            onClick={resumeTranscript}
+            onClick={() => void resumeTranscript()}
             type="button"
           >
             Resume transcript
@@ -319,7 +358,7 @@ export function LiveMeetingPage({
           <button
             className="button button--secondary"
             data-acceptance="pause-transcript"
-            onClick={pauseTranscript}
+            onClick={() => void pauseTranscript()}
             type="button"
           >
             Pause transcript
@@ -344,4 +383,13 @@ export function LiveMeetingPage({
       </div>
     </div>
   );
+}
+
+function formatTranscriptOffset(
+  segment: TranscriptionSegment,
+  meetingStartedAt: string | null,
+): string {
+  if (meetingStartedAt === null) return formatDuration(0);
+  const offset = Date.parse(segment.startedAt) - Date.parse(meetingStartedAt);
+  return formatDuration(Number.isFinite(offset) ? Math.max(0, offset) : 0);
 }

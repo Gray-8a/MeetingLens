@@ -2,7 +2,9 @@
 
 MeetingLens is a privacy-first desktop workspace for meeting capture, transcription, translation, document context, speaker diarization, and verifiable AI summaries.
 
-Phase 0 and MVP 1A-1 are complete: the repository contains the product specification, a Tauri 2 + React + TypeScript application shell, a dependency-free Python runtime sidecar with a verified React → Rust → Python health path, and a tested local SQLite meeting data core. After the lifecycle documentation gate is merged, the next implementation PR is strictly `feat/meeting-command-api` (MVP 1A-2-1).
+Phase 0, MVP 1A-1, and MVP 1A-2 are complete: the repository contains the product specification, a Tauri 2 + React + TypeScript desktop UI, a dependency-free Python runtime sidecar with a verified React → Rust → Python health path, a tested local SQLite meeting data core, typed Meeting commands, and a complete synthetic meeting flow. The current implementation stage is `feat/provider-contracts-mocks` (MVP 1A-3A).
+
+The Provider runtime defines Capture, Transcription, Translation, Summary, and DocumentParser capability boundaries. Current implementations are explicit deterministic in-memory mocks: they do not access devices, files, or networks, and can be replaced through an application-owned Registry without changing page business logic.
 
 ## Prerequisites
 
@@ -65,7 +67,7 @@ You can also verify the narrow HTTP contract directly:
 Invoke-RestMethod http://127.0.0.1:8765/health
 ```
 
-The fixed `127.0.0.1:8765` address is a Phase 0 development contract. MVP 1A-3 defines the random loopback port and ephemeral session-token contract; MVP 1C wires it into the sidecar supervisor lifecycle.
+The fixed `127.0.0.1:8765` address is a Phase 0 development contract. MVP 1A-3B defines the random loopback port and ephemeral session-token contract; MVP 1C wires it into the sidecar supervisor lifecycle.
 
 ## Project documents
 
@@ -80,15 +82,16 @@ The fixed `127.0.0.1:8765` address is a Phase 0 development contract. MVP 1A-3 d
 
 1. **Phase 0 — complete:** specification and runnable technical baseline.
 2. **MVP 1A-1 — complete:** SQLite, migrations, meeting CRUD, deletion semantics, and persistence (`feat/meeting-data-core`, PR #3).
-3. **MVP 1A-2-1:** Meeting Tauri Command API and typed TypeScript client (`feat/meeting-command-api`).
-4. **MVP 1A-2-2:** desktop UI and complete synthetic meeting flow (`feat/meeting-ui-mock`).
-5. **MVP 1A-3:** Provider abstraction, session token, SecretStore, and security foundation (`feat/provider-security-foundation`).
-6. **MVP 1B-1:** isolated document validation and Docling parsing (`feat/document-processing`).
-7. **MVP 1B-2:** staged DeepSeek minutes, evidence links, and export (`feat/deepseek-summary`).
-8. **MVP 1C:** sidecar supervisor, Windows audio, and realtime transcription in separate PRs.
-9. **MVP 2:** realtime translation and speaker diarization.
-10. **MVP 3:** meeting-window selection, OCR, and screen context.
-11. **MVP 4:** Windows packaging and product hardening.
+3. **MVP 1A-2-1 — complete:** Meeting Tauri Command API and typed TypeScript client (`feat/meeting-command-api`, PR #6).
+4. **MVP 1A-2-2 — complete:** desktop UI and complete synthetic meeting flow (`feat/meeting-ui-mock`, PR #7).
+5. **MVP 1A-3A — current:** Provider contracts, Registry, and deterministic in-memory mocks (`feat/provider-contracts-mocks`).
+6. **MVP 1A-3B:** session token, SecretStore, authentication, and security logging foundation (`feat/provider-security-foundation`).
+7. **MVP 1B-1:** isolated document validation and Docling parsing (`feat/document-processing`).
+8. **MVP 1B-2:** staged DeepSeek minutes, evidence links, and export (`feat/deepseek-summary`).
+9. **MVP 1C:** sidecar supervisor, Windows audio, and realtime transcription in separate PRs.
+10. **MVP 2:** realtime translation and speaker diarization.
+11. **MVP 3:** meeting-window selection, OCR, and screen context.
+12. **MVP 4:** Windows packaging and product hardening.
 
 The authoritative branch mapping, exclusions, and acceptance criteria are in [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md). Docling and DeepSeek are separate PRs. Screenpipe, if adopted, is an optional provider rather than a core dependency.
 

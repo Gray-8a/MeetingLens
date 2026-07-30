@@ -10,10 +10,16 @@ import { MeetingApiError } from "./api/meeting";
 import type { AppServices } from "./app/services";
 import { formatLocalDate } from "./lib/presentation";
 import type {
-  TranscriptEntry,
-  TranscriptListener,
-  TranscriptSource,
-} from "./mock/MockTranscriptSource";
+  TranscriptionListener,
+  TranscriptionProvider,
+  TranscriptionSegment,
+} from "./providers/contracts";
+import { ProviderRegistry } from "./providers/runtime";
+import type {
+  ProviderMode,
+  ProviderStatus,
+  ProviderStatusListener,
+} from "./providers/types";
 import { StatusBadge } from "./components/StatusBadge";
 import {
   deferred,
@@ -38,70 +44,96 @@ const readyMeeting = syntheticMeeting({
   updatedAt: "2026-07-30T02:03:00.000Z",
 });
 
-class ManualTranscriptSource implements TranscriptSource {
-  listener: TranscriptListener | null = null;
+class ManualTranscriptionProvider implements TranscriptionProvider {
+  readonly kind = "transcription" as const;
+  readonly mode: ProviderMode = "mock";
+  readonly name = "Manual mock transcription";
+  listener: TranscriptionListener | null = null;
+  status: ProviderStatus = "idle";
   startCalls = 0;
   pauseCalls = 0;
   resumeCalls = 0;
   stopCalls = 0;
 
-  start() {
+  getStatus() {
+    return this.status;
+  }
+
+  subscribeStatus(_listener: ProviderStatusListener) {
+    void _listener;
+    return () => undefined;
+  }
+
+  async start() {
     this.startCalls += 1;
-    this.emit([
-      {
-        id: "synthetic-ui-entry",
-        offsetMs: 900,
-        speaker: "Speaker A",
-        text: "Synthetic UI transcript entry",
-        phase: "provisional",
-      },
-    ]);
+    this.status = "running";
+    this.emit({
+      segmentId: "synthetic-ui-entry",
+      startedAt: "2026-07-30T01:02:00.900Z",
+      endedAt: "2026-07-30T01:02:01.800Z",
+      speakerLabel: "Speaker A",
+      text: "Synthetic UI transcript entry",
+      language: "en-AU",
+      confidence: 0.9,
+      isFinal: false,
+    });
   }
 
-  pause() {
+  async pause() {
     this.pauseCalls += 1;
+    this.status = "paused";
   }
 
-  resume() {
+  async resume() {
     this.resumeCalls += 1;
-    this.emit([
-      {
-        id: "synthetic-ui-entry",
-        offsetMs: 900,
-        speaker: "Speaker A",
-        text: "Synthetic UI transcript entry",
-        phase: "final",
-      },
-      {
-        id: "synthetic-ui-entry-2",
-        offsetMs: 1_800,
-        speaker: "Speaker B",
-        text: "Synthetic resumed transcript entry",
-        phase: "provisional",
-      },
-    ]);
+    this.status = "running";
+    this.emit({
+      segmentId: "synthetic-ui-entry",
+      startedAt: "2026-07-30T01:02:00.900Z",
+      endedAt: "2026-07-30T01:02:01.800Z",
+      speakerLabel: "Speaker A",
+      text: "Synthetic UI transcript entry",
+      language: "en-AU",
+      confidence: 0.9,
+      isFinal: true,
+    });
+    this.emit({
+      segmentId: "synthetic-ui-entry-2",
+      startedAt: "2026-07-30T01:02:01.800Z",
+      endedAt: "2026-07-30T01:02:02.700Z",
+      speakerLabel: "Speaker B",
+      text: "Synthetic resumed transcript entry",
+      language: "en-AU",
+      confidence: 0.9,
+      isFinal: false,
+    });
   }
 
-  stop() {
+  async stop() {
     this.stopCalls += 1;
+    this.status = "stopped";
   }
 
-  subscribe(listener: TranscriptListener) {
+  subscribe(listener: TranscriptionListener) {
     this.listener = listener;
-    listener([]);
     return () => {
       this.listener = null;
     };
   }
 
-  private emit(entries: readonly TranscriptEntry[]) {
-    this.listener?.(entries);
+  async dispose() {
+    this.status = "disposed";
+    this.listener = null;
+  }
+
+  private emit(segment: TranscriptionSegment) {
+    this.listener?.(segment);
   }
 }
 
 function appServices(
   api: FakeMeetingApi,
-  transcriptSource: TranscriptSource = new ManualTranscriptSource(),
+  transcriptionProvider: TranscriptionProvider = new ManualTranscriptionProvider(),
 ): AppServices {
   return {
     meetingApi: api,
@@ -111,7 +143,7 @@ function appServices(
       version: "0.1.0",
       api_version: "v1",
     }),
-    createTranscriptSource: async () => transcriptSource,
+    providers: new ProviderRegistry({ transcription: transcriptionProvider }),
     desktopRuntime: false,
   };
 }
@@ -119,10 +151,10 @@ function appServices(
 function renderAt(
   path: string,
   api: FakeMeetingApi,
-  transcriptSource?: TranscriptSource,
+  transcriptionProvider?: TranscriptionProvider,
 ) {
   window.history.replaceState(null, "", `#${path}`);
-  return render(<App services={appServices(api, transcriptSource)} />);
+  return render(<App services={appServices(api, transcriptionProvider)} />);
 }
 
 afterEach(() => {
@@ -398,7 +430,7 @@ describe("MeetingLens desktop UI", () => {
   });
 
   it("starts the synthetic transcript only for a recording meeting", async () => {
-    const source = new ManualTranscriptSource();
+    const source = new ManualTranscriptionProvider();
     renderAt(
       `/meetings/${meetingIds.recording}/live`,
       new FakeMeetingApi([recordingMeeting]),
@@ -414,7 +446,7 @@ describe("MeetingLens desktop UI", () => {
 
   it("pauses and resumes the synthetic transcript", async () => {
     const user = userEvent.setup();
-    const source = new ManualTranscriptSource();
+    const source = new ManualTranscriptionProvider();
     renderAt(
       `/meetings/${meetingIds.recording}/live`,
       new FakeMeetingApi([recordingMeeting]),
@@ -435,7 +467,7 @@ describe("MeetingLens desktop UI", () => {
 
   it("stops the transcript when the meeting ends", async () => {
     const user = userEvent.setup();
-    const source = new ManualTranscriptSource();
+    const source = new ManualTranscriptionProvider();
     const api = new FakeMeetingApi([recordingMeeting]);
     renderAt(`/meetings/${meetingIds.recording}/live`, api, source);
     await screen.findByText("Synthetic UI transcript entry");
@@ -449,7 +481,7 @@ describe("MeetingLens desktop UI", () => {
   });
 
   it("cleans the transcript source up when the page unmounts", async () => {
-    const source = new ManualTranscriptSource();
+    const source = new ManualTranscriptionProvider();
     const view = renderAt(
       `/meetings/${meetingIds.recording}/live`,
       new FakeMeetingApi([recordingMeeting]),
@@ -504,6 +536,7 @@ describe("MeetingLens desktop UI", () => {
     ].join("\n");
     expect(pageSources).not.toMatch(/@tauri-apps|\binvoke\s*\(/);
     expect(pageSources).toContain("meetingApi");
+    expect(liveSource).not.toContain("MockTranscriptSource");
   });
 
   it("converts unknown failures into a safe UI message", async () => {
@@ -535,6 +568,50 @@ describe("MeetingLens desktop UI", () => {
       ),
     ).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/[A-Z]:\\Users\\|\.sqlite3/i);
+  });
+
+  it("shows all five providers as explicit mocks in settings", () => {
+    renderAt("/settings", new FakeMeetingApi());
+
+    expect(screen.getByText("Capture")).toBeInTheDocument();
+    expect(screen.getByText("Transcription")).toBeInTheDocument();
+    expect(screen.getByText("Translation")).toBeInTheDocument();
+    expect(screen.getByText("Summary")).toBeInTheDocument();
+    expect(screen.getByText("Document parser")).toBeInTheDocument();
+    expect(screen.getAllByText(/Mock · .* · Not enabled/)).toHaveLength(5);
+  });
+
+  it("disposes all providers when the desktop page is closed", async () => {
+    const services = appServices(new FakeMeetingApi());
+    window.history.replaceState(null, "", "#/settings");
+    render(<App services={services} />);
+
+    await act(async () => {
+      window.dispatchEvent(new Event("pagehide"));
+      await Promise.resolve();
+    });
+
+    await waitFor(() =>
+      expect(
+        services.providers
+          .snapshots()
+          .every(({ status }) => status === "disposed"),
+      ).toBe(true),
+    );
+  });
+
+  it("shows a safe fallback when a provider reports a future status", () => {
+    const services = appServices(new FakeMeetingApi());
+    vi.spyOn(services.providers.get("capture"), "getStatus").mockReturnValue(
+      "future-provider-state" as ProviderStatus,
+    );
+    window.history.replaceState(null, "", "#/settings");
+
+    render(<App services={services} />);
+
+    expect(
+      screen.getByText(/Mock · Unknown status · Not enabled/),
+    ).toBeInTheDocument();
   });
 
   it("shows an unknown status fallback without crashing", () => {

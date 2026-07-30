@@ -7,7 +7,7 @@ import {
   type AppRoute,
 } from "./app/navigation";
 import {
-  defaultAppServices,
+  createDefaultAppServices,
   ServicesProvider,
   type AppServices,
 } from "./app/services";
@@ -23,11 +23,15 @@ export interface AppProps {
   services?: AppServices;
 }
 
-function App({ services = defaultAppServices }: AppProps) {
+function App({ services }: AppProps) {
+  const [ownedServices] = useState(
+    () => services ?? createDefaultAppServices(),
+  );
+  const activeServices = services ?? ownedServices;
   return (
-    <ServicesProvider value={services}>
+    <ServicesProvider value={activeServices}>
       <NavigationProvider>
-        <MeetingLensApp services={services} />
+        <MeetingLensApp services={activeServices} />
       </NavigationProvider>
     </ServicesProvider>
   );
@@ -58,6 +62,16 @@ function MeetingLensApp({ services }: { services: AppServices }) {
       active = false;
     };
   }, [services]);
+
+  useEffect(() => {
+    const disposeProviders = () => void services.providers.disposeAll();
+    window.addEventListener("pagehide", disposeProviders);
+    window.addEventListener("beforeunload", disposeProviders);
+    return () => {
+      window.removeEventListener("pagehide", disposeProviders);
+      window.removeEventListener("beforeunload", disposeProviders);
+    };
+  }, [services.providers]);
 
   const updateDatabaseStatus = useCallback((status: DatabaseStatus) => {
     setDatabaseStatus(status);
