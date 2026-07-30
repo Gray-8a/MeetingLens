@@ -12,6 +12,7 @@ import {
   type AppServices,
 } from "./app/services";
 import { StatusBadge } from "./components/StatusBadge";
+import { toSidecarError } from "./lib/sidecar";
 import { HistoryPage } from "./pages/HistoryPage";
 import { HomePage, type DatabaseStatus } from "./pages/HomePage";
 import { LiveMeetingPage } from "./pages/LiveMeetingPage";
@@ -52,11 +53,18 @@ function MeetingLensApp({ services }: { services: AppServices }) {
     let active = true;
     void services
       .checkSidecarHealth()
-      .then(() => {
-        if (active) setLocalServiceStatus("healthy");
+      .then((status) => {
+        if (active) setLocalServiceStatus(status.status);
       })
-      .catch(() => {
-        if (active) setLocalServiceStatus("unavailable");
+      .catch((reason: unknown) => {
+        if (!active) return;
+        const error = toSidecarError(reason);
+        setLocalServiceStatus(
+          error.code === "sidecar_unavailable" ||
+            error.code === "sidecar_timeout"
+            ? "unavailable"
+            : "error",
+        );
       });
     return () => {
       active = false;
@@ -146,14 +154,16 @@ function MeetingLensApp({ services }: { services: AppServices }) {
             <StatusChip
               label="Service"
               status={
-                localServiceStatus === "healthy"
-                  ? "Healthy"
+                localServiceStatus === "authenticated"
+                  ? "Authenticated"
                   : localServiceStatus === "checking"
                     ? "Checking"
-                    : "Unavailable"
+                    : localServiceStatus === "error"
+                      ? "Error"
+                      : "Unavailable"
               }
               tone={
-                localServiceStatus === "healthy"
+                localServiceStatus === "authenticated"
                   ? "success"
                   : localServiceStatus === "checking"
                     ? "neutral"

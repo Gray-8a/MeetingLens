@@ -1,12 +1,12 @@
 import { isTauri } from "@tauri-apps/api/core";
 import { createContext, useContext, type ReactNode } from "react";
 import { meetingApi, type MeetingApi } from "../api/meeting";
-import { checkSidecarHealth, type SidecarHealth } from "../lib/sidecar";
+import { checkSidecarHealth, type SidecarStatus } from "../lib/sidecar";
 import { ProviderRegistry } from "../providers/runtime";
 
 export interface AppServices {
   meetingApi: MeetingApi;
-  checkSidecarHealth: () => Promise<SidecarHealth>;
+  checkSidecarHealth: () => Promise<SidecarStatus>;
   providers: ProviderRegistry;
   desktopRuntime: boolean;
 }

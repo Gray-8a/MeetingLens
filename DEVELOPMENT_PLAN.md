@@ -12,24 +12,25 @@
 4. 涉及 Windows 桌面行为时，由用户本机实际运行验收，不能只凭 CI 声称完成。
 5. 合并后再从最新 `main` 创建下一个分支，不堆叠未审查的大型 PR。
 
-MVP 1A-2 实现前已使用 `docs/define-meeting-lifecycle` 固定会议状态转换、删除演进策略和 PR 边界。Provider 与安全基础继续拆成 1A-3A/1A-3B 两个顺序 PR，避免把能力契约与凭据、认证和日志边界放入同一审查单元。
+MVP 1A-2 实现前已使用 `docs/define-meeting-lifecycle` 固定会议状态转换、删除演进策略和 PR 边界。Provider 与安全基础继续拆成 1A-3A、1A-3B-1 和 1A-3B-2 三个顺序 PR，避免把能力契约、Sidecar 会话认证与操作系统凭据存储放入同一审查单元。
 
 ## 2. 统一路线图
 
-| 阶段       | 目标                                           | 计划分支/PR                                             | 状态         |
-| ---------- | ---------------------------------------------- | ------------------------------------------------------- | ------------ |
-| Phase 0    | 规格与技术基线                                 | `docs/project-specification` / PR #1                    | 已完成并合并 |
-| MVP 1A-1   | SQLite、迁移、会议 CRUD、删除语义和持久化      | `feat/meeting-data-core` / PR #3                        | 已完成并合并 |
-| MVP 1A-2-1 | Meeting Tauri Command API 与 TypeScript 客户端 | `feat/meeting-command-api` / PR #6                      | 已完成并合并 |
-| MVP 1A-2-2 | 桌面 UI、模拟转写和完整模拟会议流程            | `feat/meeting-ui-mock` / PR #7                          | 已完成并合并 |
-| MVP 1A-3A  | Provider 契约、Registry 和内存 Mock            | `feat/provider-contracts-mocks`                         | 当前阶段     |
-| MVP 1A-3B  | 本地会话令牌、SecretStore、认证与安全日志基础  | `feat/provider-security-foundation`                     | 待开始       |
-| MVP 1B-1   | 文档上传、验证、隔离和 Docling 解析            | `feat/document-processing`                              | 待开始       |
-| MVP 1B-2   | DeepSeek 分阶段总结、证据引用和纪要导出        | `feat/deepseek-summary`                                 | 待开始       |
-| MVP 1C     | Windows 音频、实时转写、sidecar 生命周期       | 见 §8 的三个小 PR                                       | 待开始       |
-| MVP 2      | 实时翻译与说话人                               | `feat/realtime-translation`、`feat/speaker-diarization` | 待开始       |
-| MVP 3      | 会议窗口、OCR 和屏幕上下文                     | `feat/window-context`、`feat/screen-ocr`                | 待开始       |
-| MVP 4      | 安装包与产品化                                 | `chore/windows-packaging`、`feat/product-hardening`     | 待开始       |
+| 阶段        | 目标                                           | 计划分支/PR                                             | 状态         |
+| ----------- | ---------------------------------------------- | ------------------------------------------------------- | ------------ |
+| Phase 0     | 规格与技术基线                                 | `docs/project-specification` / PR #1                    | 已完成并合并 |
+| MVP 1A-1    | SQLite、迁移、会议 CRUD、删除语义和持久化      | `feat/meeting-data-core` / PR #3                        | 已完成并合并 |
+| MVP 1A-2-1  | Meeting Tauri Command API 与 TypeScript 客户端 | `feat/meeting-command-api` / PR #6                      | 已完成并合并 |
+| MVP 1A-2-2  | 桌面 UI、模拟转写和完整模拟会议流程            | `feat/meeting-ui-mock` / PR #7                          | 已完成并合并 |
+| MVP 1A-3A   | Provider 契约、Registry 和内存 Mock            | `feat/provider-contracts-mocks` / PR #8                 | 已完成并合并 |
+| MVP 1A-3B-1 | Sidecar 会话认证、Loopback 和基础日志脱敏      | `feat/local-sidecar-auth` / PR #9                       | 当前阶段     |
+| MVP 1A-3B-2 | SecretStore、Windows Credential Manager        | `feat/secret-store` / PR #10                            | 待开始       |
+| MVP 1B-1    | 文档上传、验证、隔离和 Docling 解析            | `feat/document-processing`                              | 待开始       |
+| MVP 1B-2    | DeepSeek 分阶段总结、证据引用和纪要导出        | `feat/deepseek-summary`                                 | 待开始       |
+| MVP 1C      | Windows 音频、实时转写、sidecar 生命周期       | 见 §8 的三个小 PR                                       | 待开始       |
+| MVP 2       | 实时翻译与说话人                               | `feat/realtime-translation`、`feat/speaker-diarization` | 待开始       |
+| MVP 3       | 会议窗口、OCR 和屏幕上下文                     | `feat/window-context`、`feat/screen-ocr`                | 待开始       |
+| MVP 4       | 安装包与产品化                                 | `chore/windows-packaging`、`feat/product-hardening`     | 待开始       |
 
 除上表和各阶段明确列出的子分支外，不再使用表外的历史任务名或笼统阶段称呼。
 
@@ -106,7 +107,7 @@ MVP 1A-2 固定拆成以下两个顺序 PR。前一个 PR 合并后，后一个 
 
 ## 6. MVP 1A-3：Provider 与安全基础
 
-该阶段固定拆成两个顺序 PR。1A-3A 合并后，1A-3B 才能从最新 `main` 开始。
+该阶段固定拆成三个顺序 PR。1A-3A 合并后，1A-3B-1 才能从最新 `main` 开始；1A-3B-1 合并后才能开始 1A-3B-2。
 
 ### 6.1 MVP 1A-3A：Provider 契约与 Mock Runtime
 
@@ -124,20 +125,38 @@ MVP 1A-2 固定拆成以下两个顺序 PR。前一个 PR 合并后，后一个 
 
 验收：Mock 状态机、取消、清理、稳定错误与 Registry 注入有自动化测试；旧模拟字幕架构被完整替换；Windows 本机验证两场连续模拟会议没有重复订阅或计时器残留。
 
-### 6.2 MVP 1A-3B：本地安全基础
+完成证据：PR #8 已 squash merge；五类 Provider 契约、Registry、纯内存 Mock、模拟字幕迁移和 Windows 双会话验收均已完成，Provider/UI 不访问真实设备、文件或网络。
 
-分支：`feat/provider-security-foundation`
+### 6.2 MVP 1A-3B-1：本地 Sidecar 会话认证
+
+分支：`feat/local-sidecar-auth`
 
 范围：
 
-- Rust 启动时生成随机 loopback 端口与高熵会话令牌
+- Rust 每次应用启动使用操作系统 CSPRNG 生成临时会话令牌，只通过子进程环境传给 Python
+- Rust 取得安全传递令牌所需的最小 Sidecar 启动所有权和退出清理，不实现 supervisor 重启/恢复循环
+- Python 只允许 `127.0.0.1`，全部路由（包括 `/health`）统一验证 Bearer 令牌
+- Rust `SidecarClient` 集中注入认证 Header，并提供超时、401、无效响应等稳定脱敏错误
+- 设置页只显示已认证/不可用/错误、仅本机绑定、当前会话和 SecretStore 未实现状态
+- 当前固定开发端口可继续使用；随机端口与完整生命周期接线留给 MVP 1C
+
+不得包含：SecretStore、Windows Credential Manager、DeepSeek/API Key、真实 Provider、文档、音频、屏幕、完整日志系统、崩溃重启或孤儿进程恢复。
+
+验收：无 Header、错误 scheme/令牌和非 loopback Host 全部 fail closed；令牌不出现在命令行、WebView DTO、SQLite 或日志；应用重启生成新会话且旧测试令牌失效；Windows 本机完成认证、绑定、进程、日志、模拟会议和清理验证。
+
+### 6.3 MVP 1A-3B-2：SecretStore 与安全配置
+
+分支：`feat/secret-store`
+
+范围：
+
 - Windows Credential Manager `SecretStore` 抽象；测试不得读取真实凭据
-- 请求认证、超时、稳定脱敏错误和 fail-closed 测试
-- allowlist 本地安全日志基础：事件、匿名任务 ID、状态、耗时、错误码
+- 凭据安全写入、读取状态、替换和删除接口
+- 跨层 allowlist 安全日志基础：事件、匿名任务 ID、状态、耗时、错误码
 
 不得调用真实付费 API，也不得实现 Docling、DeepSeek、音频或屏幕采集。
 
-验收：无令牌、错误令牌、无凭据和空范围全部失败关闭；WebView/SQLite/日志不出现密钥；用户本机验证凭据写入/读取状态但不显示值。
+验收：无凭据和空范围全部失败关闭；WebView/SQLite/日志不出现密钥；用户本机验证凭据写入/读取/替换/删除状态但不显示值。
 
 ## 7. MVP 1B：文档与纪要（两个独立 PR）
 
@@ -169,7 +188,7 @@ MVP 1A-2 固定拆成以下两个顺序 PR。前一个 PR 合并后，后一个 
 
 该阶段风险较高，固定拆为三个顺序 PR：
 
-1. `feat/sidecar-supervisor`：sidecar 启停、随机端口/令牌接线、健康恢复、崩溃重启、退出清理、孤儿进程回收和生命周期安全日志。
+1. `feat/sidecar-supervisor`：sidecar 打包、随机端口接线、健康恢复、崩溃重启、退出清理、孤儿进程回收和生命周期安全日志。
 2. `feat/audio-capture`：WASAPI 系统音频与麦克风、设备枚举、明确开始/停止、持续录音指示、分块文件和异常恢复。
 3. `feat/realtime-transcription`：实时 ASR、片段顺序/去重、时间戳持久化、CPU 回退、取消与会后校正入口。
 
@@ -220,4 +239,4 @@ Screenpipe 只能是可替换的可选 Capture Provider，不得成为核心强�
 
 ## 14. 当前下一步
 
-PR #7 合并后，当前只能开始 `feat/provider-contracts-mocks`。该 PR 仅实现 MVP 1A-3A 的 Provider 契约、Registry、内存 Mock 与必要的 UI 迁移；不得提前实现 SecretStore、本地会话令牌、安全日志、真实 Provider、文档、DeepSeek 或音频。该 PR 由用户决定合并后，才能从最新 `main` 创建 `feat/provider-security-foundation`。
+PR #8 已合并，当前只能开始 `feat/local-sidecar-auth`。该 PR 仅实现 MVP 1A-3B-1 的 Sidecar 会话认证、Loopback 边界、最小启动所有权、稳定错误和基础日志脱敏；不得提前实现 SecretStore、API Key、真实 Provider、文档、DeepSeek 或音频。该 PR 由用户决定合并后，才能从最新 `main` 创建 `feat/secret-store`。

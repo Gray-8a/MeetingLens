@@ -26,6 +26,8 @@ MeetingLens 处理录音、转录、文档、屏幕上下文和 API 凭据，这
 | 供应链风险           | npm/Python/Rust 依赖被劫持     | lockfile、依赖审计、最小依赖、CI 可复现安装 |
 | 不完整删除           | WAL、临时文件仍保留            | 删除协调、WAL checkpoint、临时目录清理测试  |
 
+MVP 1A-3B-1 的本地会话认证防止局域网设备、普通网页和未持有当前 token 的本机客户端直接调用 Sidecar，并防止错误配置将服务绑定到非 loopback 地址。它不声称防御已取得当前 Windows 用户同等权限、可读取进程内存/环境的恶意软件，也不防御管理员或内核级攻击者。
+
 ## 4. 凭据管理
 
 ### 开发阶段
@@ -92,8 +94,11 @@ DeepSeek 生产适配器必须使用当前模型名 `deepseek-v4-flash` / `deeps
 
 - 默认只监听 `127.0.0.1`，启动失败时不得退回 `0.0.0.0`。
 - 发布模式使用随机高位端口和高熵会话 token。
-- `/health` 只返回状态和版本；其余端点必须认证。
-- Phase 0 固定 `127.0.0.1:8765` 仅用于开发契约验证；MVP 1A-3B 建立随机高位端口与高熵 bearer token 的安全契约，MVP 1C 的 supervisor 负责实际进程生命周期接线。
+- `/health` 只返回状态和版本；所有端点（包括 `/health`）默认要求认证。
+- MVP 1A-3B-1 继续使用固定开发端口，但只允许 `127.0.0.1`，并由 Rust 每次启动生成至少 32 bytes 随机数据的临时 bearer token。
+- Token 只通过子进程环境传递，不写入命令行、URL、文件、SQLite、WebView、日志或凭据库；应用重启后旧会话失效。
+- Rust 是唯一授权业务调用方并集中注入 Authorization Header；React/WebView 不直接请求 Sidecar，也不持有 token。
+- 随机端口、打包二进制、崩溃重启、健康监控和孤儿进程回收由 MVP 1C 的 supervisor 完成。
 - 限制请求体大小、并发任务数、单任务运行时间和临时磁盘使用量。
 - 任务只引用由 Rust 注册的 artifact ID，不接受任意绝对路径。
 - 进程退出时清理临时文件；启动时清理已过期 job 目录。
@@ -121,6 +126,8 @@ DeepSeek 生产适配器必须使用当前模型名 `deepseek-v4-flash` / `deeps
 
 禁止记录：密钥、Authorization header、请求/响应正文、转录、文件名、参与者、屏幕内容、环境变量和绝对用户路径。
 
+Sidecar 认证失败只允许记录事件类型、结果和稳定错误码；当前实现默认关闭 Python 请求日志，并禁止 Rust 输出 HeaderMap、原始 reqwest/Python 错误或子进程环境。DeepSeek API key 是未来外部服务凭据，与短期 Sidecar Session Token 完全不同，二者不得复用。
+
 生产日志默认保留时间应有限，用户可以查看大小并一键删除。
 
 ## 13. 供应链与 CI
@@ -146,19 +153,20 @@ DeepSeek 生产适配器必须使用当前模型名 `deepseek-v4-flash` / `deeps
 
 ## 15. 分阶段安全交付
 
-| 阶段       | 必须完成的安全控制                                                                     |
-| ---------- | -------------------------------------------------------------------------------------- |
-| MVP 1A-1   | SQLite 事务/迁移、路径规范化、删除语义、数据库与 WAL/SHM Git 忽略测试                  |
-| MVP 1A-2-1 | DTO/UUID/状态校验、后端时间戳、最小 Tauri commands、稳定脱敏错误以及禁止前端路径或 SQL |
-| MVP 1A-2-2 | 只用合成数据、集中调用 command、UI 错误不泄漏内部路径或正文                            |
-| MVP 1A-3A  | Provider 稳定状态/错误、Mock 无设备/文件/网络访问、Registry 生命周期与清理测试         |
-| MVP 1A-3B  | SecretStore、随机端口/令牌基础、fail-closed、安全日志 allowlist 和凭据边界测试         |
-| MVP 1B-1   | 上传验证、隔离目录、解析资源上限、畸形/恶意文件测试和完整删除                          |
-| MVP 1B-2   | 外部发送预览、同意、裁剪、脱敏、证据引用和无 key/无同意拒绝                            |
-| MVP 1C     | 录音同意、sidecar supervisor、崩溃恢复、孤儿进程回收、临时文件清理和生命周期安全日志   |
-| MVP 2      | voice sample 明示同意/删除、匿名标签、模型 worker 隔离                                 |
-| MVP 3      | 目标窗口约束、敏感内容遮蔽、截图 TTL/删除、可选 Provider 权限边界                      |
-| MVP 4      | 签名、升级/回滚、SBOM、诊断导出脱敏和卸载残留检查                                      |
+| 阶段        | 必须完成的安全控制                                                                     |
+| ----------- | -------------------------------------------------------------------------------------- |
+| MVP 1A-1    | SQLite 事务/迁移、路径规范化、删除语义、数据库与 WAL/SHM Git 忽略测试                  |
+| MVP 1A-2-1  | DTO/UUID/状态校验、后端时间戳、最小 Tauri commands、稳定脱敏错误以及禁止前端路径或 SQL |
+| MVP 1A-2-2  | 只用合成数据、集中调用 command、UI 错误不泄漏内部路径或正文                            |
+| MVP 1A-3A   | Provider 稳定状态/错误、Mock 无设备/文件/网络访问、Registry 生命周期与清理测试         |
+| MVP 1A-3B-1 | Sidecar 会话 token、Loopback、全路由认证、稳定错误、最小日志脱敏和 fail-closed 测试    |
+| MVP 1A-3B-2 | SecretStore、Windows Credential Manager、安全配置与跨层日志 allowlist                  |
+| MVP 1B-1    | 上传验证、隔离目录、解析资源上限、畸形/恶意文件测试和完整删除                          |
+| MVP 1B-2    | 外部发送预览、同意、裁剪、脱敏、证据引用和无 key/无同意拒绝                            |
+| MVP 1C      | 录音同意、sidecar supervisor、崩溃恢复、孤儿进程回收、临时文件清理和生命周期安全日志   |
+| MVP 2       | voice sample 明示同意/删除、匿名标签、模型 worker 隔离                                 |
+| MVP 3       | 目标窗口约束、敏感内容遮蔽、截图 TTL/删除、可选 Provider 权限边界                      |
+| MVP 4       | 签名、升级/回滚、SBOM、诊断导出脱敏和卸载残留检查                                      |
 
 Docling 的文件攻击面只能在 MVP 1B-1 引入；DeepSeek 的外部数据流只能在 MVP 1B-2 引入。不得在同一 PR 同时扩大这两个信任边界。
 
