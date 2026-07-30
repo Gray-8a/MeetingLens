@@ -11,7 +11,13 @@ pub fn run() {
             let app_data_dir = app.path().app_data_dir()?;
             let meeting_service = data::MeetingService::initialize(app_data_dir)?;
             app.manage(meeting_service);
+            app.manage(sidecar::SidecarRuntime::start());
             Ok(())
+        })
+        .on_window_event(|window, event| {
+            if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                window.state::<sidecar::SidecarRuntime>().shutdown();
+            }
         })
         .invoke_handler(tauri::generate_handler![
             sidecar::check_sidecar_health,

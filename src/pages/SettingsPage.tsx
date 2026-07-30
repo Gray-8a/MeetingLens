@@ -5,14 +5,16 @@ import type { DatabaseStatus } from "./HomePage";
 
 export type LocalServiceStatus =
   | "checking"
-  | "healthy"
+  | "authenticated"
   | "unavailable"
+  | "error"
   | "desktop-only";
 
 const serviceLabels: Record<LocalServiceStatus, string> = {
   checking: "Checking local service…",
-  healthy: "Local service healthy",
+  authenticated: "Local Sidecar authenticated",
   unavailable: "Local service unavailable",
+  error: "Local Sidecar error",
   "desktop-only": "Available in the desktop runtime",
 };
 
@@ -67,7 +69,7 @@ export function SettingsPage({
             </div>
           </dl>
         </article>
-        <article>
+        <article data-acceptance="sidecar-security-status">
           <span className="settings-icon" aria-hidden="true">
             RT
           </span>
@@ -80,6 +82,18 @@ export function SettingsPage({
             <div>
               <dt>Database</dt>
               <dd>{databaseLabels[databaseStatus]}</dd>
+            </div>
+            <div>
+              <dt>Binding</dt>
+              <dd>This device only</dd>
+            </div>
+            <div>
+              <dt>Session</dt>
+              <dd>Current application session</dd>
+            </div>
+            <div>
+              <dt>Secret storage</dt>
+              <dd>Not implemented</dd>
             </div>
           </dl>
         </article>

@@ -2,7 +2,7 @@
 
 MeetingLens is a privacy-first desktop workspace for meeting capture, transcription, translation, document context, speaker diarization, and verifiable AI summaries.
 
-Phase 0, MVP 1A-1, and MVP 1A-2 are complete: the repository contains the product specification, a Tauri 2 + React + TypeScript desktop UI, a dependency-free Python runtime sidecar with a verified React → Rust → Python health path, a tested local SQLite meeting data core, typed Meeting commands, and a complete synthetic meeting flow. The current implementation stage is `feat/provider-contracts-mocks` (MVP 1A-3A).
+Phase 0, MVP 1A-1, MVP 1A-2, and MVP 1A-3A are complete: the repository contains the product specification, a Tauri 2 + React + TypeScript desktop UI, a dependency-free Python runtime sidecar, a tested local SQLite meeting data core, typed Meeting commands, a complete synthetic meeting flow, and replaceable in-memory Provider mocks. The current implementation stage is `feat/local-sidecar-auth` (MVP 1A-3B-1).
 
 The Provider runtime defines Capture, Transcription, Translation, Summary, and DocumentParser capability boundaries. Current implementations are explicit deterministic in-memory mocks: they do not access devices, files, or networks, and can be replaced through an application-owned Registry without changing page business logic.
 
@@ -41,7 +41,7 @@ Keep development credentials in `.env`. The file is ignored by Git and must neve
 ```bash
 npm run dev             # React/Vite development server
 npm run tauri dev       # Tauri desktop development mode (requires Rust)
-npm run sidecar         # Python sidecar on 127.0.0.1:8765
+npm run sidecar         # Controlled protocol tests only; fails closed without a session token
 npm run lint            # ESLint
 npm run format          # Prettier + Ruff (writes files)
 npm run format:check    # Prettier + Ruff verification
@@ -52,22 +52,21 @@ npm run build           # Frontend production build
 npm run check           # All locally runnable frontend/Python checks
 ```
 
-For the integrated health check, start the sidecar in one PowerShell terminal, then start Tauri in another:
+For the integrated authenticated health check, start Tauri directly:
 
 ```powershell
-npm run sidecar
 npm run tauri dev
 ```
 
-Select **Check Python sidecar** in the desktop window. A browser-only Vite preview intentionally disables this button because it has no Tauri command bridge.
+Rust creates an ephemeral session token, starts the Python 3.12 Sidecar, passes the token only through the child environment, and injects authentication into `/health`. The Settings page reports only safe state such as authenticated/unavailable, loopback binding, and current application session. A browser-only Vite preview has no Sidecar bridge.
 
-You can also verify the narrow HTTP contract directly:
+An unauthenticated direct request must fail closed:
 
 ```powershell
-Invoke-RestMethod http://127.0.0.1:8765/health
+try { Invoke-WebRequest http://127.0.0.1:8765/health } catch { $_.Exception.Response.StatusCode.value__ }
 ```
 
-The fixed `127.0.0.1:8765` address is a Phase 0 development contract. MVP 1A-3B defines the random loopback port and ephemeral session-token contract; MVP 1C wires it into the sidecar supervisor lifecycle.
+The current fixed port remains a development contract, but the host is locked to `127.0.0.1` and every route requires the current ephemeral token. Random ports, packaged Sidecar binaries, restart monitoring, crash recovery, and orphan cleanup remain in the MVP 1C supervisor. SecretStore is a separate later PR and is not used for the session token.
 
 ## Project documents
 
@@ -84,14 +83,15 @@ The fixed `127.0.0.1:8765` address is a Phase 0 development contract. MVP 1A-3B 
 2. **MVP 1A-1 — complete:** SQLite, migrations, meeting CRUD, deletion semantics, and persistence (`feat/meeting-data-core`, PR #3).
 3. **MVP 1A-2-1 — complete:** Meeting Tauri Command API and typed TypeScript client (`feat/meeting-command-api`, PR #6).
 4. **MVP 1A-2-2 — complete:** desktop UI and complete synthetic meeting flow (`feat/meeting-ui-mock`, PR #7).
-5. **MVP 1A-3A — current:** Provider contracts, Registry, and deterministic in-memory mocks (`feat/provider-contracts-mocks`).
-6. **MVP 1A-3B:** session token, SecretStore, authentication, and security logging foundation (`feat/provider-security-foundation`).
-7. **MVP 1B-1:** isolated document validation and Docling parsing (`feat/document-processing`).
-8. **MVP 1B-2:** staged DeepSeek minutes, evidence links, and export (`feat/deepseek-summary`).
-9. **MVP 1C:** sidecar supervisor, Windows audio, and realtime transcription in separate PRs.
-10. **MVP 2:** realtime translation and speaker diarization.
-11. **MVP 3:** meeting-window selection, OCR, and screen context.
-12. **MVP 4:** Windows packaging and product hardening.
+5. **MVP 1A-3A — complete:** Provider contracts, Registry, and deterministic in-memory mocks (`feat/provider-contracts-mocks`, PR #8).
+6. **MVP 1A-3B-1 — current:** authenticated local Sidecar session and loopback boundary (`feat/local-sidecar-auth`, PR #9).
+7. **MVP 1A-3B-2:** SecretStore and Windows Credential Manager (`feat/secret-store`, PR #10).
+8. **MVP 1B-1:** isolated document validation and Docling parsing (`feat/document-processing`).
+9. **MVP 1B-2:** staged DeepSeek minutes, evidence links, and export (`feat/deepseek-summary`).
+10. **MVP 1C:** sidecar supervisor, Windows audio, and realtime transcription in separate PRs.
+11. **MVP 2:** realtime translation and speaker diarization.
+12. **MVP 3:** meeting-window selection, OCR, and screen context.
+13. **MVP 4:** Windows packaging and product hardening.
 
 The authoritative branch mapping, exclusions, and acceptance criteria are in [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md). Docling and DeepSeek are separate PRs. Screenpipe, if adopted, is an optional provider rather than a core dependency.
 

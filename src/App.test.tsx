@@ -5,10 +5,12 @@ import historySource from "./pages/HistoryPage.tsx?raw";
 import detailSource from "./pages/MeetingDetailPage.tsx?raw";
 import liveSource from "./pages/LiveMeetingPage.tsx?raw";
 import newSource from "./pages/NewMeetingPage.tsx?raw";
+import settingsSource from "./pages/SettingsPage.tsx?raw";
 import App from "./App";
 import { MeetingApiError } from "./api/meeting";
 import type { AppServices } from "./app/services";
 import { formatLocalDate } from "./lib/presentation";
+import { SidecarApiError } from "./lib/sidecar";
 import type {
   TranscriptionListener,
   TranscriptionProvider,
@@ -138,10 +140,13 @@ function appServices(
   return {
     meetingApi: api,
     checkSidecarHealth: async () => ({
-      status: "ok",
+      status: "authenticated",
+      binding: "loopback",
+      session: "current",
+      secretStorage: "not_implemented",
       service: "meetinglens-sidecar",
       version: "0.1.0",
-      api_version: "v1",
+      apiVersion: "v1",
     }),
     providers: new ProviderRegistry({ transcription: transcriptionProvider }),
     desktopRuntime: false,
@@ -533,6 +538,7 @@ describe("MeetingLens desktop UI", () => {
       detailSource,
       liveSource,
       newSource,
+      settingsSource,
     ].join("\n");
     expect(pageSources).not.toMatch(/@tauri-apps|\binvoke\s*\(/);
     expect(pageSources).toContain("meetingApi");
@@ -568,6 +574,50 @@ describe("MeetingLens desktop UI", () => {
       ),
     ).toBeInTheDocument();
     expect(document.body.textContent).not.toMatch(/[A-Z]:\\Users\\|\.sqlite3/i);
+  });
+
+  it("shows the authenticated Sidecar boundary without internal details", async () => {
+    const services = appServices(new FakeMeetingApi());
+    services.desktopRuntime = true;
+    window.history.replaceState(null, "", "#/settings");
+    render(<App services={services} />);
+
+    expect(
+      await screen.findByText("Local Sidecar authenticated"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("This device only")).toBeInTheDocument();
+    expect(screen.getByText("Current application session")).toBeInTheDocument();
+    expect(screen.getByText("Not implemented")).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(
+      /Authorization|Bearer|127\.0\.0\.1|8765|MEETINGLENS_SESSION_TOKEN/i,
+    );
+  });
+
+  it("shows a distinct unavailable Sidecar state", async () => {
+    const services = appServices(new FakeMeetingApi());
+    services.desktopRuntime = true;
+    services.checkSidecarHealth = async () => {
+      throw new SidecarApiError("sidecar_unavailable", true);
+    };
+    window.history.replaceState(null, "", "#/settings");
+    render(<App services={services} />);
+
+    expect(
+      await screen.findByText("Local service unavailable"),
+    ).toBeInTheDocument();
+  });
+
+  it("maps an unknown Sidecar failure to a safe error state", async () => {
+    const services = appServices(new FakeMeetingApi());
+    services.desktopRuntime = true;
+    services.checkSidecarHealth = async () => {
+      throw new Error("private runtime details");
+    };
+    window.history.replaceState(null, "", "#/settings");
+    render(<App services={services} />);
+
+    expect(await screen.findByText("Local Sidecar error")).toBeInTheDocument();
+    expect(document.body.textContent).not.toContain("private runtime details");
   });
 
   it("shows all five providers as explicit mocks in settings", () => {

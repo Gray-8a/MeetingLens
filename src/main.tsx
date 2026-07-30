@@ -20,6 +20,12 @@ if (import.meta.env.DEV && import.meta.env.VITE_PROVIDER_UI_SMOKE === "1") {
   );
 }
 
+if (import.meta.env.DEV && import.meta.env.VITE_SIDECAR_AUTH_SMOKE === "1") {
+  void import("./dev/sidecarAuthSmoke").then(({ runSidecarAuthSmoke }) =>
+    runSidecarAuthSmoke(),
+  );
+}
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <App />

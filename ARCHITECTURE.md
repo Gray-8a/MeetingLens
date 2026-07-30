@@ -33,7 +33,8 @@ flowchart LR
 
 - 作为 WebView 与本机资源之间的权限边界。
 - 管理窗口、文件选择、音频设备权限和应用生命周期。
-- 启动/停止已打包 sidecar，生成每次启动的端口与会话令牌。
+- 生成每次应用启动的会话令牌，并作为唯一授权调用方管理 Sidecar 通信。
+- MVP 1A-3B-1 取得安全传递令牌所需的最小开发 Sidecar 启停所有权；完整打包、监控、崩溃恢复和孤儿进程回收仍属于 MVP 1C。
 - 对 IPC 输入做类型、路径和大小校验。
 - 负责数据库迁移、原子写入和删除协调。
 
@@ -42,7 +43,7 @@ flowchart LR
 - 提供版本化 loopback API。
 - 承载转录、文档提取、翻译、说话人分离和摘要预处理。
 - 任务处理器按接口解耦，单个模型失败不影响其他模块。
-- Phase 0 只实现无运行时第三方依赖的 `/health`；MVP 1C 才实现 supervisor、崩溃恢复、孤儿进程回收和 Windows sidecar 打包生命周期。
+- Sidecar 保持无运行时第三方依赖的窄 HTTP 服务；MVP 1A-3B-1 为所有路由增加会话认证，MVP 1C 才实现 supervisor、崩溃恢复、孤儿进程回收和 Windows sidecar 打包生命周期。
 - Diart、WhisperX 等不兼容模型不得装入同一个 Python 环境，由独立 worker 进程和版本化消息协议隔离。
 
 ### 3.4 SQLite 与本地文件
@@ -66,16 +67,16 @@ MVP 1A-3A 在 React/TypeScript 应用边界定义五类能力契约：Capture、
 
 本阶段契约只位于 TypeScript，因为尚无真实 Provider RPC。Rust 继续负责系统权限、Tauri command、数据库和未来进程/凭据边界；Python 继续只提供现有 sidecar 健康契约。真实实现出现时再在所属层增加版本化 adapter，不为形式对称提前复制无调用方的 Rust/Python 接口。
 
-未来替换关系保持可选：Screenpipe 只能是 Capture Provider；Whisper/Diart 属于 Transcription Provider；DeepSeek 只能实现 Translation/Summary Provider；Docling 只能实现 DocumentParser Provider。SecretStore、随机端口、会话令牌、认证与安全日志留在 MVP 1A-3B。
+未来替换关系保持可选：Screenpipe 只能是 Capture Provider；Whisper/Diart 属于 Transcription Provider；DeepSeek 只能实现 Translation/Summary Provider；Docling 只能实现 DocumentParser Provider。会话认证由 MVP 1A-3B-1 建立，SecretStore 由独立的 MVP 1A-3B-2 交付，随机端口和完整 supervisor 留在 MVP 1C。
 
 ## 4. 信任边界
 
-| 边界            | 高信任侧        | 低信任侧       | 主要控制                                        |
-| --------------- | --------------- | -------------- | ----------------------------------------------- |
-| WebView → Rust  | Rust core       | UI 输入        | Tauri capabilities、command allowlist、结构校验 |
-| Rust → Sidecar  | Rust supervisor | 本地 HTTP 进程 | loopback、随机端口、临时 bearer token、超时     |
-| Sidecar → 文件  | 应用私有目录    | 上传内容       | 规范化路径、MIME/大小限制、沙箱式工作目录       |
-| 本地 → DeepSeek | 本地数据        | 外部服务       | 明示同意、最小文本、脱敏、TLS、超时             |
+| 边界            | 高信任侧           | 低信任侧       | 主要控制                                        |
+| --------------- | ------------------ | -------------- | ----------------------------------------------- |
+| WebView → Rust  | Rust core          | UI 输入        | Tauri capabilities、command allowlist、结构校验 |
+| Rust → Sidecar  | Rust session owner | 本地 HTTP 进程 | loopback、临时 bearer token、集中 Header、超时  |
+| Sidecar → 文件  | 应用私有目录       | 上传内容       | 规范化路径、MIME/大小限制、沙箱式工作目录       |
+| 本地 → DeepSeek | 本地数据           | 外部服务       | 明示同意、最小文本、脱敏、TLS、超时             |
 
 ## 5. Sidecar API
 
@@ -97,7 +98,7 @@ MVP 1A-3A 在 React/TypeScript 应用边界定义五类能力契约：Capture、
 - 默认绑定 `127.0.0.1`。
 - 返回值不包含主机名、路径、环境变量、模型列表或凭据信息。
 - 非法路径返回 JSON 404。
-- 后续除 `/health` 外的端点都要求每次启动生成的 bearer token。
+- 所有端点（包括 `/health`）都要求每次启动生成的 bearer token。
 
 Phase 0 调用链：
 
@@ -106,14 +107,15 @@ sequenceDiagram
     participant UI as React
     participant Rust as Tauri command
     participant Sidecar as Python 3.12 sidecar
+    Rust->>Sidecar: 启动子进程，环境传递临时 token
     UI->>Rust: check_sidecar_health()
-    Rust->>Sidecar: GET 127.0.0.1:8765/health
+    Rust->>Sidecar: GET /health + Authorization: Bearer [REDACTED]
     Sidecar-->>Rust: versioned JSON
     Rust->>Rust: status/service/api_version validation
     Rust-->>UI: typed health or stable error code
 ```
 
-Rust 使用 1 秒连接超时、2 秒总超时、禁止重定向，并且不把底层网络错误、路径或响应正文回显给 WebView。固定端口仅用于 Phase 0 开发验证；MVP 1A-3B 定义随机端口与高熵会话 token 契约，MVP 1C 的 supervisor 完成实际进程接线。
+Rust 使用 1 秒连接超时、2 秒总超时、禁止重定向，并且不把底层网络错误、路径、Header 或响应正文回显给 WebView。MVP 1A-3B-1 保留固定开发端口，但锁死 `127.0.0.1` 并启用每次启动轮换的高熵 token；随机端口、打包二进制和完整 supervisor 由 MVP 1C 接线。
 
 ### 5.2 规划端点
 
@@ -183,11 +185,12 @@ MeetingLens/
 
 ## 8. 进程与打包策略
 
-1. 开发阶段可使用 `python -m sidecar.meetinglens_sidecar.server` 独立启动服务。
-2. 发布阶段使用锁定版本并经 Windows 11 验证的打包工具构建 sidecar 二进制。
-3. 二进制按 Tauri target triple 命名，并配置到 `bundle.externalBin`。
-4. Rust 使用 sidecar API 启动进程，不允许 WebView 获得任意 shell 执行能力。
-5. 应用退出、崩溃恢复和更新时，Rust 负责回收孤儿 sidecar。
+1. MVP 1A-3B-1 开始，`npm run tauri dev` 由 Rust 启动 Python 3.12 Sidecar，并通过子进程环境传递当前会话 token；WebView 不启动进程也不持有 token。
+2. 独立启动仅用于受控协议测试，缺少父进程提供的 token 时必须 fail closed。
+3. 发布阶段使用锁定版本并经 Windows 11 验证的打包工具构建 sidecar 二进制。
+4. 二进制按 Tauri target triple 命名，并配置到 `bundle.externalBin`。
+5. Rust 使用固定程序/module allowlist 启动进程，不允许 WebView 获得任意 shell 执行能力。
+6. 当前只在正常窗口/应用退出时终止所拥有的子进程；崩溃恢复、健康监控、重启和孤儿进程回收属于 MVP 1C。
 
 Phase 0 不提前写入 `externalBin`，因为仓库尚无可验证的平台二进制；MVP 1C 的 `feat/sidecar-supervisor` 必须在产生可验证 Windows 二进制后再接入。
 
@@ -208,19 +211,20 @@ Phase 0 不提前写入 `externalBin`，因为仓库尚无可验证的平台二�
 
 ### 10.1 实施顺序与模块所有权
 
-| 阶段       | 架构交付                                                       | 明确不包含                   |
-| ---------- | -------------------------------------------------------------- | ---------------------------- |
-| MVP 1A-1   | SQLite、迁移、meeting repository/service、删除语义和持久化     | UI、Provider、worker         |
-| MVP 1A-2-1 | Meeting Tauri commands、DTO、状态机和 TypeScript `meetingApi`  | 完整页面、模拟字幕、Provider |
-| MVP 1A-2-2 | React 页面、模拟转写和完整合成会议数据流                       | 真实音频、外部 API           |
-| MVP 1A-3A  | TypeScript Provider 契约、Registry、纯内存 Mock 与模拟会议迁移 | 凭据、令牌、真实 Provider    |
-| MVP 1A-3B  | 随机端口/令牌基础、SecretStore、安全日志和 fail-closed 测试    | Docling、DeepSeek、音频      |
-| MVP 1B-1   | 隔离的 Docling document worker 和来源映射                      | 总结模型                     |
-| MVP 1B-2   | DeepSeek summary adapter、证据引用和导出                       | 文档解析器变更               |
-| MVP 1C     | Sidecar supervisor、崩溃/孤儿进程回收、WASAPI 和实时 ASR       | 翻译、说话人、屏幕           |
-| MVP 2      | 隔离的翻译、Diart 和 WhisperX worker                           | 屏幕采集                     |
-| MVP 3      | Window context、accessibility/OCR 和可选 Capture Provider      | 核心强绑定 Screenpipe        |
-| MVP 4      | Windows 打包、签名、升级、诊断和产品加固                       | 新核心业务范围               |
+| 阶段        | 架构交付                                                       | 明确不包含                   |
+| ----------- | -------------------------------------------------------------- | ---------------------------- |
+| MVP 1A-1    | SQLite、迁移、meeting repository/service、删除语义和持久化     | UI、Provider、worker         |
+| MVP 1A-2-1  | Meeting Tauri commands、DTO、状态机和 TypeScript `meetingApi`  | 完整页面、模拟字幕、Provider |
+| MVP 1A-2-2  | React 页面、模拟转写和完整合成会议数据流                       | 真实音频、外部 API           |
+| MVP 1A-3A   | TypeScript Provider 契约、Registry、纯内存 Mock 与模拟会议迁移 | 凭据、令牌、真实 Provider    |
+| MVP 1A-3B-1 | Sidecar 会话认证、Loopback、稳定错误与基础日志脱敏             | SecretStore、真实 Provider   |
+| MVP 1A-3B-2 | SecretStore、Windows Credential Manager 与安全配置             | Docling、DeepSeek、音频      |
+| MVP 1B-1    | 隔离的 Docling document worker 和来源映射                      | 总结模型                     |
+| MVP 1B-2    | DeepSeek summary adapter、证据引用和导出                       | 文档解析器变更               |
+| MVP 1C      | Sidecar supervisor、崩溃/孤儿进程回收、WASAPI 和实时 ASR       | 翻译、说话人、屏幕           |
+| MVP 2       | 隔离的翻译、Diart 和 WhisperX worker                           | 屏幕采集                     |
+| MVP 3       | Window context、accessibility/OCR 和可选 Capture Provider      | 核心强绑定 Screenpipe        |
+| MVP 4       | Windows 打包、签名、升级、诊断和产品加固                       | 新核心业务范围               |
 
 每一行仍须按 `DEVELOPMENT_PLAN.md` 拆成指定的小型 PR。上游阶段只能通过版本化接口为下游提供能力，不得把下游实现提前塞入当前 PR。
 

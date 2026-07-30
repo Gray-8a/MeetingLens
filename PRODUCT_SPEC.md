@@ -66,8 +66,9 @@ Phase 0 已通过 PR #1 合并，并在 Windows 本机实际启动 Tauri 窗口�
 - **MVP 1A-1（已完成）**：SQLite、迁移、会议 CRUD、删除语义和持久化，不做 UI 或 Provider；由 PR #3 交付。
 - **MVP 1A-2-1（已完成）**：Meeting Tauri Command API、稳定 DTO/错误和可 mock 的 TypeScript 客户端，由 PR #6 交付。
 - **MVP 1A-2-2（已完成）**：桌面页面、模拟转写和完整模拟会议流程，由 PR #7 交付。
-- **MVP 1A-3A**：Capture、Transcription、Translation、Summary、DocumentParser Provider 契约、Registry 与纯内存 Mock；不访问真实设备、文件或网络。
-- **MVP 1A-3B**：本地会话令牌、Windows Credential Manager `SecretStore`、安全测试和本地安全日志基础。
+- **MVP 1A-3A（已完成）**：Capture、Transcription、Translation、Summary、DocumentParser Provider 契约、Registry 与纯内存 Mock，由 PR #8 交付。
+- **MVP 1A-3B-1**：本地 Sidecar 会话令牌、Loopback 认证、稳定错误和最小日志脱敏，不包含凭据存储。
+- **MVP 1A-3B-2**：Windows Credential Manager `SecretStore`、凭据配置状态和跨层安全日志基础。
 
 合成会议的产品状态固定为：创建后 `draft`，开始后 `recording`，结束后 `ready`。开始/结束时间由后端生成；`processing` 保留给未来真实异步处理，用户界面不能任意写入状态。
 
@@ -82,7 +83,7 @@ Docling 与 DeepSeek 必须使用两个独立 PR，不得同时引入解析器�
 
 ### 5.4 MVP 1C：真实音频与转写
 
-- Sidecar supervisor、随机端口/会话令牌接线、崩溃恢复、孤儿进程回收和生命周期安全日志
+- Sidecar supervisor、随机端口/打包二进制接线、崩溃恢复、孤儿进程回收和生命周期安全日志
 - Windows WASAPI 系统音频与麦克风、可见录音状态和异常恢复
 - 实时 ASR、完整时间戳转录、CPU 回退和会后校正入口
 
