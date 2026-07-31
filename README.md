@@ -2,7 +2,7 @@
 
 MeetingLens is a privacy-first desktop workspace for meeting capture, transcription, translation, document context, speaker diarization, and verifiable AI summaries.
 
-Phase 0 through MVP 1A and the MVP 1B-0 specification gate are complete. The current `feat/document-storage-core` stage implements MVP 1B-1A: SQLite schema v2, private UUID-based document storage, safe streaming import, SHA-256 same-meeting deduplication, recoverable document/meeting deletion, and startup reconciliation. Document commands, the native picker, React file UI, Docling, and DeepSeek document processing remain unimplemented.
+Phase 0 through MVP 1A and the MVP 1B-1A storage core are complete. The current `feat/document-import-ui` stage implements MVP 1B-1B: Rust-owned native file selection, a path-free Document Command API, typed import progress, and meeting document import/delete UI. Docling parsing, document preview/open, drag-and-drop, and DeepSeek document processing remain unimplemented.
 
 The Provider runtime defines Capture, Transcription, Translation, Summary, and DocumentParser capability boundaries. Current implementations are explicit deterministic in-memory mocks: they do not access devices, files, or networks, and can be replaced through an application-owned Registry without changing page business logic.
 
@@ -76,7 +76,7 @@ The production Credential Manager target is `com.gray.meetinglens/secret/deepsee
 
 ## Document storage boundary
 
-The internal Rust `DocumentService` treats every source as untrusted and keeps source paths transient inside the Rust trust boundary. It does not register Tauri Document commands, so React cannot import files or receive internal paths yet. The next UI stage will accept only files actively selected through MeetingLens's native picker. Neither the current Python Sidecar nor DeepSeek receives file contents.
+The Rust `DocumentService` treats every source as untrusted and keeps source paths transient inside the Rust trust boundary. React can request the Rust-owned native picker and receives only safe document DTOs and typed progress events—never source or storage paths. The application capability grants only the six custom document commands; it does not grant WebView dialog, filesystem, shell, process, or HTTP permissions. Neither the current Python Sidecar nor DeepSeek receives file contents.
 
 The initial allowlist is PDF, DOCX, PPTX, XLSX, TXT, Markdown, CSV, PNG, JPG, and JPEG. Limits are 100 MiB per file, 10 files per selection, 20 files per meeting, 500 MiB per meeting, and 255 UTF-8 bytes per original filename. Extension-only validation is insufficient; unknown, mismatched, empty, executable, script, macro, archive, HTML, and disguised double-extension files fail closed.
 
@@ -101,8 +101,8 @@ Files are streamed into private staging storage, hashed with SHA-256, validated,
 6. **MVP 1A-3B-1 — complete:** authenticated local Sidecar session and loopback boundary (`feat/local-sidecar-auth`, PR #9).
 7. **MVP 1A-3B-2 — complete:** SecretStore and Windows Credential Manager (`feat/provider-security-foundation`, PR #10).
 8. **MVP 1B-0 — complete:** document import, storage, lifecycle, and deletion specification (`docs/define-document-import-lifecycle`, PR #11).
-9. **MVP 1B-1A — current:** document storage core, safe import, deduplication, and recoverable deletion (`feat/document-storage-core`).
-10. **MVP 1B-1B:** Document commands, native picker, and import/delete UI (`feat/document-import-ui`).
+9. **MVP 1B-1A — complete:** document storage core, safe import, deduplication, and recoverable deletion (`feat/document-storage-core`, PR #12).
+10. **MVP 1B-1B — current:** Document commands, native picker, typed progress, and import/delete UI (`feat/document-import-ui`).
 11. **MVP 1B-2:** isolated Docling Worker and structured parsing (`feat/docling-worker`).
 12. **MVP 1B-3:** DeepSeek SummaryProvider, evidence links, and export (`feat/deepseek-summary-provider`).
 13. **MVP 1C:** sidecar supervisor, Windows audio, and realtime transcription in separate PRs.

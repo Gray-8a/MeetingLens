@@ -17,6 +17,18 @@ description = "Allows the main MeetingLens UI to read the safe local Sidecar hea
 permissions = ["allow-check-sidecar-health"]
 
 [[set]]
+identifier = "document-management-commands"
+description = "Allows the local main window to select, import, list, inspect, and delete meeting documents through the Rust trust boundary."
+permissions = [
+  "allow-select-and-import-documents",
+  "allow-list-documents",
+  "allow-get-document",
+  "allow-request-delete-document",
+  "allow-retry-delete-document",
+  "allow-get-document-import-policy",
+]
+
+[[set]]
 identifier = "secret-status-management"
 description = "Allows the main MeetingLens UI to set, inspect status for, and delete an approved secret without reading it back."
 permissions = [

@@ -32,6 +32,12 @@ if (import.meta.env.DEV && import.meta.env.VITE_SECRET_STORE_SMOKE === "1") {
   );
 }
 
+if (import.meta.env.DEV && import.meta.env.VITE_DOCUMENT_UI_SMOKE === "1") {
+  void import("./dev/documentUiSmoke").then(({ runDocumentUiSmoke }) =>
+    runDocumentUiSmoke(),
+  );
+}
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <App />

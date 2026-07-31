@@ -10,14 +10,25 @@ use uuid::Uuid;
 use super::database::Database;
 use super::document_detection::{detect_media_type, validate_source_name};
 use super::document_error::{DocumentError, DocumentResult};
-use super::document_model::{Document, DocumentImportPolicy, DocumentStatus, ReconcileReport};
+use super::document_model::{
+    Document, DocumentImportOutcome, DocumentImportPhase, DocumentImportPolicy,
+    DocumentImportProgress, DocumentStatus, ReconcileReport,
+};
 use super::document_repository::{self, NewImport};
 use super::error::{DataError, DataResult};
 use super::model::MeetingStatus;
 use super::repository;
 
 const COPY_BUFFER_BYTES: usize = 64 * 1024;
+const COPY_PROGRESS_INTERVAL_BYTES: u64 = 1024 * 1024;
 const MAX_DELETE_ATTEMPTS: u64 = 3;
+
+struct ImportProgressContext<'a> {
+    document_id: &'a str,
+    file_index: usize,
+    total_files: usize,
+    original_filename: &'a str,
+}
 
 #[derive(Clone, Debug)]
 pub struct DocumentService {
@@ -52,6 +63,10 @@ impl DocumentService {
             .store(true, std::sync::atomic::Ordering::SeqCst);
     }
 
+    pub const fn policy(&self) -> DocumentImportPolicy {
+        self.policy
+    }
+
     pub fn import_batch(
         &self,
         meeting_id: &str,
@@ -73,90 +88,278 @@ impl DocumentService {
         meeting_id: &str,
         source_path: impl AsRef<Path>,
     ) -> DocumentResult<Document> {
-        validate_uuid(meeting_id)?;
         let source_path = source_path.as_ref();
-        let _guard = self.database.mutation_guard().map_err(map_data_error)?;
-        self.ensure_meeting_accepts_import(meeting_id)?;
-        let source_name = validate_source_name(source_path, self.policy.max_filename_bytes)?;
-        let source_metadata = validate_source_file(source_path)?;
-        if source_metadata.len() == 0 {
-            return Err(DocumentError::Empty);
-        }
-        if source_metadata.len() > self.policy.max_file_bytes {
-            return Err(DocumentError::TooLarge);
-        }
-
+        let original_filename = progress_filename(source_path, self.policy.max_filename_bytes);
         let document_id = Uuid::new_v4().to_string();
-        let staging_relative = self
-            .database
-            .paths()
-            .staging_relative(&document_id)
-            .map_err(map_data_error)?;
-        let staging_path = self
-            .database
-            .paths()
-            .resolve_relative(&staging_relative)
-            .map_err(map_data_error)?;
-
-        self.insert_importing(
-            &document_id,
+        self.import_document_with_progress(
             meeting_id,
-            &source_name.original_filename,
-            &source_name.safe_extension,
-            &staging_relative,
-        )?;
-
-        let copied = copy_and_hash(
             source_path,
-            &staging_path,
-            source_metadata,
-            self.policy.max_file_bytes,
-        );
-        let (size_bytes, sha256) = match copied {
-            Ok(value) => value,
-            Err(error) => {
-                self.fail_import_and_cleanup(&document_id, &staging_path, &error);
-                return Err(error);
-            }
-        };
+            ImportProgressContext {
+                document_id: &document_id,
+                file_index: 1,
+                total_files: 1,
+                original_filename: &original_filename,
+            },
+            &mut |_| {},
+        )
+    }
 
-        let detected_media_type =
-            match detect_media_type(&staging_path, &source_name.safe_extension) {
+    pub fn import_batch_with_progress<F>(
+        &self,
+        meeting_id: &str,
+        source_paths: &[PathBuf],
+        mut observer: F,
+    ) -> DocumentResult<Vec<DocumentImportOutcome>>
+    where
+        F: FnMut(DocumentImportProgress),
+    {
+        if source_paths.is_empty() || source_paths.len() > self.policy.max_batch_files {
+            return Err(DocumentError::QuotaExceeded);
+        }
+        validate_uuid(meeting_id)?;
+        self.ensure_meeting_accepts_import(meeting_id)?;
+
+        let total_files = source_paths.len();
+        let mut outcomes = Vec::with_capacity(total_files);
+        for (offset, source_path) in source_paths.iter().enumerate() {
+            let file_index = offset + 1;
+            let original_filename = progress_filename(source_path, self.policy.max_filename_bytes);
+            let document_id = Uuid::new_v4().to_string();
+            observer(import_progress(
+                file_index,
+                total_files,
+                &original_filename,
+                DocumentImportPhase::Selected,
+                0,
+                None,
+                None,
+                None,
+            ));
+            match self.import_document_with_progress(
+                meeting_id,
+                source_path,
+                ImportProgressContext {
+                    document_id: &document_id,
+                    file_index,
+                    total_files,
+                    original_filename: &original_filename,
+                },
+                &mut observer,
+            ) {
+                Ok(document) => outcomes.push(DocumentImportOutcome::Imported(Box::new(document))),
+                Err(DocumentError::AlreadyImported { document_id }) => {
+                    outcomes.push(DocumentImportOutcome::Duplicate {
+                        document_id,
+                        original_filename,
+                    });
+                }
+                Err(error) => outcomes.push(DocumentImportOutcome::Failed {
+                    document_id,
+                    original_filename,
+                    error,
+                }),
+            }
+        }
+        observer(import_progress(
+            total_files,
+            total_files,
+            "",
+            DocumentImportPhase::Complete,
+            0,
+            None,
+            None,
+            None,
+        ));
+        Ok(outcomes)
+    }
+
+    fn import_document_with_progress<F>(
+        &self,
+        meeting_id: &str,
+        source_path: &Path,
+        progress_context: ImportProgressContext<'_>,
+        observer: &mut F,
+    ) -> DocumentResult<Document>
+    where
+        F: FnMut(DocumentImportProgress),
+    {
+        let ImportProgressContext {
+            document_id,
+            file_index,
+            total_files,
+            original_filename,
+        } = progress_context;
+        let mut bytes_processed = 0;
+        let mut total_bytes = None;
+        let progress_document_id = Some(document_id.to_string());
+        observer(import_progress(
+            file_index,
+            total_files,
+            original_filename,
+            DocumentImportPhase::Validating,
+            bytes_processed,
+            total_bytes,
+            None,
+            None,
+        ));
+
+        let result = (|| {
+            validate_uuid(meeting_id)?;
+            let _guard = self.database.mutation_guard().map_err(map_data_error)?;
+            self.ensure_meeting_accepts_import(meeting_id)?;
+            let source_name = validate_source_name(source_path, self.policy.max_filename_bytes)?;
+            let source_metadata = validate_source_file(source_path)?;
+            total_bytes = Some(source_metadata.len());
+            if source_metadata.len() == 0 {
+                return Err(DocumentError::Empty);
+            }
+            if source_metadata.len() > self.policy.max_file_bytes {
+                return Err(DocumentError::TooLarge);
+            }
+
+            let staging_relative = self
+                .database
+                .paths()
+                .staging_relative(document_id)
+                .map_err(map_data_error)?;
+            let staging_path = self
+                .database
+                .paths()
+                .resolve_relative(&staging_relative)
+                .map_err(map_data_error)?;
+
+            self.insert_importing(
+                document_id,
+                meeting_id,
+                &source_name.original_filename,
+                &source_name.safe_extension,
+                &staging_relative,
+            )?;
+
+            observer(import_progress(
+                file_index,
+                total_files,
+                &source_name.original_filename,
+                DocumentImportPhase::Copying,
+                bytes_processed,
+                total_bytes,
+                progress_document_id.clone(),
+                None,
+            ));
+            let copied = copy_and_hash(
+                source_path,
+                &staging_path,
+                source_metadata,
+                self.policy.max_file_bytes,
+                |processed| {
+                    bytes_processed = processed;
+                    observer(import_progress(
+                        file_index,
+                        total_files,
+                        &source_name.original_filename,
+                        DocumentImportPhase::Copying,
+                        processed,
+                        total_bytes,
+                        progress_document_id.clone(),
+                        None,
+                    ));
+                },
+            );
+            let (size_bytes, sha256) = match copied {
                 Ok(value) => value,
                 Err(error) => {
-                    self.fail_import_and_cleanup(&document_id, &staging_path, &error);
-                    return Err(error);
-                }
-            };
-        let (verified_size, verified_hash) =
-            match hash_file(&staging_path, self.policy.max_file_bytes) {
-                Ok(value) if value.0 == size_bytes && value.1 == sha256 => value,
-                Ok(_) | Err(_) => {
-                    let error = DocumentError::IntegrityFailed;
-                    self.fail_import_and_cleanup(&document_id, &staging_path, &error);
+                    self.fail_import_and_cleanup(document_id, &staging_path, &error);
                     return Err(error);
                 }
             };
 
-        match self.finish_import(
-            &document_id,
-            meeting_id,
-            &source_name.safe_extension,
-            detected_media_type,
-            verified_size,
-            &verified_hash,
-            &staging_path,
-        ) {
-            Ok(document) => Ok(document),
-            Err(error @ DocumentError::AlreadyImported { .. }) => {
-                let _ = std::fs::remove_file(&staging_path);
-                Err(error)
+            let detected_media_type =
+                match detect_media_type(&staging_path, &source_name.safe_extension) {
+                    Ok(value) => value,
+                    Err(error) => {
+                        self.fail_import_and_cleanup(document_id, &staging_path, &error);
+                        return Err(error);
+                    }
+                };
+            let (verified_size, verified_hash) =
+                match hash_file(&staging_path, self.policy.max_file_bytes) {
+                    Ok(value) if value.0 == size_bytes && value.1 == sha256 => value,
+                    Ok(_) | Err(_) => {
+                        let error = DocumentError::IntegrityFailed;
+                        self.fail_import_and_cleanup(document_id, &staging_path, &error);
+                        return Err(error);
+                    }
+                };
+
+            observer(import_progress(
+                file_index,
+                total_files,
+                &source_name.original_filename,
+                DocumentImportPhase::Committing,
+                bytes_processed,
+                total_bytes,
+                progress_document_id.clone(),
+                None,
+            ));
+            match self.finish_import(
+                document_id,
+                meeting_id,
+                &source_name.safe_extension,
+                detected_media_type,
+                verified_size,
+                &verified_hash,
+                &staging_path,
+            ) {
+                Ok(document) => Ok(document),
+                Err(error @ DocumentError::AlreadyImported { .. }) => {
+                    let _ = std::fs::remove_file(&staging_path);
+                    Err(error)
+                }
+                Err(error) => {
+                    self.fail_import_and_cleanup(document_id, &staging_path, &error);
+                    Err(error)
+                }
             }
-            Err(error) => {
-                self.fail_import_and_cleanup(&document_id, &staging_path, &error);
-                Err(error)
-            }
+        })();
+
+        match &result {
+            Ok(document) => observer(import_progress(
+                file_index,
+                total_files,
+                &document.original_filename,
+                DocumentImportPhase::Imported,
+                document.size_bytes.unwrap_or(bytes_processed),
+                document.size_bytes.or(total_bytes),
+                Some(document.id.clone()),
+                None,
+            )),
+            Err(DocumentError::AlreadyImported { document_id }) => observer(import_progress(
+                file_index,
+                total_files,
+                original_filename,
+                DocumentImportPhase::Duplicate,
+                bytes_processed,
+                total_bytes,
+                Some(document_id.clone()),
+                Some(
+                    DocumentError::AlreadyImported {
+                        document_id: document_id.clone(),
+                    }
+                    .code(),
+                ),
+            )),
+            Err(error) => observer(import_progress(
+                file_index,
+                total_files,
+                original_filename,
+                DocumentImportPhase::Failed,
+                bytes_processed,
+                total_bytes,
+                progress_document_id,
+                Some(error.code()),
+            )),
         }
+        result
     }
 
     pub fn get(&self, document_id: &str) -> DocumentResult<Document> {
@@ -169,7 +372,7 @@ impl DocumentService {
 
     pub fn list(&self, meeting_id: &str) -> DocumentResult<Vec<Document>> {
         validate_uuid(meeting_id)?;
-        repository::get(
+        repository::get_including_deleted(
             &self.database.connect().map_err(map_data_error)?,
             meeting_id,
         )
@@ -183,6 +386,15 @@ impl DocumentService {
     pub fn delete(&self, document_id: &str) -> DocumentResult<()> {
         validate_uuid(document_id)?;
         let _guard = self.database.mutation_guard().map_err(map_data_error)?;
+        self.delete_locked(document_id, false)
+    }
+
+    pub fn retry_delete(&self, document_id: &str) -> DocumentResult<()> {
+        validate_uuid(document_id)?;
+        let _guard = self.database.mutation_guard().map_err(map_data_error)?;
+        if self.get(document_id)?.status != DocumentStatus::DeleteFailed {
+            return Err(DocumentError::InvalidState);
+        }
         self.delete_locked(document_id, false)
     }
 
@@ -869,6 +1081,7 @@ fn copy_and_hash(
     destination: &Path,
     before: std::fs::Metadata,
     max_bytes: u64,
+    mut on_progress: impl FnMut(u64),
 ) -> DocumentResult<(u64, String)> {
     let source_file = open_source_file(source)?;
     let opened = source_file
@@ -887,6 +1100,7 @@ fn copy_and_hash(
     let mut buffer = [0_u8; COPY_BUFFER_BYTES];
     let mut digest = Sha256::new();
     let mut total = 0_u64;
+    let mut last_reported = 0_u64;
     loop {
         let read = reader
             .read(&mut buffer)
@@ -902,6 +1116,14 @@ fn copy_and_hash(
         writer
             .write_all(&buffer[..read])
             .map_err(|_| DocumentError::StorageUnavailable)?;
+        let bounded_total = total.min(before.len());
+        if bounded_total > last_reported
+            && (bounded_total.saturating_sub(last_reported) >= COPY_PROGRESS_INTERVAL_BYTES
+                || bounded_total == before.len())
+        {
+            on_progress(bounded_total);
+            last_reported = bounded_total;
+        }
     }
     writer
         .flush()
@@ -923,6 +1145,52 @@ fn copy_and_hash(
         return Err(DocumentError::IntegrityFailed);
     }
     Ok((total, encode_hex(&digest.finalize())))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn import_progress(
+    file_index: usize,
+    total_files: usize,
+    original_filename: &str,
+    phase: DocumentImportPhase,
+    bytes_processed: u64,
+    total_bytes: Option<u64>,
+    document_id: Option<String>,
+    error_code: Option<&'static str>,
+) -> DocumentImportProgress {
+    DocumentImportProgress {
+        file_index,
+        total_files,
+        original_filename: original_filename.to_string(),
+        phase,
+        bytes_processed,
+        total_bytes,
+        document_id,
+        error_code,
+    }
+}
+
+fn progress_filename(path: &Path, max_bytes: usize) -> String {
+    let Some(value) = path.file_name().and_then(|value| value.to_str()) else {
+        return "Selected file".to_string();
+    };
+    let mut safe = String::new();
+    for character in value.chars() {
+        let character = if character.is_control() {
+            '\u{fffd}'
+        } else {
+            character
+        };
+        if safe.len() + character.len_utf8() > max_bytes {
+            break;
+        }
+        safe.push(character);
+    }
+    if safe.is_empty() {
+        "Selected file".to_string()
+    } else {
+        safe
+    }
 }
 
 fn hash_file(path: &Path, max_bytes: u64) -> DocumentResult<(u64, String)> {
@@ -1502,8 +1770,8 @@ mod tests {
         let source = workspace.source("stream.txt", b"abc");
         let before = std::fs::metadata(&source).expect("source metadata should read");
         let destination = workspace.root.join("first-copy.tmp");
-        let (size, hash) =
-            copy_and_hash(&source, &destination, before, 3).expect("bounded copy should succeed");
+        let (size, hash) = copy_and_hash(&source, &destination, before, 3, |_| {})
+            .expect("bounded copy should succeed");
         assert_eq!(size, 3);
         assert_eq!(
             hash,
@@ -1518,6 +1786,7 @@ mod tests {
                 &workspace.root.join("changed-copy.tmp"),
                 before_change,
                 100,
+                |_| {},
             ),
             Err(DocumentError::IntegrityFailed)
         );
@@ -1529,6 +1798,7 @@ mod tests {
                 &workspace.root.join("limited-copy.tmp"),
                 before_limit,
                 4,
+                |_| {},
             ),
             Err(DocumentError::TooLarge)
         );

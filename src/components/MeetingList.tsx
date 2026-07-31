@@ -9,6 +9,7 @@ export interface MeetingListProps {
   deletingId?: string | null;
   onRequestDelete?: (id: string) => void;
   onConfirmDelete?: (id: string) => void;
+  onRetryDelete?: (id: string) => void;
   onCancelDelete?: () => void;
 }
 
@@ -18,6 +19,7 @@ export function MeetingList({
   deletingId = null,
   onRequestDelete,
   onConfirmDelete,
+  onRetryDelete,
   onCancelDelete,
 }: MeetingListProps) {
   return (
@@ -25,6 +27,7 @@ export function MeetingList({
       {meetings.map((meeting) => {
         const canDelete =
           meeting.status === "draft" || meeting.status === "ready";
+        const canRetryDelete = meeting.status === "delete_failed";
         const confirming = confirmingId === meeting.id;
         const deleting = deletingId === meeting.id;
 
@@ -62,7 +65,16 @@ export function MeetingList({
               >
                 View details
               </AppLink>
-              {onRequestDelete && onConfirmDelete && onCancelDelete ? (
+              {canRetryDelete && onRetryDelete ? (
+                <button
+                  className="button button--danger-outline"
+                  disabled={deleting}
+                  onClick={() => onRetryDelete(meeting.id)}
+                  type="button"
+                >
+                  {deleting ? "Retrying…" : "Retry deletion"}
+                </button>
+              ) : onRequestDelete && onConfirmDelete && onCancelDelete ? (
                 confirming ? (
                   <div
                     className="confirm-actions"
@@ -100,9 +112,11 @@ export function MeetingList({
                   </button>
                 )
               ) : null}
-              {!canDelete && onRequestDelete ? (
+              {!canDelete && !canRetryDelete && onRequestDelete ? (
                 <p className="restriction" id={`delete-help-${meeting.id}`}>
-                  Finish the meeting before deleting it · meeting_invalid_state
+                  {meeting.status === "deleting"
+                    ? "Deletion pending · meeting_delete_pending"
+                    : "Finish the meeting before deleting it · meeting_invalid_state"}
                 </p>
               ) : null}
             </div>

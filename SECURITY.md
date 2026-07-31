@@ -91,7 +91,8 @@ DeepSeek 生产适配器必须使用当前模型名 `deepseek-v4-flash` / `deeps
 - 设置非空 CSP；默认 `default-src 'self'`，只开放实际需要的来源。
 - `src-tauri/capabilities` 采用最小权限；不授予任意 shell 或全文件系统访问。
 - 自定义应用 commands 登记进 Tauri `AppManifest`；Secret permission set 只授予本地 `main` 窗口 status/set/delete，不包含 get/reveal，也不授予 remote WebView。
-- 文件对话框返回的路径由 Rust 再次校验，不能由前端拼接任意路径。
+- Document permission set 只授予本地 `main` 窗口 select/import、list/get、delete/retry 和 policy 六个自定义 commands；不授予 WebView dialog、fs、shell、process 或 HTTP permission。
+- 文件对话框只由 Rust 打开；返回路径继续留在 Rust 并再次校验，不能由前端传入、拼接或读回任意路径。
 - Sidecar 通过固定名称 allowlist 启动，不向前端暴露通用命令执行。
 - Rust commands 对长度、枚举、UUID、路径、文件大小和超时做边界校验。
 
@@ -110,9 +111,11 @@ DeepSeek 生产适配器必须使用当前模型名 `deepseek-v4-flash` / `deeps
 
 ## 10. 上传文件防护
 
-所有用户导入文件均为不可信数据；“本地保存”不能作为信任依据。当前只有未暴露给 WebView 的 Rust `DocumentService`，尚无正式导入入口。下一阶段只允许用户通过 MeetingLens 原生文件选择器主动选择文件。Teams、Zoom、Meet、邮件或聊天附件必须先由用户下载再手动导入；不自动读取附件/云盘，不监控 Downloads 或桌面，不读取剪贴板文件，不接受任意路径拖放、远程 URL 或网络共享自动导入。
+所有用户导入文件均为不可信数据；“本地保存”不能作为信任依据。正式入口只允许用户通过 MeetingLens 的 Rust 原生文件选择器主动选择文件。Teams、Zoom、Meet、邮件或聊天附件必须先由用户下载再手动导入；不自动读取附件/云盘，不监控 Downloads 或桌面，不读取剪贴板文件，不接受任意路径拖放、远程 URL 或网络共享自动导入。
 
 Rust 是文件选择、校验、复制和私有存储的信任边界。React/WebView 不获得任意文件系统读取权限，不接收源绝对路径，只接收 document ID、原始显示名称、安全类型、大小、状态和导入时间。Python Sidecar 当前不接收用户文件；DeepSeek 当前不接收文件内容。
+
+导入进度通过每次调用独立的有类型 Tauri channel 发送，只包含安全显示名、阶段和有界字节计数；没有全局可订阅文件事件，也不发送路径、哈希、文件内容或内部异常。前端对未知状态和畸形 DTO fail closed，错误展示只使用稳定错误码和固定安全消息。
 
 第一版 allowlist：
 

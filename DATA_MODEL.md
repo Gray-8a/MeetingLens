@@ -172,6 +172,8 @@ erDiagram
 
 同一会议使用 `(meeting_id, sha256)` 唯一约束识别相同内容。重复时不创建第二条记录或物理副本，返回 `document_already_imported` 和已有 document ID。不同会议首版不做物理去重；文件名不参与重复判断，同名不同内容允许导入，不同名相同内容视为重复。
 
+MVP 1B-1B 的 WebView DTO 只公开 `id`、`meeting_id`、清理后的 `original_name`、`detected_type`、`size_bytes`、`status`、稳定 `failure_code` 和 UTC 时间；明确排除 `storage_relative_path`、SHA-256、内部失败消息及源绝对路径。进度事件只公开当前文件安全显示名、阶段和有界字节计数。未知字段/状态在命令输入或前端解析边界 fail closed。
+
 ### `deletion_jobs`
 
 schema v2 使用统一删除任务表协调 meeting/document 的文件清理：`id` 为 UUID，`entity_kind` 只能是 `meeting/document`，并保存受控 `meeting_id`、可选 `document_id`、`pending/failed` 状态、可选 trash 相对路径、0–3 的自动重试计数、安全错误码和 UTC 时间戳。partial unique indexes 保证每个 meeting 或 document 同时最多一个删除任务；实体最终删除时由外键级联移除任务。启动恢复最多自动尝试三次，显式用户重试仍可重新进入 `deleting`。
@@ -355,7 +357,7 @@ MVP 1A-2-1 的当前无文件删除状态契约固定如下：
 
 会议处于 `draft`、`recording` 或 `ready` 时允许增删文档；`processing`、`deleting`、`delete_failed`、`failed`、`archived` 和未知状态下，普通用户文档集合变更 fail closed。`delete_failed` 仅允许删除协调器重试，不允许以单文档操作绕过会议 tombstone。
 
-MVP 1B-1A 已同时迁移删除实现和测试；`delete_meeting` command 继续只调用 Meeting service，不直接操作文件系统。
+MVP 1B-1A 已同时迁移删除实现和测试；MVP 1B-1B 的 `delete_meeting` command 继续只调用 Meeting service，不直接操作文件系统。list/get 可返回 `deleting`/`delete_failed` tombstone 供 UI 展示 pending 或重试，但普通编辑和文档集合变更仍被冻结。
 
 默认保留策略在实现前由产品决策确认；首个版本不进行静默自动删除。
 

@@ -64,7 +64,16 @@ pub(crate) fn list(connection: &Connection) -> DataResult<Vec<Meeting>> {
     let sql = format!(
         "SELECT {MEETING_COLUMNS} FROM meetings WHERE deleted_at IS NULL ORDER BY updated_at DESC, id"
     );
-    let mut statement = connection.prepare(&sql).map_err(DataError::from)?;
+    list_with_sql(connection, &sql)
+}
+
+pub(crate) fn list_including_deleted(connection: &Connection) -> DataResult<Vec<Meeting>> {
+    let sql = format!("SELECT {MEETING_COLUMNS} FROM meetings ORDER BY updated_at DESC, id");
+    list_with_sql(connection, &sql)
+}
+
+fn list_with_sql(connection: &Connection, sql: &str) -> DataResult<Vec<Meeting>> {
+    let mut statement = connection.prepare(sql).map_err(DataError::from)?;
     let meetings = statement
         .query_map([], meeting_from_row)
         .map_err(DataError::from)?

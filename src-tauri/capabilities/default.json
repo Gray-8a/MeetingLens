@@ -6,6 +6,7 @@
   "local": true,
   "permissions": [
     "core:default",
+    "document-management-commands",
     "meeting-data-commands",
     "sidecar-status-command",
     "secret-status-management"

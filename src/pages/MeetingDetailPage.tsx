@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { AppLink, liveMeetingPath, useNavigation } from "../app/navigation";
 import { useServices } from "../app/services";
 import type { MeetingResponse } from "../api/meeting";
+import { DocumentPanel } from "../components/DocumentPanel";
 import { StatusBadge } from "../components/StatusBadge";
 import { ErrorNotice, LoadingState } from "../components/UiState";
 import { formatLocalDate, uiError } from "../lib/presentation";
@@ -127,7 +128,20 @@ export function MeetingDetailPage({
       await meetingApi.delete(meeting.id);
       navigate("/history");
     } catch (reason: unknown) {
-      setError(uiError(reason));
+      const safeError = uiError(reason);
+      setError(safeError);
+      if (
+        safeError.code === "meeting_delete_failed" ||
+        safeError.code === "meeting_delete_pending"
+      ) {
+        try {
+          const refreshed = await meetingApi.get(meeting.id);
+          setMeeting(refreshed);
+          onMeetingStatus(refreshed.status);
+        } catch {
+          // Keep the stable delete error if the refresh races final cleanup.
+        }
+      }
       setBusyAction(null);
       setConfirmingDelete(false);
     }
@@ -149,6 +163,7 @@ export function MeetingDetailPage({
   }
 
   const canDelete = meeting.status === "draft" || meeting.status === "ready";
+  const canRetryDelete = meeting.status === "delete_failed";
 
   return (
     <div className="page-stack">
@@ -305,6 +320,16 @@ export function MeetingDetailPage({
                 Cancel
               </button>
             </div>
+          ) : canRetryDelete ? (
+            <button
+              className="button button--danger-outline"
+              data-acceptance="retry-delete-meeting"
+              disabled={busyAction !== null}
+              onClick={() => void deleteMeeting()}
+              type="button"
+            >
+              {busyAction === "delete" ? "Retrying…" : "Retry meeting deletion"}
+            </button>
           ) : (
             <button
               className="button button--danger-outline"
@@ -317,9 +342,11 @@ export function MeetingDetailPage({
             </button>
           )}
 
-          {!canDelete ? (
+          {!canDelete && !canRetryDelete ? (
             <p className="restriction">
-              Finish the meeting before deleting it · meeting_invalid_state
+              {meeting.status === "deleting"
+                ? "Meeting deletion is still pending · meeting_delete_pending"
+                : "Finish the meeting before deleting it · meeting_invalid_state"}
             </p>
           ) : null}
           {meeting.status === "ready" ? (
@@ -329,6 +356,7 @@ export function MeetingDetailPage({
           ) : null}
         </article>
       </section>
+      <DocumentPanel meetingId={meeting.id} meetingStatus={meeting.status} />
     </div>
   );
 }

@@ -26,8 +26,8 @@ MVP 1A-2 实现前已使用 `docs/define-meeting-lifecycle` 固定会议状态�
 | MVP 1A-3B-1 | Sidecar 会话认证、Loopback 和基础日志脱敏      | `feat/local-sidecar-auth` / PR #9                       | 已完成并合并 |
 | MVP 1A-3B-2 | SecretStore、Windows Credential Manager        | `feat/provider-security-foundation` / PR #10            | 已完成并合并 |
 | MVP 1B-0    | 文件导入、生命周期、私有存储和删除语义         | `docs/define-document-import-lifecycle` / PR #11        | 已完成并合并 |
-| MVP 1B-1A   | 文档存储核心、安全导入、去重和删除协调         | `feat/document-storage-core` / PR #12                   | 当前阶段     |
-| MVP 1B-1B   | Document Commands、原生选择器和导入 UI         | `feat/document-import-ui`                               | 待开始       |
+| MVP 1B-1A   | 文档存储核心、安全导入、去重和删除协调         | `feat/document-storage-core` / PR #12                   | 已完成并合并 |
+| MVP 1B-1B   | Document Commands、原生选择器和导入 UI         | `feat/document-import-ui`                               | 当前阶段     |
 | MVP 1B-2    | 隔离 Docling Worker 和结构化解析               | `feat/docling-worker`                                   | 待开始       |
 | MVP 1B-3    | DeepSeek SummaryProvider、证据引用和导出       | `feat/deepseek-summary-provider`                        | 待开始       |
 | MVP 1C      | Windows 音频、实时转写、sidecar 生命周期       | 见 §8 的三个小 PR                                       | 待开始       |
@@ -193,7 +193,7 @@ MVP 1A-2 固定拆成以下两个顺序 PR。前一个 PR 合并后，后一个 
 
 验收：覆盖大小变化/复制中超限、类型不一致、双重扩展、路径逃逸、重复内容、事务/rename 失败、删除失败和崩溃恢复；Windows 本机验证私有路径、原子移动、源文件不变和无孤儿文件。本 PR 不引入 Docling。
 
-实现基线：schema migration v2 创建 `documents`/`deletion_jobs`；Rust 内部 `DocumentService` 执行流式复制、SHA-256、签名/OOXML 中央目录/UTF-8 检查、固定配额、UUID 私有路径、删除协调和启动对账。应用生命周期文件锁拒绝第二写入实例，进程内 mutex 串行化 mutation；没有 Document command、picker 或 React 文件 API。
+完成基线：schema migration v2 创建 `documents`/`deletion_jobs`；Rust 内部 `DocumentService` 执行流式复制、SHA-256、签名/OOXML 中央目录/UTF-8 检查、固定配额、UUID 私有路径、删除协调和启动对账。应用生命周期文件锁拒绝第二写入实例，进程内 mutex 串行化 mutation；PR #12 没有 Document command、picker 或 React 文件 API。
 
 ### 7.3 MVP 1B-1B：文档导入 UI
 
@@ -208,6 +208,8 @@ MVP 1A-2 固定拆成以下两个顺序 PR。前一个 PR 合并后，后一个 
 - Rust 最终执行状态、类型和配额规则；页面不能直接写状态
 
 验收：Windows 本机通过原生选择器导入 allowlist 合成文件，验证重启持久化、状态冻结、重复检测、删除/重试及无路径泄漏。本 PR 不解析文件。
+
+实现基线：React 只通过集中、可替换的 `documentApi` 调用六个自定义 commands；`select_and_import_documents` 在 Rust 中打开原生多选对话框，并通过有类型的 Tauri channel 回传有界进度。DTO 不包含源路径、存储路径、哈希或内部错误。会议详情提供完整列表、导入、删除和重试，会议中页面提供紧凑状态；最终状态、格式、去重和配额仍由 `DocumentService` 执行。
 
 ### 7.4 MVP 1B-2：Docling Worker
 
@@ -295,4 +297,4 @@ Screenpipe 只能是可替换的可选 Capture Provider，不得成为核心强�
 
 ## 14. 当前下一步
 
-PR #11 已 squash merge，MVP 1B-0 规范门槛完成。当前仅交付 `feat/document-storage-core`（PR #12）并等待用户决定是否合并；不得开始 UI、Docling 或 DeepSeek。PR #12 合并后才能从最新 `main` 创建 `feat/document-import-ui`，随后再依次完成 `feat/docling-worker` 和 `feat/deepseek-summary-provider`。
+PR #12 已 squash merge，MVP 1B-1A 存储核心完成。当前仅交付 `feat/document-import-ui`（MVP 1B-1B）并等待用户决定是否合并；不得开始 Docling 或 DeepSeek。该 PR 合并后才能从最新 `main` 创建 `feat/docling-worker`，随后再交付 `feat/deepseek-summary-provider`。

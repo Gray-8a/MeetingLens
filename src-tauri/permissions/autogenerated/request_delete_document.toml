@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-request-delete-document"
+description = "Enables the request_delete_document command without any pre-configured scope."
+commands.allow = ["request_delete_document"]
+
+[[permission]]
+identifier = "deny-request-delete-document"
+description = "Denies the request_delete_document command without any pre-configured scope."
+commands.deny = ["request_delete_document"]

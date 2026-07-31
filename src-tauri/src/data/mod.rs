@@ -12,7 +12,10 @@ mod repository;
 mod service;
 
 pub use document_error::{DocumentError, DocumentResult};
-pub use document_model::{Document, DocumentImportPolicy, DocumentStatus, ReconcileReport};
+pub use document_model::{
+    ALLOWED_DOCUMENT_EXTENSIONS, Document, DocumentImportOutcome, DocumentImportPhase,
+    DocumentImportPolicy, DocumentImportProgress, DocumentStatus, ReconcileReport,
+};
 pub use document_service::DocumentService;
 pub use error::{DataError, DataResult};
 pub use model::{CreateMeeting, Meeting, MeetingStatus, UpdateMeeting};
