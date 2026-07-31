@@ -93,6 +93,11 @@ app-data/
 meeting-data/
 local-data/
 artifacts/
+parser-staging/
+docling-models/
+.docling-models/
+workers/docling/models/
+workers/docling/parser-staging/
 *.doc
 *.docx
 *.pdf

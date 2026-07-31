@@ -129,11 +129,13 @@ Rust 是文件选择、校验、复制和私有存储的信任边界。React/Web
 - OOXML 虽是 ZIP 容器，但不因此允许普通 ZIP；导入阶段不解压，完整结构验证留给隔离 Docling Worker。
 - MeetingLens 不启动或 shell-open 文件，不调用 Office 自动化，不执行宏、脚本或嵌入对象，不在 WebView 直接渲染原文件，也不自动访问文件内外部链接。
 - 默认限制：单文件 100 MiB、单次选择 10 个、单会议 20 个、单会议累计 500 MiB、原始文件名 UTF-8 最大 255 bytes。Rust 最终执行且累计配额不能通过多次调用绕过。
-- 限制尽可能在完整复制前检查；复制中实际大小超限时立即停止并清理临时文件。未来 Docling Worker 另设内存、处理时限、页数和输出限制；全局磁盘配额管理器是后续需求。
+- 限制尽可能在完整复制前检查；复制中实际大小超限时立即停止并清理临时文件。MVP 1B-2A Docling Worker 另设 4 GiB Job Object 内存、150 秒处理时限、300 页、100 MiB 输入、1 MiB 协议消息和 128 MiB 总输出限制；全局磁盘配额管理器是后续需求。
 - 原始文件名只作显示元数据；内部使用 document UUID，拒绝 `..`、绝对路径、盘符、UNC、Alternate Data Streams 和路径逃逸。
 - 文件在应用私有 staging 随机临时文件中流式复制并计算 SHA-256，验证最终大小/类型/配额后同卷原子 rename；失败清理临时文件。SHA-256 只用于完整性和同会议去重，不是恶意软件检测。
 - 不执行、不记录文件内容，不长期保存到 Temp/Git/工作目录，也不为文件设置可执行权限。
-- 文档内容解析只允许未来隔离的 Docling Worker 执行；采用独立环境、受控相对引用、取消、超时、内存/页数/输出限制以及畸形文件测试。
+- 文档内容解析只允许隔离的 Docling Worker 执行；MVP 1B-2A 已建立独立锁定环境、Rust 注册且带哈希的受控引用、单请求进程、取消、超时、Windows Job Object 内存限制、页数/输出限制和畸形协议测试。MVP 1B-2B 才能把该 Worker 接入文档状态与持久化。
+- Worker 不监听端口、不继承凭据/proxy/session token、不访问 SQLite；Docling 的远程服务、插件、VLM 和隐式模型下载均关闭。模型只通过显式脚本下载到仓库外目录，并用固定 revision 和逐文件 SHA-256 manifest 验证。
+- Worker 输出只能位于 Rust 批准的 parser staging 根并使用固定相对文件名；Rust 在持久化前重新验证路径、文件类型、大小、总量与 SHA-256。稳定错误不得包含原文、文件名、绝对路径、环境值或原生异常。
 
 ## 11. 本地存储与删除
 
@@ -194,14 +196,15 @@ SecretStore command 不记录请求 DTO、凭据值、长度、首尾字符、Cr
 | MVP 1B-0    | 文件威胁边界、格式/配额、状态机、存储布局和可恢复删除规范                              |
 | MVP 1B-1A   | Rust 安全导入、私有 staging、签名/配额、去重、删除 tombstone 与恢复测试                |
 | MVP 1B-1B   | 最小 Document commands、原生选择器、无路径 DTO、UI 安全错误和删除/重试交互             |
-| MVP 1B-2    | 隔离 Docling Worker、资源上限、取消、畸形/恶意文件测试和解析产物                       |
+| MVP 1B-2A   | 隔离 Docling Worker、锁定供应链、离线模型门槛、资源上限、取消和产物完整性校验          |
+| MVP 1B-2B   | Rust-only 编排、解析状态/持久化、恢复/删除竞态和 WebView 无路径/正文边界               |
 | MVP 1B-3    | 外部发送预览、同意、裁剪、脱敏、证据引用和无 key/无同意拒绝                            |
 | MVP 1C      | 录音同意、sidecar supervisor、崩溃恢复、孤儿进程回收、临时文件清理和生命周期安全日志   |
 | MVP 2       | voice sample 明示同意/删除、匿名标签、模型 worker 隔离                                 |
 | MVP 3       | 目标窗口约束、敏感内容遮蔽、截图 TTL/删除、可选 Provider 权限边界                      |
 | MVP 4       | 签名、升级/回滚、SBOM、诊断导出脱敏和卸载残留检查                                      |
 
-Docling 的解析攻击面只能在 MVP 1B-2 引入；DeepSeek 的外部数据流只能在 MVP 1B-3 引入。MVP 1B-1A/1B-1B 必须先分别稳定存储和 UI/command 边界，不得在同一 PR 同时扩大文件存储、解析器和外部 AI 信任边界。
+Docling 的进程/依赖攻击面只能在 MVP 1B-2A 引入，数据库/状态/UI 编排只能在 MVP 1B-2B 引入；DeepSeek 的外部数据流只能在 MVP 1B-3 引入。不得在同一 PR 同时扩大文件存储、解析进程、持久化编排和外部 AI 信任边界。
 
 ## 16. 安全验收门槛
 

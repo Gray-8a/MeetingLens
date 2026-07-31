@@ -13,6 +13,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:sidecar": "python -m unittest discover -s sidecar/tests -v",
+    "test:docling-worker": "uv run --project workers/docling --frozen python -m unittest discover -s workers/docling/tests -v",
+    "check:docling-worker": "uv lock --project workers/docling --check && uv run --project workers/docling --frozen ruff format --check workers/docling/src workers/docling/tests workers/docling/windows_smoke.py && uv run --project workers/docling --frozen ruff check workers/docling/src workers/docling/tests workers/docling/windows_smoke.py && npm run test:docling-worker",
     "check:sidecar": "python -m compileall -q sidecar && npm run test:sidecar",
     "check": "npm run format:check && npm run lint && npm run typecheck && npm run test && npm run check:sidecar && npm run build",
     "sidecar": "python -m sidecar.meetinglens_sidecar.server",

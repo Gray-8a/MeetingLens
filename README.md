@@ -2,7 +2,7 @@
 
 MeetingLens is a privacy-first desktop workspace for meeting capture, transcription, translation, document context, speaker diarization, and verifiable AI summaries.
 
-Phase 0 through MVP 1A and the MVP 1B-1A storage core are complete. The current `feat/document-import-ui` stage implements MVP 1B-1B: Rust-owned native file selection, a path-free Document Command API, typed import progress, and meeting document import/delete UI. Docling parsing, document preview/open, drag-and-drop, and DeepSeek document processing remain unimplemented.
+Phase 0 through MVP 1A and the MVP 1B document-import flow are complete. The current `feat/docling-worker` stage implements MVP 1B-2A: an isolated, offline Docling process boundary with a locked Python environment, bounded protocol and artifacts, explicit model provisioning, Windows Job Object resource control, and safe Rust revalidation. It is not connected to SQLite, Tauri commands, document state, or product UI; that orchestration remains for MVP 1B-2B. DeepSeek document processing remains unimplemented.
 
 The Provider runtime defines Capture, Transcription, Translation, Summary, and DocumentParser capability boundaries. Current implementations are explicit deterministic in-memory mocks: they do not access devices, files, or networks, and can be replaced through an application-owned Registry without changing page business logic.
 
@@ -32,6 +32,7 @@ An ordinary PowerShell session may not place `link.exe` directly on `PATH`; Carg
 ```powershell
 npm ci
 py -3.12 -m pip install --requirement requirements-dev.txt
+.\scripts\setup-docling-worker.ps1
 ```
 
 Keep development credentials in `.env`. The file is ignored by Git and must never be committed.
@@ -48,6 +49,7 @@ npm run format:check    # Prettier + Ruff verification
 npm run typecheck       # TypeScript
 npm run test            # React unit tests
 npm run test:sidecar    # Python sidecar tests
+npm run check:docling-worker # Locked, offline Docling worker checks
 npm run build           # Frontend production build
 npm run check           # All locally runnable frontend/Python checks
 ```
@@ -82,6 +84,12 @@ The initial allowlist is PDF, DOCX, PPTX, XLSX, TXT, Markdown, CSV, PNG, JPG, an
 
 Files are streamed into private staging storage, hashed with SHA-256, validated, and atomically renamed to UUID-based paths. A process-wide mutex plus an application-lifetime cross-process storage lock prevents concurrent writers from bypassing quotas or recovery. Document and meeting deletion use persistent `deletion_jobs`, `deleting`/`delete_failed` states, same-volume trash moves, bounded startup retries, and explicit retry support. Unknown files are quarantined rather than deleted.
 
+## Isolated document parser
+
+MVP 1B-2A uses a separate Python 3.12 environment under `workers/docling`; it is not installed into the authenticated HTTP Sidecar. Rust owns the parser process and launches one request per process with a cleared environment, no network listener, bounded standard I/O, a 150-second timeout, and a 4 GiB Windows Job Object memory cap. Inputs and outputs remain beneath Rust-approved staging roots and are revalidated by size and SHA-256. Model downloads are explicit and versioned outside the repository; see [the worker guide](workers/docling/README.md).
+
+The validated local model inventory is 564,981,412 bytes. Windows CPU smoke currently reports every allowlisted format available with RapidOCR/ONNX Runtime, a final acceptance peak process-tree RSS of about 1.67 GB, and no network listener or residual Worker process. These capabilities are independent acceptance results; the product does not expose parsing until MVP 1B-2B.
+
 ## Project documents
 
 - [Product specification](PRODUCT_SPEC.md)
@@ -102,13 +110,14 @@ Files are streamed into private staging storage, hashed with SHA-256, validated,
 7. **MVP 1A-3B-2 — complete:** SecretStore and Windows Credential Manager (`feat/provider-security-foundation`, PR #10).
 8. **MVP 1B-0 — complete:** document import, storage, lifecycle, and deletion specification (`docs/define-document-import-lifecycle`, PR #11).
 9. **MVP 1B-1A — complete:** document storage core, safe import, deduplication, and recoverable deletion (`feat/document-storage-core`, PR #12).
-10. **MVP 1B-1B — current:** Document commands, native picker, typed progress, and import/delete UI (`feat/document-import-ui`).
-11. **MVP 1B-2:** isolated Docling Worker and structured parsing (`feat/docling-worker`).
-12. **MVP 1B-3:** DeepSeek SummaryProvider, evidence links, and export (`feat/deepseek-summary-provider`).
-13. **MVP 1C:** sidecar supervisor, Windows audio, and realtime transcription in separate PRs.
-14. **MVP 2:** realtime translation and speaker diarization.
-15. **MVP 3:** meeting-window selection, OCR, and screen context.
-16. **MVP 4:** Windows packaging and product hardening.
+10. **MVP 1B-1B — complete:** Document commands, native picker, typed progress, and import/delete UI (`feat/document-import-ui`, PR #13).
+11. **MVP 1B-2A — current:** isolated offline Docling Worker foundation (`feat/docling-worker`).
+12. **MVP 1B-2B:** parsing jobs, persistence, state transitions, and product wiring (`feat/document-parsing-orchestration`).
+13. **MVP 1B-3:** DeepSeek SummaryProvider, evidence links, and export (`feat/deepseek-summary-provider`).
+14. **MVP 1C:** sidecar supervisor, Windows audio, and realtime transcription in separate PRs.
+15. **MVP 2:** realtime translation and speaker diarization.
+16. **MVP 3:** meeting-window selection, OCR, and screen context.
+17. **MVP 4:** Windows packaging and product hardening.
 
 The authoritative branch mapping, exclusions, and acceptance criteria are in [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md). Storage, import UI, Docling, and DeepSeek are separate PRs. Screenpipe, if adopted, is an optional provider rather than a core dependency.
 
@@ -122,4 +131,4 @@ CI success is not sufficient for Windows desktop behavior. PRs that touch native
 
 Do not place real recordings, transcripts, screenshots, uploaded meeting documents, local databases, logs, or credentials in this repository. Tests and examples use synthetic data only.
 
-Direct dependencies are pinned to exact versions and lockfiles are committed. Heavy AI components such as Docling, Diart, WhisperX, faster-whisper, and Screenpipe are deliberately not installed in the foundation sidecar; their compatibility, licensing, model downloads, and Windows resource use must be validated in their assigned feature branches.
+Direct dependencies are pinned to exact versions and lockfiles are committed. Docling is isolated in its own locked worker and is never installed in the foundation Sidecar. Other heavy AI components such as Diart, WhisperX, faster-whisper, and Screenpipe remain uninstalled until their assigned feature branches validate compatibility, licensing, model downloads, and Windows resource use.

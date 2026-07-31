@@ -160,15 +160,15 @@ erDiagram
 | --------------------------------------- | ---------------- | --------------------------------------------------- |
 | `importing → staged`                    | MVP 1B-1A        | 文件完成校验并原子进入正式目录                      |
 | `importing → import_failed`             | MVP 1B-1A        | 复制、类型、配额、完整性或存储失败                  |
-| `staged → parsing`                      | MVP 1B-2         | 隔离 Worker 接受解析任务                            |
-| `parsing → parsed/parse_failed`         | MVP 1B-2         | Worker 返回受控结果或稳定错误                       |
+| `staged → parsing`                      | MVP 1B-2B        | Rust 编排器持久化任务后调用隔离 Worker              |
+| `parsing → parsed/parse_failed`         | MVP 1B-2B        | Rust 复验产物后持久化受控结果或稳定错误             |
 | `staged/parsed → deleting`              | MVP 1B-1A 及后续 | 接受删除请求                                        |
 | `import_failed/parse_failed → deleting` | MVP 1B-1A 及后续 | 清理失败输入或解析产物                              |
 | `deleting → 记录消失`                   | MVP 1B-1A        | 物理文件和关联 artifacts 全部清理成功后才删除元数据 |
 | `deleting → delete_failed`              | MVP 1B-1A        | 清理失败，保留安全错误和可恢复状态                  |
 | `delete_failed → deleting`              | MVP 1B-1A        | 幂等重试                                            |
 
-页面和通用 update 不得直接修改状态。安全导入阶段只实现 `importing/staged/import_failed/deleting/delete_failed`；`parsing/parsed/parse_failed` 由 MVP 1B-2 引入。未知状态 fail closed。
+页面和通用 update 不得直接修改状态。安全导入阶段只实现 `importing/staged/import_failed/deleting/delete_failed`；MVP 1B-2A 只建立无数据库访问的 Worker 基础，`parsing/parsed/parse_failed` 由 MVP 1B-2B 引入。未知状态 fail closed。
 
 同一会议使用 `(meeting_id, sha256)` 唯一约束识别相同内容。重复时不创建第二条记录或物理副本，返回 `document_already_imported` 和已有 document ID。不同会议首版不做物理去重；文件名不参与重复判断，同名不同内容允许导入，不同名相同内容视为重复。
 
