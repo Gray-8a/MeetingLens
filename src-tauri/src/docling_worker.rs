@@ -1534,10 +1534,8 @@ mod tests {
     #[test]
     fn worker_source_contains_no_database_or_tauri_command_boundary() {
         let source = include_str!("docling_worker.rs");
-        let production = source
-            .split("#[cfg(test)]\nmod tests")
-            .next()
-            .expect("production source");
+        let test_module = source.rfind("mod tests {").expect("test module boundary");
+        let production = &source[..test_module];
         assert!(!production.contains("rusqlite::"));
         assert!(!production.contains("#[tauri::command]"));
         assert!(!production.contains("parse_jobs"));
