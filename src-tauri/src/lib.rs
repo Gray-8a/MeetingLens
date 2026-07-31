@@ -1,4 +1,5 @@
 pub mod data;
+mod document_commands;
 mod meeting_commands;
 mod secret_commands;
 pub mod secret_store;
@@ -9,6 +10,7 @@ use tauri::Manager;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             let app_data_dir = app.path().app_data_dir()?;
             let meeting_service = data::MeetingService::initialize(app_data_dir)?;
@@ -31,6 +33,12 @@ pub fn run() {
             meeting_commands::start_meeting,
             meeting_commands::end_meeting,
             meeting_commands::delete_meeting,
+            document_commands::select_and_import_documents,
+            document_commands::list_documents,
+            document_commands::get_document,
+            document_commands::request_delete_document,
+            document_commands::retry_delete_document,
+            document_commands::get_document_import_policy,
             secret_commands::get_secret_status,
             secret_commands::set_secret,
             secret_commands::delete_secret,

@@ -28,7 +28,19 @@ export function HistoryPage({
       setMeetings(sortMeetings(result.meetings));
       onDatabaseStatus("ready");
     } catch (reason: unknown) {
-      setError(uiError(reason));
+      const safeError = uiError(reason);
+      setError(safeError);
+      if (
+        safeError.code === "meeting_delete_failed" ||
+        safeError.code === "meeting_delete_pending"
+      ) {
+        try {
+          const result = await meetingApi.list();
+          setMeetings(sortMeetings(result.meetings));
+        } catch {
+          // Keep the stable delete failure if refreshing the tombstone fails.
+        }
+      }
       onDatabaseStatus("unavailable");
     } finally {
       setLoading(false);
@@ -82,6 +94,7 @@ export function HistoryPage({
           onCancelDelete={() => setConfirmingId(null)}
           onConfirmDelete={(id) => void deleteMeeting(id)}
           onRequestDelete={setConfirmingId}
+          onRetryDelete={(id) => void deleteMeeting(id)}
         />
       ) : null}
     </section>

@@ -65,8 +65,17 @@ impl MeetingService {
         repository::get(&self.database.connect()?, id)
     }
 
+    pub fn get_with_deletion_state(&self, id: &str) -> DataResult<Meeting> {
+        validate_id(id)?;
+        repository::get_including_deleted(&self.database.connect()?, id)
+    }
+
     pub fn list(&self) -> DataResult<Vec<Meeting>> {
         repository::list(&self.database.connect()?)
+    }
+
+    pub fn list_with_deletion_state(&self) -> DataResult<Vec<Meeting>> {
+        repository::list_including_deleted(&self.database.connect()?)
     }
 
     pub fn update(&self, id: &str, changes: UpdateMeeting) -> DataResult<Meeting> {
@@ -379,6 +388,20 @@ mod tests {
         assert_eq!(
             failed.deletion_error_code.as_deref(),
             Some("meeting_delete_failed")
+        );
+        assert_eq!(
+            service
+                .get_with_deletion_state(&meeting.id)
+                .expect("UI query should expose the deletion state")
+                .status,
+            MeetingStatus::DeleteFailed
+        );
+        assert!(
+            service
+                .list_with_deletion_state()
+                .expect("UI list should expose deletion states")
+                .iter()
+                .any(|candidate| candidate.id == meeting.id)
         );
         connection
             .execute_batch("DROP TRIGGER synthetic_delete_failure;")

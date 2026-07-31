@@ -6,7 +6,9 @@ import detailSource from "./pages/MeetingDetailPage.tsx?raw";
 import liveSource from "./pages/LiveMeetingPage.tsx?raw";
 import newSource from "./pages/NewMeetingPage.tsx?raw";
 import settingsSource from "./pages/SettingsPage.tsx?raw";
+import documentPanelSource from "./components/DocumentPanel.tsx?raw";
 import App from "./App";
+import { DocumentApiError } from "./api/document";
 import { MeetingApiError } from "./api/meeting";
 import { SecretApiError } from "./api/secret";
 import type { AppServices } from "./app/services";
@@ -31,6 +33,11 @@ import {
   syntheticMeeting,
 } from "./test/fakeMeetingApi";
 import { FakeSecretApi } from "./test/fakeSecretApi";
+import {
+  documentIds,
+  FakeDocumentApi,
+  syntheticDocument,
+} from "./test/fakeDocumentApi";
 
 const recordingMeeting = syntheticMeeting({
   id: meetingIds.recording,
@@ -138,8 +145,10 @@ class ManualTranscriptionProvider implements TranscriptionProvider {
 function appServices(
   api: FakeMeetingApi,
   transcriptionProvider: TranscriptionProvider = new ManualTranscriptionProvider(),
+  documentApi: FakeDocumentApi = new FakeDocumentApi(),
 ): AppServices {
   return {
+    documentApi,
     meetingApi: api,
     secretApi: new FakeSecretApi(),
     checkSidecarHealth: async () => ({
@@ -160,9 +169,12 @@ function renderAt(
   path: string,
   api: FakeMeetingApi,
   transcriptionProvider?: TranscriptionProvider,
+  documentApi?: FakeDocumentApi,
 ) {
   window.history.replaceState(null, "", `#${path}`);
-  return render(<App services={appServices(api, transcriptionProvider)} />);
+  return render(
+    <App services={appServices(api, transcriptionProvider, documentApi)} />,
+  );
 }
 
 function renderSettings(secretApi: FakeSecretApi) {
@@ -950,5 +962,397 @@ describe("MeetingLens desktop UI", () => {
     );
     expect(within(facts as HTMLElement).getByText("1")).toBeInTheDocument();
     expect(api.updateCalls).toHaveLength(0);
+  });
+
+  it("shows the document policy and an empty state on meeting details", async () => {
+    const documents = new FakeDocumentApi();
+    renderAt(
+      `/meetings/${meetingIds.draft}`,
+      new FakeMeetingApi([syntheticMeeting()]),
+      undefined,
+      documents,
+    );
+
+    expect(await screen.findByText("No files added")).toBeInTheDocument();
+    expect(screen.getByText("0 / 20 files")).toBeInTheDocument();
+    expect(screen.getByText(/\.pdf, \.docx/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Add files" })).toBeEnabled();
+  });
+
+  it("loads safe document metadata without showing hashes or paths", async () => {
+    const documents = new FakeDocumentApi([
+      syntheticDocument({ meetingId: meetingIds.draft }),
+    ]);
+    renderAt(
+      `/meetings/${meetingIds.draft}`,
+      new FakeMeetingApi([syntheticMeeting()]),
+      undefined,
+      documents,
+    );
+
+    expect(await screen.findByText("synthetic-notes.txt")).toBeInTheDocument();
+    expect(screen.getByText(/TXT · 128 B/)).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent("storageRelativePath");
+    expect(document.body).not.toHaveTextContent("sha256");
+    expect(document.body).not.toHaveTextContent("C:\\");
+  });
+
+  it("shows a stable document list error", async () => {
+    const documents = new FakeDocumentApi();
+    documents.listError = new DocumentApiError(
+      "document_storage_unavailable",
+      true,
+    );
+    renderAt(
+      `/meetings/${meetingIds.draft}`,
+      new FakeMeetingApi([syntheticMeeting()]),
+      undefined,
+      documents,
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "document_storage_unavailable",
+    );
+    expect(document.body).not.toHaveTextContent("private path");
+  });
+
+  it.each([
+    ["draft", true],
+    ["recording", true],
+    ["ready", true],
+    ["processing", false],
+    ["deleting", false],
+    ["delete_failed", false],
+  ] as const)(
+    "sets document import availability for %s",
+    async (status, enabled) => {
+      const meeting = syntheticMeeting({ status });
+      renderAt(
+        `/meetings/${meeting.id}`,
+        new FakeMeetingApi([meeting]),
+        undefined,
+        new FakeDocumentApi(),
+      );
+
+      const button = await screen.findByRole("button", { name: "Add files" });
+      if (enabled) expect(button).toBeEnabled();
+      else expect(button).toBeDisabled();
+    },
+  );
+
+  it("shows progress, duplicates and partial failures safely", async () => {
+    const user = userEvent.setup();
+    const documents = new FakeDocumentApi([
+      syntheticDocument({ meetingId: meetingIds.draft }),
+    ]);
+    documents.progressEvents = [
+      {
+        batchId: "77777777-7777-4777-8777-777777777777",
+        fileIndex: 1,
+        totalFiles: 2,
+        documentId: documentIds.staged,
+        originalFilename: "synthetic-notes.txt",
+        phase: "copying",
+        bytesProcessed: 64,
+        totalBytes: 128,
+        status: "in_progress",
+        errorCode: null,
+      },
+      {
+        batchId: "77777777-7777-4777-8777-777777777777",
+        fileIndex: 2,
+        totalFiles: 2,
+        documentId: null,
+        originalFilename: "bad.pdf",
+        phase: "failed",
+        bytesProcessed: 0,
+        totalBytes: 8,
+        status: "failed",
+        errorCode: "document_type_mismatch",
+      },
+    ];
+    documents.selectResult = {
+      batchId: "77777777-7777-4777-8777-777777777777",
+      cancelled: false,
+      imported: [],
+      duplicates: [
+        {
+          documentId: documentIds.staged,
+          originalFilename: "duplicate.txt",
+          status: "duplicate",
+          errorCode: "document_already_imported",
+        },
+      ],
+      failed: [
+        {
+          documentId: "88888888-8888-4888-8888-888888888888",
+          originalFilename: "bad.pdf",
+          status: "failed",
+          errorCode: "document_type_mismatch",
+        },
+      ],
+    };
+    renderAt(
+      `/meetings/${meetingIds.draft}`,
+      new FakeMeetingApi([syntheticMeeting()]),
+      undefined,
+      documents,
+    );
+    await screen.findByText("synthetic-notes.txt");
+
+    await user.click(screen.getByRole("button", { name: "Add files" }));
+
+    expect(await screen.findByText("50%")).toBeInTheDocument();
+    expect(screen.getByText(/duplicate\.txt is already/)).toBeInTheDocument();
+    expect(
+      screen.getAllByText(/document_type_mismatch/).length,
+    ).toBeGreaterThan(0);
+    expect(
+      screen.getAllByText(/does not match its filename type/).length,
+    ).toBeGreaterThan(0);
+    expect(
+      document.querySelectorAll("[data-acceptance='document-list'] > li"),
+    ).toHaveLength(1);
+  });
+
+  it("treats native picker cancellation as a quiet no-op", async () => {
+    const user = userEvent.setup();
+    const documents = new FakeDocumentApi();
+    renderAt(
+      `/meetings/${meetingIds.draft}`,
+      new FakeMeetingApi([syntheticMeeting()]),
+      undefined,
+      documents,
+    );
+    await screen.findByText("No files added");
+
+    await user.click(screen.getByRole("button", { name: "Add files" }));
+
+    await waitFor(() => expect(documents.selectCalls).toHaveLength(1));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(screen.getByText("No files added")).toBeInTheDocument();
+  });
+
+  it("prevents duplicate picker launches while one import is active", async () => {
+    const user = userEvent.setup();
+    const documents = new FakeDocumentApi();
+    const pending = deferred<typeof documents.selectResult>();
+    documents.selectPromise = pending.promise;
+    renderAt(
+      `/meetings/${meetingIds.draft}`,
+      new FakeMeetingApi([syntheticMeeting()]),
+      undefined,
+      documents,
+    );
+    const add = await screen.findByRole("button", { name: "Add files" });
+
+    await user.click(add);
+    expect(add).toBeDisabled();
+    await user.click(add);
+    expect(documents.selectCalls).toHaveLength(1);
+
+    await act(async () => pending.resolve(documents.selectResult));
+    await waitFor(() => expect(add).toBeEnabled());
+  });
+
+  it("cancels and confirms document deletion without touching the source", async () => {
+    const user = userEvent.setup();
+    const documents = new FakeDocumentApi([
+      syntheticDocument({ meetingId: meetingIds.draft }),
+    ]);
+    renderAt(
+      `/meetings/${meetingIds.draft}`,
+      new FakeMeetingApi([syntheticMeeting()]),
+      undefined,
+      documents,
+    );
+    await screen.findByText("synthetic-notes.txt");
+
+    await user.click(
+      screen.getByRole("button", { name: "Delete synthetic-notes.txt" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(documents.requestDeleteCalls).toHaveLength(0);
+
+    await user.click(
+      screen.getByRole("button", { name: "Delete synthetic-notes.txt" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() =>
+      expect(documents.requestDeleteCalls).toEqual([documentIds.staged]),
+    );
+    expect(screen.queryByText("synthetic-notes.txt")).not.toBeInTheDocument();
+  });
+
+  it("keeps pending document deletion visible instead of claiming success", async () => {
+    const user = userEvent.setup();
+    const document = syntheticDocument({ meetingId: meetingIds.draft });
+    const documents = new FakeDocumentApi([document]);
+    documents.deleteResponse = {
+      documentId: document.id,
+      status: "deleting",
+      deleted: false,
+      pending: true,
+      retryable: true,
+    };
+    renderAt(
+      `/meetings/${meetingIds.draft}`,
+      new FakeMeetingApi([syntheticMeeting()]),
+      undefined,
+      documents,
+    );
+    await screen.findByText("synthetic-notes.txt");
+
+    await user.click(
+      screen.getByRole("button", { name: "Delete synthetic-notes.txt" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Confirm" }));
+
+    expect(await screen.findByText("Deleting")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "document_delete_pending",
+    );
+  });
+
+  it("retries a failed document deletion", async () => {
+    const user = userEvent.setup();
+    const documents = new FakeDocumentApi([
+      syntheticDocument({
+        meetingId: meetingIds.draft,
+        status: "delete_failed",
+        failureCode: "document_delete_failed",
+      }),
+    ]);
+    renderAt(
+      `/meetings/${meetingIds.draft}`,
+      new FakeMeetingApi([syntheticMeeting()]),
+      undefined,
+      documents,
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: "Retry deletion" }),
+    );
+    await waitFor(() =>
+      expect(documents.retryDeleteCalls).toEqual([documentIds.staged]),
+    );
+    expect(screen.queryByText("synthetic-notes.txt")).not.toBeInTheDocument();
+  });
+
+  it("renders hostile filenames as text and does not use dangerous HTML", async () => {
+    const documents = new FakeDocumentApi([
+      syntheticDocument({
+        meetingId: meetingIds.draft,
+        originalFilename: "<img src=x onerror=alert(1)>\u0000.txt",
+      }),
+    ]);
+    renderAt(
+      `/meetings/${meetingIds.draft}`,
+      new FakeMeetingApi([syntheticMeeting()]),
+      undefined,
+      documents,
+    );
+
+    expect(
+      await screen.findByText("<img src=x onerror=alert(1)>�.txt"),
+    ).toBeInTheDocument();
+    expect(document.querySelector("img[src='x']")).toBeNull();
+    expect(documentPanelSource).not.toContain("dangerouslySetInnerHTML");
+  });
+
+  it("ignores progress callbacks after the document panel unmounts", async () => {
+    const user = userEvent.setup();
+    const documents = new FakeDocumentApi();
+    const pending = deferred<typeof documents.selectResult>();
+    documents.selectPromise = pending.promise;
+    renderAt(
+      `/meetings/${meetingIds.draft}`,
+      new FakeMeetingApi([syntheticMeeting()]),
+      undefined,
+      documents,
+    );
+    await user.click(await screen.findByRole("button", { name: "Add files" }));
+    const handler = documents.progressHandler;
+    expect(handler).not.toBeNull();
+
+    await user.click(screen.getByRole("link", { name: "Home" }));
+    await screen.findByText("Turn the next conversation into clear action.");
+    act(() => {
+      handler?.({
+        batchId: "77777777-7777-4777-8777-777777777777",
+        fileIndex: 1,
+        totalFiles: 1,
+        documentId: null,
+        originalFilename: "late.txt",
+        phase: "copying",
+        bytesProcessed: 1,
+        totalBytes: 2,
+        status: "in_progress",
+        errorCode: null,
+      });
+    });
+    await act(async () => pending.resolve(documents.selectResult));
+    expect(screen.queryByText("late.txt")).not.toBeInTheDocument();
+  });
+
+  it("imports from the recording page without disrupting the mock transcript", async () => {
+    const user = userEvent.setup();
+    const documents = new FakeDocumentApi();
+    renderAt(
+      `/meetings/${meetingIds.recording}/live`,
+      new FakeMeetingApi([recordingMeeting]),
+      undefined,
+      documents,
+    );
+    await screen.findByText("Synthetic UI transcript entry");
+
+    await user.click(screen.getByRole("button", { name: "Add files" }));
+
+    await waitFor(() =>
+      expect(documents.selectCalls).toEqual([meetingIds.recording]),
+    );
+    expect(
+      screen.getByText("Synthetic UI transcript entry"),
+    ).toBeInTheDocument();
+  });
+
+  it("shows and retries a meeting delete_failed tombstone", async () => {
+    const user = userEvent.setup();
+    const failed = syntheticMeeting({
+      status: "delete_failed",
+      deletionErrorCode: "meeting_delete_failed",
+    });
+    const api = new FakeMeetingApi([failed]);
+    renderAt("/history", api);
+    await screen.findByText(failed.title);
+
+    await user.click(screen.getByRole("button", { name: "Retry deletion" }));
+
+    await waitFor(() => expect(api.deleteCalls).toEqual([failed.id]));
+    expect(screen.queryByText(failed.title)).not.toBeInTheDocument();
+  });
+
+  it("freezes a deleting meeting and shows pending instead of mutable actions", async () => {
+    const deleting = syntheticMeeting({ status: "deleting" });
+    renderAt("/history", new FakeMeetingApi([deleting]));
+    await screen.findByText(deleting.title);
+
+    expect(screen.getByText(/Deletion pending/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
+    expect(
+      screen.queryByRole("button", { name: "Retry deletion" }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("keeps document access centralized and out of browser storage", () => {
+    expect(documentPanelSource).not.toContain("invoke(");
+    expect(documentPanelSource).not.toContain("localStorage");
+    expect(documentPanelSource).not.toContain("sessionStorage");
+    expect(documentPanelSource).not.toContain("indexedDB");
+    expect(
+      [homeSource, historySource, detailSource, liveSource, newSource].join(
+        "\n",
+      ),
+    ).not.toContain("select_and_import_documents");
   });
 });

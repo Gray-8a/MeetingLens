@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { meetingPath, useNavigation } from "../app/navigation";
 import { useServices } from "../app/services";
 import type { MeetingResponse } from "../api/meeting";
+import { DocumentPanel } from "../components/DocumentPanel";
 import { StatusBadge } from "../components/StatusBadge";
 import { ErrorNotice, InfoNotice, LoadingState } from "../components/UiState";
 import { formatDuration, uiError } from "../lib/presentation";
@@ -343,6 +344,12 @@ export function LiveMeetingPage({
           <p className="field-help">This panel exists in memory only.</p>
         </aside>
       </section>
+
+      <DocumentPanel
+        meetingId={meeting.id}
+        meetingStatus={meeting.status}
+        variant="compact"
+      />
 
       <div className="live-controls" aria-label="Meeting controls">
         {paused ? (

@@ -3,6 +3,7 @@ use std::io::{BufReader, Read, Seek, SeekFrom};
 use std::path::Path;
 
 use super::document_error::{DocumentError, DocumentResult};
+use super::document_model::ALLOWED_DOCUMENT_EXTENSIONS;
 
 const MAX_OOXML_ENTRIES: usize = 512;
 const MAX_OOXML_CENTRAL_DIRECTORY_BYTES: u64 = 256 * 1024;
@@ -251,10 +252,7 @@ fn validate_text_characters(text: &str) -> DocumentResult<()> {
 }
 
 fn is_allowed_extension(value: &str) -> bool {
-    matches!(
-        value,
-        "pdf" | "docx" | "pptx" | "xlsx" | "txt" | "md" | "csv" | "png" | "jpg" | "jpeg"
-    )
+    ALLOWED_DOCUMENT_EXTENSIONS.contains(&value)
 }
 
 fn has_disguised_double_extension(path: &Path) -> bool {

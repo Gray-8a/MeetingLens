@@ -1054,6 +1054,122 @@ input[aria-invalid="true"] {
   margin-top: 14px;
 }
 
+.document-panel {
+  display: grid;
+  gap: 18px;
+}
+
+.document-panel--compact {
+  margin-bottom: 96px;
+}
+
+.document-policy {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.document-policy span,
+.document-status {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  padding: 5px 9px;
+}
+
+.document-status--staged,
+.document-status--parsed {
+  border-color: rgba(44, 157, 105, 0.38);
+  color: var(--success);
+}
+
+.document-status--delete_failed,
+.document-status--import_failed,
+.document-status--parse_failed,
+.document-status--unknown {
+  border-color: rgba(196, 76, 61, 0.38);
+  color: var(--danger);
+}
+
+.document-empty,
+.document-progress,
+.document-batch-summary {
+  border: 1px dashed var(--border);
+  border-radius: 14px;
+  padding: 16px;
+}
+
+.document-empty h3,
+.document-progress h3,
+.document-empty p,
+.document-batch-summary p {
+  margin: 0;
+}
+
+.document-empty p,
+.document-batch-summary p + p {
+  margin-top: 7px;
+}
+
+.document-progress ul,
+.document-list {
+  display: grid;
+  gap: 10px;
+  list-style: none;
+  margin: 12px 0 0;
+  padding: 0;
+}
+
+.document-progress-line {
+  align-items: center;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  min-width: 0;
+}
+
+.document-progress-line span:first-child,
+.document-row__main strong {
+  overflow-wrap: anywhere;
+}
+
+.document-row {
+  align-items: center;
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(0, 1fr) auto minmax(180px, auto);
+  padding: 14px;
+}
+
+.document-row__main {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.document-row__main span {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
+.document-row__actions,
+.document-delete-confirm {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  justify-content: flex-end;
+}
+
+.document-delete-confirm span {
+  color: var(--muted);
+  font-size: 0.78rem;
+  width: 100%;
+}
+
 @media (max-width: 1100px) {
   .desktop-shell {
     grid-template-columns: 200px minmax(0, 1fr);
@@ -1070,6 +1186,13 @@ input[aria-invalid="true"] {
   }
   .settings-grid {
     grid-template-columns: 1fr;
+  }
+  .document-row {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .document-row__actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
   }
 
   .workspace-header,

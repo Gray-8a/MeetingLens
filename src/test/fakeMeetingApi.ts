@@ -27,6 +27,7 @@ export function syntheticMeeting(
     endedAt: null,
     createdAt: "2026-07-30T01:00:00.000Z",
     updatedAt: "2026-07-30T01:00:00.000Z",
+    deletionErrorCode: null,
     ...overrides,
   };
 }
@@ -135,7 +136,11 @@ export class FakeMeetingApi implements MeetingApi {
     this.deleteCalls.push(id);
     if (this.deleteError) throw this.deleteError;
     const meeting = this.requireMeeting(id);
-    if (meeting.status !== "draft" && meeting.status !== "ready") {
+    if (
+      meeting.status !== "draft" &&
+      meeting.status !== "ready" &&
+      meeting.status !== "delete_failed"
+    ) {
       throw new MeetingApiError("meeting_invalid_state", false);
     }
     this.meetings = this.meetings.filter((candidate) => candidate.id !== id);

@@ -48,6 +48,7 @@ pub struct MeetingResponse {
     pub ended_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    pub deletion_error_code: Option<String>,
 }
 
 impl From<Meeting> for MeetingResponse {
@@ -62,6 +63,7 @@ impl From<Meeting> for MeetingResponse {
             ended_at: meeting.ended_at,
             created_at: meeting.created_at,
             updated_at: meeting.updated_at,
+            deletion_error_code: meeting.deletion_error_code,
         }
     }
 }
@@ -170,14 +172,14 @@ fn get_meeting_with_service(
     request: MeetingIdRequest,
 ) -> CommandResult<MeetingResponse> {
     service
-        .get(&request.id)
+        .get_with_deletion_state(&request.id)
         .map(MeetingResponse::from)
         .map_err(MeetingCommandError::from)
 }
 
 fn list_meetings_with_service(service: &MeetingService) -> CommandResult<ListMeetingsResponse> {
     service
-        .list()
+        .list_with_deletion_state()
         .map(|meetings| ListMeetingsResponse {
             meetings: meetings.into_iter().map(MeetingResponse::from).collect(),
         })
@@ -438,6 +440,10 @@ mod tests {
         assert!(value.get("selectedWindowJson").is_some());
         assert_eq!(value.get("startedAt"), Some(&serde_json::Value::Null));
         assert_eq!(value.get("endedAt"), Some(&serde_json::Value::Null));
+        assert_eq!(
+            value.get("deletionErrorCode"),
+            Some(&serde_json::Value::Null)
+        );
         assert!(value.get("createdAt").is_some());
         assert!(value.get("updatedAt").is_some());
         assert!(value.get("created_at").is_none());

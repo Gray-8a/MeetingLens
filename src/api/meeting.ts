@@ -41,6 +41,7 @@ export interface MeetingResponse {
   endedAt: string | null;
   createdAt: string;
   updatedAt: string;
+  deletionErrorCode: string | null;
 }
 
 export interface ListMeetingsResponse {
@@ -207,7 +208,8 @@ function parseMeeting(value: unknown): MeetingResponse {
     !isNullableString(value.startedAt) ||
     !isNullableString(value.endedAt) ||
     typeof value.createdAt !== "string" ||
-    typeof value.updatedAt !== "string"
+    typeof value.updatedAt !== "string" ||
+    !isNullableString(value.deletionErrorCode)
   ) {
     throw internalError();
   }
@@ -222,6 +224,7 @@ function parseMeeting(value: unknown): MeetingResponse {
     endedAt: value.endedAt,
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
+    deletionErrorCode: value.deletionErrorCode,
   };
 }
 

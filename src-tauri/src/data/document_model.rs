@@ -2,6 +2,10 @@ use serde::{Deserialize, Serialize};
 
 use super::document_error::{DocumentError, DocumentResult};
 
+pub const ALLOWED_DOCUMENT_EXTENSIONS: &[&str] = &[
+    "pdf", "docx", "pptx", "xlsx", "txt", "md", "csv", "png", "jpg", "jpeg",
+];
+
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DocumentStatus {
@@ -71,6 +75,59 @@ pub struct DocumentImportPolicy {
     pub max_meeting_files: u64,
     pub max_meeting_bytes: u64,
     pub max_filename_bytes: usize,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DocumentImportPhase {
+    Selected,
+    Validating,
+    Copying,
+    Committing,
+    Imported,
+    Duplicate,
+    Failed,
+    Complete,
+}
+
+impl DocumentImportPhase {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Selected => "selected",
+            Self::Validating => "validating",
+            Self::Copying => "copying",
+            Self::Committing => "committing",
+            Self::Imported => "imported",
+            Self::Duplicate => "duplicate",
+            Self::Failed => "failed",
+            Self::Complete => "complete",
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DocumentImportProgress {
+    pub file_index: usize,
+    pub total_files: usize,
+    pub original_filename: String,
+    pub phase: DocumentImportPhase,
+    pub bytes_processed: u64,
+    pub total_bytes: Option<u64>,
+    pub document_id: Option<String>,
+    pub error_code: Option<&'static str>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DocumentImportOutcome {
+    Imported(Box<Document>),
+    Duplicate {
+        document_id: String,
+        original_filename: String,
+    },
+    Failed {
+        document_id: String,
+        original_filename: String,
+        error: DocumentError,
+    },
 }
 
 impl Default for DocumentImportPolicy {
