@@ -11,6 +11,8 @@ const statusLabels: Record<MeetingStatus, string> = {
   ready: "Ready",
   failed: "Failed",
   archived: "Archived",
+  deleting: "Deleting",
+  delete_failed: "Delete failed",
 };
 
 const errorMessages: Record<MeetingErrorCode, string> = {
@@ -19,6 +21,8 @@ const errorMessages: Record<MeetingErrorCode, string> = {
   meeting_not_found: "This meeting no longer exists.",
   meeting_invalid_state:
     "This action is not available in the current meeting state.",
+  meeting_delete_failed: "Meeting deletion failed. Try again.",
+  meeting_delete_pending: "Meeting deletion is already in progress.",
   database_unavailable: "Local meeting storage is unavailable.",
   persistence_error: "Meeting data could not be saved. Try again.",
   internal_error: "MeetingLens could not complete that action.",

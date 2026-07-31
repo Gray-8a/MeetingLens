@@ -1,4 +1,9 @@
 mod database;
+mod document_detection;
+mod document_error;
+mod document_model;
+mod document_repository;
+mod document_service;
 mod error;
 mod migration;
 mod model;
@@ -6,6 +11,9 @@ mod paths;
 mod repository;
 mod service;
 
+pub use document_error::{DocumentError, DocumentResult};
+pub use document_model::{Document, DocumentImportPolicy, DocumentStatus, ReconcileReport};
+pub use document_service::DocumentService;
 pub use error::{DataError, DataResult};
 pub use model::{CreateMeeting, Meeting, MeetingStatus, UpdateMeeting};
 pub use paths::StoragePaths;

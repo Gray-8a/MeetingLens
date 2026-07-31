@@ -54,6 +54,7 @@ flowchart LR
 - 凭据不进入 SQLite；开发阶段使用已忽略的 `.env`，发布阶段使用系统凭据库。
 - 用户源文件保持不变；MeetingLens 使用 document UUID 生成内部文件名，不把源绝对路径或原始文件名用于存储路径拼接。
 - 文件导入通过应用私有 staging 目录流式复制并计算 SHA-256，校验成功后在同一卷原子 rename；失败时清理临时文件。
+- SQLite schema v2 已新增 `documents` 与统一 `deletion_jobs`；应用持有 `meeting-data/.meetinglens-storage.lock` 的生命周期独占锁，第二个写入实例 fail closed，进程内 mutation mutex 串行化导入、删除与恢复。
 
 ### 3.5 外部 AI 适配器
 
@@ -168,7 +169,7 @@ MVP 1A-2-1 先建立独立的 Meeting Tauri Command API，再由 MVP 1A-2-2 的�
 
 创建会议后状态为 `draft`。`start_meeting` 执行 `draft → recording`，`end_meeting` 在合成会议阶段执行 `recording → ready`；两个生命周期时间戳均由 Rust 以 UTC ISO 8601 写入。`processing` 保留给后续受信任的异步处理流程，普通更新 command 不得修改状态或时间戳。非法转换返回 `meeting_invalid_state`，不得泄漏 SQL、路径或底层数据库错误。
 
-`delete_meeting` 复用 service 的事务边界，只允许删除 `draft` 或 `ready`。`recording` 以及当前不可进入的 `processing`、`failed`、`archived` 返回 `meeting_invalid_state`；不存在的会议返回 `meeting_not_found`。对外协议不使用含义重复的 `invalid_state_transition`。
+`delete_meeting` 复用 service/deletion coordinator，不在 command 层访问文件系统。`draft`/`ready` 接受请求并持久化 `deleting` tombstone；`recording`、`processing`、`failed`、`archived` 拒绝；`deleting` 返回 `meeting_delete_pending`；`delete_failed` 可重试。文件和删除任务清理完成后才删除数据库记录，失败返回 `meeting_delete_failed`；不存在的会议返回 `meeting_not_found`。
 
 ### 6.4 SecretStore command 边界
 
@@ -176,9 +177,9 @@ MVP 1A-2-1 先建立独立的 Meeting Tauri Command API，再由 MVP 1A-2-2 的�
 
 前端只暴露 `get_secret_status`、`set_secret` 和 `delete_secret`。`get_for_backend` 只供未来受信任 Rust Provider 使用，不注册为 Tauri command；当前也不把 key 传给 Python Sidecar。Secret response 只包含配置状态、可用性和固定后端标识，不包含值、target、路径或原生错误。
 
-### 6.5 计划中的安全文档导入
+### 6.5 安全文档存储核心与计划中的 UI 边界
 
-第一版入口只有 MeetingLens 的原生文件选择器。React 发起选择意图，但不取得任意文件系统权限；选择结果和源绝对路径只在 Rust 导入调用期间使用，不写入数据库，也不返回 WebView。React 的文档 DTO 只包含 document ID、原始显示名称、安全类型、大小、状态和导入时间。
+MVP 1B-1A 已实现仅供受信任 Rust 调用栈复用的 `DocumentService`，但没有注册 Document Tauri Commands。后续入口只有 MeetingLens 的原生文件选择器：React 发起选择意图但不取得任意文件系统权限；选择结果和源绝对路径只在 Rust 导入调用期间使用，不写入数据库，也不返回 WebView。
 
 现有 TypeScript `DocumentParserProvider`/`DocumentReference` 和 `MockDocumentParserProvider` 只是 MVP 1A-3A 的纯内存契约，不是文件导入 API，也不授权 WebView 读取 `artifactId` 对应的文件。Mock 中 10,000,000 bytes、255 characters 和少量 MIME 的合成校验不是生产 allowlist/配额；后续实现必须以 `PRODUCT_SPEC.md` 的 100 MiB、UTF-8 byte 限制和完整 allowlist 为准，并在 MVP 1B-2 将解析输入收窄为 Rust 注册的 document ID/受控引用。
 
@@ -205,9 +206,9 @@ sequenceDiagram
 
 同一会议内以 SHA-256 识别完全相同的内容：重复导入不创建第二条记录或物理副本，而是返回已有 document ID 和稳定结果。不同会议首版不做物理去重；哈希不代表恶意软件检测。
 
-### 6.6 文件引入后的删除协调
+### 6.6 文件删除协调
 
-当前同步 `delete_meeting` 只适用于没有 artifact/文件的 MVP 1A。首次引入文件时必须演进为持久、幂等、可恢复的协调流程：
+MVP 1B-1A 已将同步硬删除演进为持久、幂等、可恢复的协调流程：
 
 ```mermaid
 stateDiagram-v2
@@ -228,7 +229,8 @@ stateDiagram-v2
 MeetingLens/
 ├── src/                       # React + TypeScript UI
 │   └── providers/             # Provider 契约、Registry 与纯内存 Mock
-├── src-tauri/                 # Tauri/Rust core 与 capabilities
+├── src-tauri/                 # Tauri/Rust core、data/document service 与 capabilities
+│   └── tests/                 # Windows 原生存储 smoke harness（合成文件）
 ├── sidecar/
 │   ├── meetinglens_sidecar/   # Python 服务
 │   └── tests/                 # Sidecar 自动化测试
@@ -297,6 +299,9 @@ Phase 0 不提前写入 `externalBin`，因为仓库尚无可验证的平台二�
 | Tauri / Rust    | Tauri `2.11.5`，Tauri build `2.6.3`     | Phase 0 已精确锁定；Windows CI 执行 fmt/test/check。                                           |
 | WinCred binding | `windows 0.61.3`                        | 已采用；复用 Tauri lock graph 版本，MIT/Apache-2.0，MSRV 1.74，只启用 Foundation/Credentials。 |
 | Secret memory   | `zeroize 1.9.0`                         | 已采用；无运行时依赖，MIT/Apache-2.0，MSRV 1.85，当前 Rust 1.97.1 满足。                       |
+| Document hash   | `sha2 0.11.0`                           | 已采用；纯 RustCrypto 实现，MIT/Apache-2.0；只用于完整性与同会议去重。                         |
+| OOXML container | `zip 8.6.0`，关闭默认 features          | 已采用；MIT、MSRV 1.88；仅有界读取中央目录元数据，不解压 payload，也不启用压缩后端。           |
+| Storage lock    | Rust `std::fs::File::try_lock`          | 已采用；Rust 1.89 稳定 API，Windows 使用原生文件锁，无新增依赖；第二写入实例 fail closed。     |
 | Python          | `3.12.x`                                | 项目统一基线；业务 sidecar 后续不得静默退回其他版本。                                          |
 | DeepSeek        | `deepseek-v4-flash` / `deepseek-v4-pro` | 官方当前模型；旧模型名已弃用。启用前复核价格、数据条款和 base URL。                            |
 | Docling         | `2.115.0`                               | 支持 Python 3.12 与 Windows；模型下载、格式覆盖、内存和冷启动需在文档处理分支实测。            |
