@@ -23,8 +23,8 @@ MVP 1A-2 实现前已使用 `docs/define-meeting-lifecycle` 固定会议状态�
 | MVP 1A-2-1  | Meeting Tauri Command API 与 TypeScript 客户端 | `feat/meeting-command-api` / PR #6                      | 已完成并合并 |
 | MVP 1A-2-2  | 桌面 UI、模拟转写和完整模拟会议流程            | `feat/meeting-ui-mock` / PR #7                          | 已完成并合并 |
 | MVP 1A-3A   | Provider 契约、Registry 和内存 Mock            | `feat/provider-contracts-mocks` / PR #8                 | 已完成并合并 |
-| MVP 1A-3B-1 | Sidecar 会话认证、Loopback 和基础日志脱敏      | `feat/local-sidecar-auth` / PR #9                       | 当前阶段     |
-| MVP 1A-3B-2 | SecretStore、Windows Credential Manager        | `feat/secret-store` / PR #10                            | 待开始       |
+| MVP 1A-3B-1 | Sidecar 会话认证、Loopback 和基础日志脱敏      | `feat/local-sidecar-auth` / PR #9                       | 已完成并合并 |
+| MVP 1A-3B-2 | SecretStore、Windows Credential Manager        | `feat/provider-security-foundation` / PR #10            | 当前阶段     |
 | MVP 1B-1    | 文档上传、验证、隔离和 Docling 解析            | `feat/document-processing`                              | 待开始       |
 | MVP 1B-2    | DeepSeek 分阶段总结、证据引用和纪要导出        | `feat/deepseek-summary`                                 | 待开始       |
 | MVP 1C      | Windows 音频、实时转写、sidecar 生命周期       | 见 §8 的三个小 PR                                       | 待开始       |
@@ -146,17 +146,21 @@ MVP 1A-2 固定拆成以下两个顺序 PR。前一个 PR 合并后，后一个 
 
 ### 6.3 MVP 1A-3B-2：SecretStore 与安全配置
 
-分支：`feat/secret-store`
+分支：`feat/provider-security-foundation`
 
 范围：
 
-- Windows Credential Manager `SecretStore` 抽象；测试不得读取真实凭据
-- 凭据安全写入、读取状态、替换和删除接口
-- 跨层 allowlist 安全日志基础：事件、匿名任务 ID、状态、耗时、错误码
+- Rust `SecretStore` 抽象和 Tauri App State；测试不得读取或覆盖正式凭据
+- Windows Credential Manager `CRED_TYPE_GENERIC` 后端；非 Windows 平台 fail closed，不提供明文回退
+- 只允许 `deepseek_api_key`，正式 target 固定为 `com.gray.meetinglens/secret/deepseek-api-key`
+- React 只可调用 status、set 和 delete；已保存的值不能读取、显示、复制或回填
+- `main` 窗口的最小 Tauri permission set；不授权远程 WebView 或通用 shell/fs/http/process 能力
+- 凭据安全写入、读取状态、替换和幂等删除接口；当前不调用 DeepSeek，也不把 key 传给 Python Sidecar
+- 稳定脱敏错误协议；完整结构化日志框架仍属于后续阶段
 
 不得调用真实付费 API，也不得实现 Docling、DeepSeek、音频或屏幕采集。
 
-验收：无凭据和空范围全部失败关闭；WebView/SQLite/日志不出现密钥；用户本机验证凭据写入/读取/替换/删除状态但不显示值。
+验收：空白或超长输入失败关闭；WebView 不能读回凭据；SQLite、浏览器存储、日志、命令行和构建输出中不出现密钥；Windows 本机使用隔离测试 target 验证写入/读取/替换/删除，并通过设置页验证正式 target 的重启持久化和最终清理，但任何位置都不显示值。
 
 ## 7. MVP 1B：文档与纪要（两个独立 PR）
 
@@ -239,4 +243,4 @@ Screenpipe 只能是可替换的可选 Capture Provider，不得成为核心强�
 
 ## 14. 当前下一步
 
-PR #8 已合并，当前只能开始 `feat/local-sidecar-auth`。该 PR 仅实现 MVP 1A-3B-1 的 Sidecar 会话认证、Loopback 边界、最小启动所有权、稳定错误和基础日志脱敏；不得提前实现 SecretStore、API Key、真实 Provider、文档、DeepSeek 或音频。该 PR 由用户决定合并后，才能从最新 `main` 创建 `feat/secret-store`。
+PR #9 已合并，当前只能执行 `feat/provider-security-foundation`。该 PR 仅实现 MVP 1A-3B-2 的 SecretStore、Windows Credential Manager、受限 Tauri commands 和设置页安全配置；不得调用 DeepSeek、把 key 传给 Python、实现真实 Provider、文档、音频或屏幕能力。PR #10 必须保持未自动合并，等待用户决定后才能开始 MVP 1B。

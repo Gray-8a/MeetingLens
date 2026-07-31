@@ -26,6 +26,12 @@ if (import.meta.env.DEV && import.meta.env.VITE_SIDECAR_AUTH_SMOKE === "1") {
   );
 }
 
+if (import.meta.env.DEV && import.meta.env.VITE_SECRET_STORE_SMOKE === "1") {
+  void import("./dev/secretStoreSmoke").then(({ runSecretStoreSmoke }) =>
+    runSecretStoreSmoke(),
+  );
+}
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <App />

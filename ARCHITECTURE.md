@@ -35,6 +35,7 @@ flowchart LR
 - 管理窗口、文件选择、音频设备权限和应用生命周期。
 - 生成每次应用启动的会话令牌，并作为唯一授权调用方管理 Sidecar 通信。
 - MVP 1A-3B-1 取得安全传递令牌所需的最小开发 Sidecar 启停所有权；完整打包、监控、崩溃恢复和孤儿进程回收仍属于 MVP 1C。
+- 通过 Tauri App State 管理 `SecretStore`，并在 Windows 使用当前用户的 Credential Manager；WebView 只能写入、查询配置状态和删除，不能读回值。
 - 对 IPC 输入做类型、路径和大小校验。
 - 负责数据库迁移、原子写入和删除协调。
 
@@ -67,16 +68,17 @@ MVP 1A-3A 在 React/TypeScript 应用边界定义五类能力契约：Capture、
 
 本阶段契约只位于 TypeScript，因为尚无真实 Provider RPC。Rust 继续负责系统权限、Tauri command、数据库和未来进程/凭据边界；Python 继续只提供现有 sidecar 健康契约。真实实现出现时再在所属层增加版本化 adapter，不为形式对称提前复制无调用方的 Rust/Python 接口。
 
-未来替换关系保持可选：Screenpipe 只能是 Capture Provider；Whisper/Diart 属于 Transcription Provider；DeepSeek 只能实现 Translation/Summary Provider；Docling 只能实现 DocumentParser Provider。会话认证由 MVP 1A-3B-1 建立，SecretStore 由独立的 MVP 1A-3B-2 交付，随机端口和完整 supervisor 留在 MVP 1C。
+未来替换关系保持可选：Screenpipe 只能是 Capture Provider；Whisper/Diart 属于 Transcription Provider；DeepSeek 只能实现 Translation/Summary Provider；Docling 只能实现 DocumentParser Provider。会话认证由 MVP 1A-3B-1 建立；MVP 1A-3B-2 在 Rust 信任边界建立 SecretStore，但不启用真实 DeepSeek Provider；随机端口和完整 supervisor 留在 MVP 1C。
 
 ## 4. 信任边界
 
-| 边界            | 高信任侧           | 低信任侧       | 主要控制                                        |
-| --------------- | ------------------ | -------------- | ----------------------------------------------- |
-| WebView → Rust  | Rust core          | UI 输入        | Tauri capabilities、command allowlist、结构校验 |
-| Rust → Sidecar  | Rust session owner | 本地 HTTP 进程 | loopback、临时 bearer token、集中 Header、超时  |
-| Sidecar → 文件  | 应用私有目录       | 上传内容       | 规范化路径、MIME/大小限制、沙箱式工作目录       |
-| 本地 → DeepSeek | 本地数据           | 外部服务       | 明示同意、最小文本、脱敏、TLS、超时             |
+| 边界                  | 高信任侧           | 低信任侧       | 主要控制                                                      |
+| --------------------- | ------------------ | -------------- | ------------------------------------------------------------- |
+| WebView → Rust        | Rust core          | UI 输入        | Tauri capabilities、command allowlist、结构校验               |
+| WebView → SecretStore | Rust core          | API key 输入   | `main` 窗口 permission set、SecretKind 白名单、无读回 command |
+| Rust → Sidecar        | Rust session owner | 本地 HTTP 进程 | loopback、临时 bearer token、集中 Header、超时                |
+| Sidecar → 文件        | 应用私有目录       | 上传内容       | 规范化路径、MIME/大小限制、沙箱式工作目录                     |
+| 本地 → DeepSeek       | 本地数据           | 外部服务       | 明示同意、最小文本、脱敏、TLS、超时                           |
 
 ## 5. Sidecar API
 
@@ -165,6 +167,12 @@ MVP 1A-2-1 先建立独立的 Meeting Tauri Command API，再由 MVP 1A-2-2 的�
 
 `delete_meeting` 复用 service 的事务边界，只允许删除 `draft` 或 `ready`。`recording` 以及当前不可进入的 `processing`、`failed`、`archived` 返回 `meeting_invalid_state`；不存在的会议返回 `meeting_not_found`。对外协议不使用含义重复的 `invalid_state_transition`。
 
+### 6.4 SecretStore command 边界
+
+`SecretKind` 当前只允许 `deepseek_api_key`，并由 Rust 固定映射为 `com.gray.meetinglens/secret/deepseek-api-key`。Windows 后端直接使用 Credential Manager Generic Credential；测试使用随机隔离 target，非 Windows 平台返回 unsupported/unavailable，绝不回退到文件、SQLite 或浏览器存储。
+
+前端只暴露 `get_secret_status`、`set_secret` 和 `delete_secret`。`get_for_backend` 只供未来受信任 Rust Provider 使用，不注册为 Tauri command；当前也不把 key 传给 Python Sidecar。Secret response 只包含配置状态、可用性和固定后端标识，不包含值、target、路径或原生错误。
+
 ## 7. 仓库结构
 
 ```text
@@ -211,37 +219,39 @@ Phase 0 不提前写入 `externalBin`，因为仓库尚无可验证的平台二�
 
 ### 10.1 实施顺序与模块所有权
 
-| 阶段        | 架构交付                                                       | 明确不包含                   |
-| ----------- | -------------------------------------------------------------- | ---------------------------- |
-| MVP 1A-1    | SQLite、迁移、meeting repository/service、删除语义和持久化     | UI、Provider、worker         |
-| MVP 1A-2-1  | Meeting Tauri commands、DTO、状态机和 TypeScript `meetingApi`  | 完整页面、模拟字幕、Provider |
-| MVP 1A-2-2  | React 页面、模拟转写和完整合成会议数据流                       | 真实音频、外部 API           |
-| MVP 1A-3A   | TypeScript Provider 契约、Registry、纯内存 Mock 与模拟会议迁移 | 凭据、令牌、真实 Provider    |
-| MVP 1A-3B-1 | Sidecar 会话认证、Loopback、稳定错误与基础日志脱敏             | SecretStore、真实 Provider   |
-| MVP 1A-3B-2 | SecretStore、Windows Credential Manager 与安全配置             | Docling、DeepSeek、音频      |
-| MVP 1B-1    | 隔离的 Docling document worker 和来源映射                      | 总结模型                     |
-| MVP 1B-2    | DeepSeek summary adapter、证据引用和导出                       | 文档解析器变更               |
-| MVP 1C      | Sidecar supervisor、崩溃/孤儿进程回收、WASAPI 和实时 ASR       | 翻译、说话人、屏幕           |
-| MVP 2       | 隔离的翻译、Diart 和 WhisperX worker                           | 屏幕采集                     |
-| MVP 3       | Window context、accessibility/OCR 和可选 Capture Provider      | 核心强绑定 Screenpipe        |
-| MVP 4       | Windows 打包、签名、升级、诊断和产品加固                       | 新核心业务范围               |
+| 阶段        | 架构交付                                                       | 明确不包含                                  |
+| ----------- | -------------------------------------------------------------- | ------------------------------------------- |
+| MVP 1A-1    | SQLite、迁移、meeting repository/service、删除语义和持久化     | UI、Provider、worker                        |
+| MVP 1A-2-1  | Meeting Tauri commands、DTO、状态机和 TypeScript `meetingApi`  | 完整页面、模拟字幕、Provider                |
+| MVP 1A-2-2  | React 页面、模拟转写和完整合成会议数据流                       | 真实音频、外部 API                          |
+| MVP 1A-3A   | TypeScript Provider 契约、Registry、纯内存 Mock 与模拟会议迁移 | 凭据、令牌、真实 Provider                   |
+| MVP 1A-3B-1 | Sidecar 会话认证、Loopback、稳定错误与基础日志脱敏             | SecretStore、真实 Provider                  |
+| MVP 1A-3B-2 | SecretStore、WinCred、最小 Tauri permissions 与安全配置        | DeepSeek 调用、Python 传密钥、Docling、音频 |
+| MVP 1B-1    | 隔离的 Docling document worker 和来源映射                      | 总结模型                                    |
+| MVP 1B-2    | DeepSeek summary adapter、证据引用和导出                       | 文档解析器变更                              |
+| MVP 1C      | Sidecar supervisor、崩溃/孤儿进程回收、WASAPI 和实时 ASR       | 翻译、说话人、屏幕                          |
+| MVP 2       | 隔离的翻译、Diart 和 WhisperX worker                           | 屏幕采集                                    |
+| MVP 3       | Window context、accessibility/OCR 和可选 Capture Provider      | 核心强绑定 Screenpipe                       |
+| MVP 4       | Windows 打包、签名、升级、诊断和产品加固                       | 新核心业务范围                              |
 
 每一行仍须按 `DEVELOPMENT_PLAN.md` 拆成指定的小型 PR。上游阶段只能通过版本化接口为下游提供能力，不得把下游实现提前塞入当前 PR。
 
 ## 11. 依赖兼容性与采用门槛
 
-以下结论基于 2026-07-27 的官方仓库、包元数据和发行信息。这里记录候选版本，不代表本轮安装。
+以下结论基于 2026-07-31 的官方文档、包元数据和锁定依赖。标为已采用的依赖已经通过 Windows 本机编译与测试；其余候选仍须在所属阶段复核。
 
-| 组件           | 候选基线                                | 结论与门槛                                                                                |
-| -------------- | --------------------------------------- | ----------------------------------------------------------------------------------------- |
-| Tauri / Rust   | Tauri `2.11.5`，Tauri build `2.6.3`     | Phase 0 已精确锁定；Windows CI 执行 fmt/test/check。                                      |
-| Python         | `3.12.x`                                | 项目统一基线；业务 sidecar 后续不得静默退回其他版本。                                     |
-| DeepSeek       | `deepseek-v4-flash` / `deepseek-v4-pro` | 官方当前模型；旧模型名已弃用。启用前复核价格、数据条款和 base URL。                       |
-| Docling        | `2.115.0`                               | 支持 Python 3.12 与 Windows；模型下载、格式覆盖、内存和冷启动需在文档处理分支实测。       |
-| Diart          | `0.9.2`                                 | 依赖 `numpy<2`，其参考环境偏向 Python 3.10，并建议旧版 pyannote；不能直接进入主 sidecar。 |
-| WhisperX       | `3.8.6`                                 | Python `>=3.10,<3.14`，但要求 `numpy>=2.1`、`pyannote-audio>=4`；与 Diart 当前依赖冲突。  |
-| faster-whisper | `1.2.1`                                 | 可用 CPU int8；GPU 路径要求 CUDA 12/cuDNN 9 并受 CTranslate2 兼容性约束。                 |
-| Screenpipe     | app `2.5.139`                           | 上游变化快；商业用途需要单独核验/取得许可。采集接入前必须完成授权与隐私复审。             |
+| 组件            | 候选基线                                | 结论与门槛                                                                                     |
+| --------------- | --------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Tauri / Rust    | Tauri `2.11.5`，Tauri build `2.6.3`     | Phase 0 已精确锁定；Windows CI 执行 fmt/test/check。                                           |
+| WinCred binding | `windows 0.61.3`                        | 已采用；复用 Tauri lock graph 版本，MIT/Apache-2.0，MSRV 1.74，只启用 Foundation/Credentials。 |
+| Secret memory   | `zeroize 1.9.0`                         | 已采用；无运行时依赖，MIT/Apache-2.0，MSRV 1.85，当前 Rust 1.97.1 满足。                       |
+| Python          | `3.12.x`                                | 项目统一基线；业务 sidecar 后续不得静默退回其他版本。                                          |
+| DeepSeek        | `deepseek-v4-flash` / `deepseek-v4-pro` | 官方当前模型；旧模型名已弃用。启用前复核价格、数据条款和 base URL。                            |
+| Docling         | `2.115.0`                               | 支持 Python 3.12 与 Windows；模型下载、格式覆盖、内存和冷启动需在文档处理分支实测。            |
+| Diart           | `0.9.2`                                 | 依赖 `numpy<2`，其参考环境偏向 Python 3.10，并建议旧版 pyannote；不能直接进入主 sidecar。      |
+| WhisperX        | `3.8.6`                                 | Python `>=3.10,<3.14`，但要求 `numpy>=2.1`、`pyannote-audio>=4`；与 Diart 当前依赖冲突。       |
+| faster-whisper  | `1.2.1`                                 | 可用 CPU int8；GPU 路径要求 CUDA 12/cuDNN 9 并受 CTranslate2 兼容性约束。                      |
+| Screenpipe      | app `2.5.139`                           | 上游变化快；商业用途需要单独核验/取得许可。采集接入前必须完成授权与隐私复审。                  |
 
 ### 11.1 强制隔离决策
 
@@ -273,6 +283,9 @@ CI 负责自动化构建与测试，但不能证明 WebView2 窗口、凭据库�
 - [Tauri sidecar 指南](https://v2.tauri.app/develop/sidecar/)
 - [Tauri capabilities](https://v2.tauri.app/security/capabilities/)
 - [Tauri security](https://v2.tauri.app/security/)
+- [Windows Credential Manager APIs](https://learn.microsoft.com/en-us/windows/win32/api/wincred/)
+- [Rust `windows` bindings](https://github.com/microsoft/windows-rs)
+- [RustCrypto `zeroize`](https://docs.rs/zeroize/1.9.0/zeroize/)
 - [DeepSeek 模型与定价](https://api-docs.deepseek.com/quick_start/pricing/)
 - [DeepSeek 模型列表](https://api-docs.deepseek.com/api/list-models)
 - [Docling](https://github.com/docling-project/docling)

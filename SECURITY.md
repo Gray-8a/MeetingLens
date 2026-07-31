@@ -39,11 +39,15 @@ MVP 1A-3B-1 的本地会话认证防止局域网设备、普通网页和未持�
 
 ### 发布阶段
 
-- API key 存入 Windows Credential Manager，并通过可替换的 `SecretStore` 接口访问。
-- WebView 不直接读取或保存 key；Rust/sidecar 只在请求生命周期内持有。
+- API key 存入当前 Windows 用户的 Credential Manager Generic Credential，并通过可替换的 Rust `SecretStore` 接口访问；正式 target 固定为 `com.gray.meetinglens/secret/deepseek-api-key`。
+- WebView 只可 set/status/delete，不能读回、显示、复制或回填 key；`get_for_backend` 不注册为 Tauri command，当前也不把 key 传给 Python Sidecar。
 - key 不写入 SQLite、配置 JSON、日志、崩溃报告、遥测或导出。
-- 撤销/更新 key 后应清除内存缓存，并提供验证状态而不是显示值。
+- Rust 使用零化包装减少临时明文驻留；JavaScript 输入期间仍会短暂持有明文，本项目不声称能清除交换文件或全部进程内存。
+- 撤销/更新 key 后清空输入和应用持有的临时缓冲区，并只提供配置状态而不是显示值。
 - Windows 11 发布版使用 Windows Credential Manager；不得把 key 放入 WebView 的 localStorage、前端 bundle 或 sidecar 命令行参数。
+- 非 Windows 平台 fail closed，不使用文件、SQLite、注册表明文或浏览器存储回退。
+
+当前边界不防御取得同等 Windows 用户权限、可读取进程内存或用户 Credential Manager 的恶意软件，也不防御管理员/内核级攻击者。DeepSeek 网络有效性测试、真实调用和 Provider 消费凭据均不属于本阶段。
 
 任何已经出现在聊天、日志或提交中的 key 都应视为已泄漏并立即撤销，而不是仅删除文件。
 
@@ -86,6 +90,7 @@ DeepSeek 生产适配器必须使用当前模型名 `deepseek-v4-flash` / `deeps
 - WebView 只加载打包的本地前端，不允许远程页面获得 Tauri API 权限。
 - 设置非空 CSP；默认 `default-src 'self'`，只开放实际需要的来源。
 - `src-tauri/capabilities` 采用最小权限；不授予任意 shell 或全文件系统访问。
+- 自定义应用 commands 登记进 Tauri `AppManifest`；Secret permission set 只授予本地 `main` 窗口 status/set/delete，不包含 get/reveal，也不授予 remote WebView。
 - 文件对话框返回的路径由 Rust 再次校验，不能由前端拼接任意路径。
 - Sidecar 通过固定名称 allowlist 启动，不向前端暴露通用命令执行。
 - Rust commands 对长度、枚举、UUID、路径、文件大小和超时做边界校验。
@@ -127,6 +132,8 @@ DeepSeek 生产适配器必须使用当前模型名 `deepseek-v4-flash` / `deeps
 禁止记录：密钥、Authorization header、请求/响应正文、转录、文件名、参与者、屏幕内容、环境变量和绝对用户路径。
 
 Sidecar 认证失败只允许记录事件类型、结果和稳定错误码；当前实现默认关闭 Python 请求日志，并禁止 Rust 输出 HeaderMap、原始 reqwest/Python 错误或子进程环境。DeepSeek API key 是未来外部服务凭据，与短期 Sidecar Session Token 完全不同，二者不得复用。
+
+SecretStore command 不记录请求 DTO、凭据值、长度、首尾字符、Credential blob、完整 target、Windows 用户名或 Win32 原始错误。当前没有新增完整日志框架；稳定错误码和无敏感上下文是本阶段的最小脱敏边界。
 
 生产日志默认保留时间应有限，用户可以查看大小并一键删除。
 

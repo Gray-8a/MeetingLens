@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-check-sidecar-health"
+description = "Enables the check_sidecar_health command without any pre-configured scope."
+commands.allow = ["check_sidecar_health"]
+
+[[permission]]
+identifier = "deny-check-sidecar-health"
+description = "Denies the check_sidecar_health command without any pre-configured scope."
+commands.deny = ["check_sidecar_health"]

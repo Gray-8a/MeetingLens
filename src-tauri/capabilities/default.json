@@ -3,5 +3,11 @@
   "identifier": "default",
   "description": "Minimum core capability for the local MeetingLens window",
   "windows": ["main"],
-  "permissions": ["core:default"]
+  "local": true,
+  "permissions": [
+    "core:default",
+    "meeting-data-commands",
+    "sidecar-status-command",
+    "secret-status-management"
+  ]
 }

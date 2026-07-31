@@ -2,7 +2,7 @@
 
 MeetingLens is a privacy-first desktop workspace for meeting capture, transcription, translation, document context, speaker diarization, and verifiable AI summaries.
 
-Phase 0, MVP 1A-1, MVP 1A-2, and MVP 1A-3A are complete: the repository contains the product specification, a Tauri 2 + React + TypeScript desktop UI, a dependency-free Python runtime sidecar, a tested local SQLite meeting data core, typed Meeting commands, a complete synthetic meeting flow, and replaceable in-memory Provider mocks. The current implementation stage is `feat/local-sidecar-auth` (MVP 1A-3B-1).
+Phase 0 through MVP 1A-3B-1 are complete: the repository contains the product specification, a Tauri 2 + React + TypeScript desktop UI, a dependency-free authenticated Python runtime sidecar, a tested local SQLite meeting data core, typed Meeting commands, a complete synthetic meeting flow, and replaceable in-memory Provider mocks. The current implementation stage is `feat/provider-security-foundation` (MVP 1A-3B-2).
 
 The Provider runtime defines Capture, Transcription, Translation, Summary, and DocumentParser capability boundaries. Current implementations are explicit deterministic in-memory mocks: they do not access devices, files, or networks, and can be replaced through an application-owned Registry without changing page business logic.
 
@@ -66,7 +66,13 @@ An unauthenticated direct request must fail closed:
 try { Invoke-WebRequest http://127.0.0.1:8765/health } catch { $_.Exception.Response.StatusCode.value__ }
 ```
 
-The current fixed port remains a development contract, but the host is locked to `127.0.0.1` and every route requires the current ephemeral token. Random ports, packaged Sidecar binaries, restart monitoring, crash recovery, and orphan cleanup remain in the MVP 1C supervisor. SecretStore is a separate later PR and is not used for the session token.
+The current fixed port remains a development contract, but the host is locked to `127.0.0.1` and every route requires the current ephemeral token. Random ports, packaged Sidecar binaries, restart monitoring, crash recovery, and orphan cleanup remain in the MVP 1C supervisor. The SecretStore is deliberately separate and is never used for the ephemeral Sidecar session token.
+
+## Secure API key storage
+
+On Windows, Settings can save or delete the approved DeepSeek API key through the Rust SecretStore backed by Windows Credential Manager. The UI can inspect only configured/unconfigured state and never reads a stored value back. The key is not written to SQLite, files, browser storage, logs, command-line arguments, or the Python Sidecar. This stage stores the credential only: it does not validate the key or call DeepSeek.
+
+The production Credential Manager target is `com.gray.meetinglens/secret/deepseek-api-key`. Non-Windows builds fail closed without a plaintext fallback. Input is briefly present in WebView memory while the user enters and saves it; MeetingLens does not claim protection against malware running with the same Windows user privileges.
 
 ## Project documents
 
@@ -84,8 +90,8 @@ The current fixed port remains a development contract, but the host is locked to
 3. **MVP 1A-2-1 — complete:** Meeting Tauri Command API and typed TypeScript client (`feat/meeting-command-api`, PR #6).
 4. **MVP 1A-2-2 — complete:** desktop UI and complete synthetic meeting flow (`feat/meeting-ui-mock`, PR #7).
 5. **MVP 1A-3A — complete:** Provider contracts, Registry, and deterministic in-memory mocks (`feat/provider-contracts-mocks`, PR #8).
-6. **MVP 1A-3B-1 — current:** authenticated local Sidecar session and loopback boundary (`feat/local-sidecar-auth`, PR #9).
-7. **MVP 1A-3B-2:** SecretStore and Windows Credential Manager (`feat/secret-store`, PR #10).
+6. **MVP 1A-3B-1 — complete:** authenticated local Sidecar session and loopback boundary (`feat/local-sidecar-auth`, PR #9).
+7. **MVP 1A-3B-2 — current:** SecretStore and Windows Credential Manager (`feat/provider-security-foundation`, PR #10).
 8. **MVP 1B-1:** isolated document validation and Docling parsing (`feat/document-processing`).
 9. **MVP 1B-2:** staged DeepSeek minutes, evidence links, and export (`feat/deepseek-summary`).
 10. **MVP 1C:** sidecar supervisor, Windows audio, and realtime transcription in separate PRs.

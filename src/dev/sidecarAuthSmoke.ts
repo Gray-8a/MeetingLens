@@ -20,7 +20,8 @@ export async function runSidecarAuthSmoke(): Promise<void> {
     checkpoint = "authentication-session";
     assertIncludes(status, "Current application session");
     checkpoint = "authentication-secret-storage";
-    assertIncludes(status, "Not implemented");
+    assertIncludes(status, "Sidecar credential access");
+    assertIncludes(status, "Disabled");
     mark("authenticated");
     await delay(5_000);
 
