@@ -67,8 +67,8 @@ Phase 0 已通过 PR #1 合并，并在 Windows 本机实际启动 Tauri 窗口�
 - **MVP 1A-2-1（已完成）**：Meeting Tauri Command API、稳定 DTO/错误和可 mock 的 TypeScript 客户端，由 PR #6 交付。
 - **MVP 1A-2-2（已完成）**：桌面页面、模拟转写和完整模拟会议流程，由 PR #7 交付。
 - **MVP 1A-3A（已完成）**：Capture、Transcription、Translation、Summary、DocumentParser Provider 契约、Registry 与纯内存 Mock，由 PR #8 交付。
-- **MVP 1A-3B-1**：本地 Sidecar 会话令牌、Loopback 认证、稳定错误和最小日志脱敏，不包含凭据存储。
-- **MVP 1A-3B-2**：Windows Credential Manager `SecretStore`、凭据配置状态和跨层安全日志基础。
+- **MVP 1A-3B-1（已完成）**：本地 Sidecar 会话令牌、Loopback 认证、稳定错误和最小日志脱敏，由 PR #9 交付。
+- **MVP 1A-3B-2（已完成）**：Windows Credential Manager `SecretStore`、凭据配置状态和跨层安全日志基础，由 PR #10 交付。
 
 合成会议的产品状态固定为：创建后 `draft`，开始后 `recording`，结束后 `ready`。开始/结束时间由后端生成；`processing` 保留给未来真实异步处理，用户界面不能任意写入状态。
 
@@ -76,10 +76,33 @@ Phase 0 已通过 PR #1 合并，并在 Windows 本机实际启动 Tauri 窗口�
 
 ### 5.3 MVP 1B：文档与会议纪要
 
-- **MVP 1B-1**：上传 PDF、DOCX、PPTX、XLSX、TXT、Markdown、HTML、CSV 和图片，完成验证、隔离和 Docling 结构化解析。
-- **MVP 1B-2**：在稳定文档管线上使用 `deepseek-v4-pro` 做分阶段总结、证据引用以及 Markdown/DOCX 导出。
+- **MVP 1B-0（当前）**：通过 PR #11 定义文件导入、文档状态、私有存储、配额、去重和可恢复删除语义，不实现产品功能。
+- **MVP 1B-1A**：文档元数据、应用私有存储、安全流式复制、类型/配额校验、SHA-256、去重以及会议/文档删除协调基础。
+- **MVP 1B-1B**：原生文件选择器、Document Tauri Commands、集中式 `documentApi`、文件列表、导入进度和删除/重试交互，不解析文件。
+- **MVP 1B-2**：独立 Docling Worker、解析任务、取消、超时、资源限制、畸形文件测试和结构化解析产物，不调用 DeepSeek。
+- **MVP 1B-3**：在稳定文档管线上实现 DeepSeek SummaryProvider、分阶段总结、证据引用以及 Markdown/DOCX 导出。
 
-Docling 与 DeepSeek 必须使用两个独立 PR，不得同时引入解析器和总结模型。
+四个实现范围必须使用独立 PR；文件存储、UI、重型解析器和外部 AI 不得合并到同一审查单元。
+
+#### 5.3.1 第一版文件来源与安全边界
+
+第一版只接受用户通过 MeetingLens 原生文件选择器主动选择的本地文件。Teams、Zoom、Google Meet、邮件或聊天中的附件必须先由用户自行下载，再手动导入。首版不自动读取聊天/云盘附件，不监控 Downloads 或桌面，不读取剪贴板文件，不接受任意路径拖放、远程 URL 或网络共享自动导入。
+
+所有导入文件均视为不可信数据。MeetingLens 只复制和保存文件，不启动文件、不调用系统文件关联或 Microsoft Office 自动化、不执行宏/脚本/嵌入对象、不自动访问外部链接，也不在 WebView 中直接渲染未经处理的文件。解析只能由未来的隔离 Docling Worker 执行；当前 Python Sidecar 和 DeepSeek 均不接收文件内容。
+
+React 只接收 document ID、原始显示名称、安全类型、大小、状态和导入时间。Rust 负责原生选择、最终校验、私有存储和路径边界，源文件绝对路径不得写入 SQLite 或返回前端。
+
+#### 5.3.2 格式与配额
+
+第一版 allowlist 为：
+
+- 文档：`.pdf`、`.docx`、`.pptx`、`.xlsx`
+- 文本：`.txt`、`.md`、`.csv`
+- 图片：`.png`、`.jpg`、`.jpeg`
+
+明确拒绝旧 Office 二进制格式、宏文档、普通归档、可执行文件、脚本、HTML、双重扩展伪装、空文件和无法确定安全类型的文件。扩展名不能作为唯一依据；Rust 必须结合文件签名或安全类型识别，类型不一致或未知时 fail closed。OOXML 虽是 ZIP 容器，但不因此允许普通 ZIP；导入阶段不解压，完整结构验证留给隔离 Worker。未知内容不得自动当作纯文本。
+
+默认配额为：单文件最大 100 MiB、单次选择最多 10 个文件、单场会议最多 20 个文件、单场会议累计最大 500 MiB、原始文件名 UTF-8 表示最大 255 bytes。Rust 是最终执行者，必须防止通过多次调用绕过累计配额；前端校验只改善体验。全局磁盘配额管理器和 Docling 独立内存/处理时限属于后续实现。
 
 ### 5.4 MVP 1C：真实音频与转写
 

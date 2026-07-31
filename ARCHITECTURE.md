@@ -42,7 +42,7 @@ flowchart LR
 ### 3.3 Python Sidecar
 
 - 提供版本化 loopback API。
-- 承载转录、文档提取、翻译、说话人分离和摘要预处理。
+- 未来编排转录、隔离文档提取、翻译、说话人分离和摘要预处理；当前只提供认证健康契约，不接收用户文件。
 - 任务处理器按接口解耦，单个模型失败不影响其他模块。
 - Sidecar 保持无运行时第三方依赖的窄 HTTP 服务；MVP 1A-3B-1 为所有路由增加会话认证，MVP 1C 才实现 supervisor、崩溃恢复、孤儿进程回收和 Windows sidecar 打包生命周期。
 - Diart、WhisperX 等不兼容模型不得装入同一个 Python 环境，由独立 worker 进程和版本化消息协议隔离。
@@ -52,6 +52,8 @@ flowchart LR
 - SQLite 保存元数据、片段、任务状态、摘要和同意事件。
 - 大型音频与上传文件保存于应用私有数据目录，数据库只保存受控相对路径和哈希。
 - 凭据不进入 SQLite；开发阶段使用已忽略的 `.env`，发布阶段使用系统凭据库。
+- 用户源文件保持不变；MeetingLens 使用 document UUID 生成内部文件名，不把源绝对路径或原始文件名用于存储路径拼接。
+- 文件导入通过应用私有 staging 目录流式复制并计算 SHA-256，校验成功后在同一卷原子 rename；失败时清理临时文件。
 
 ### 3.5 外部 AI 适配器
 
@@ -72,13 +74,14 @@ MVP 1A-3A 在 React/TypeScript 应用边界定义五类能力契约：Capture、
 
 ## 4. 信任边界
 
-| 边界                  | 高信任侧           | 低信任侧       | 主要控制                                                      |
-| --------------------- | ------------------ | -------------- | ------------------------------------------------------------- |
-| WebView → Rust        | Rust core          | UI 输入        | Tauri capabilities、command allowlist、结构校验               |
-| WebView → SecretStore | Rust core          | API key 输入   | `main` 窗口 permission set、SecretKind 白名单、无读回 command |
-| Rust → Sidecar        | Rust session owner | 本地 HTTP 进程 | loopback、临时 bearer token、集中 Header、超时                |
-| Sidecar → 文件        | 应用私有目录       | 上传内容       | 规范化路径、MIME/大小限制、沙箱式工作目录                     |
-| 本地 → DeepSeek       | 本地数据           | 外部服务       | 明示同意、最小文本、脱敏、TLS、超时                           |
+| 边界                   | 高信任侧           | 低信任侧       | 主要控制                                                      |
+| ---------------------- | ------------------ | -------------- | ------------------------------------------------------------- |
+| WebView → Rust         | Rust core          | UI 输入        | Tauri capabilities、command allowlist、结构校验               |
+| WebView → SecretStore  | Rust core          | API key 输入   | `main` 窗口 permission set、SecretKind 白名单、无读回 command |
+| Native picker → Rust   | Rust core          | 不可信源文件   | allowlist、签名/类型、配额、UUID 路径和流式复制               |
+| Rust → Sidecar         | Rust session owner | 本地 HTTP 进程 | loopback、临时 bearer token、集中 Header、超时                |
+| Rust → Document Worker | Rust coordinator   | 不可信文档     | 隔离进程、受控相对引用、取消、资源和输出限制                  |
+| 本地 → DeepSeek        | 本地数据           | 外部服务       | 明示同意、最小文本、脱敏、TLS、超时                           |
 
 ## 5. Sidecar API
 
@@ -173,6 +176,52 @@ MVP 1A-2-1 先建立独立的 Meeting Tauri Command API，再由 MVP 1A-2-2 的�
 
 前端只暴露 `get_secret_status`、`set_secret` 和 `delete_secret`。`get_for_backend` 只供未来受信任 Rust Provider 使用，不注册为 Tauri command；当前也不把 key 传给 Python Sidecar。Secret response 只包含配置状态、可用性和固定后端标识，不包含值、target、路径或原生错误。
 
+### 6.5 计划中的安全文档导入
+
+第一版入口只有 MeetingLens 的原生文件选择器。React 发起选择意图，但不取得任意文件系统权限；选择结果和源绝对路径只在 Rust 导入调用期间使用，不写入数据库，也不返回 WebView。React 的文档 DTO 只包含 document ID、原始显示名称、安全类型、大小、状态和导入时间。
+
+现有 TypeScript `DocumentParserProvider`/`DocumentReference` 和 `MockDocumentParserProvider` 只是 MVP 1A-3A 的纯内存契约，不是文件导入 API，也不授权 WebView 读取 `artifactId` 对应的文件。Mock 中 10,000,000 bytes、255 characters 和少量 MIME 的合成校验不是生产 allowlist/配额；后续实现必须以 `PRODUCT_SPEC.md` 的 100 MiB、UTF-8 byte 限制和完整 allowlist 为准，并在 MVP 1B-2 将解析输入收窄为 Rust 注册的 document ID/受控引用。
+
+```mermaid
+sequenceDiagram
+    participant User as 用户
+    participant UI as React
+    participant Rust as Tauri/Rust
+    participant Stage as Private staging
+    participant Store as Meeting documents
+    participant DB as SQLite
+    User->>UI: 主动选择文件
+    UI->>Rust: 请求原生文件选择
+    Rust->>Rust: 来源、数量、文件名、扩展和初步大小检查
+    Rust->>DB: 创建 importing 元数据
+    Rust->>Stage: 随机临时文件 + 流式复制 + SHA-256
+    Rust->>Rust: 签名/安全类型、最终大小和会议累计配额
+    Rust->>Store: 同卷原子 rename 到 UUID 文件名
+    Rust->>DB: 转换为 staged；失败则进入 import_failed
+    Rust-->>UI: 安全文档 DTO（无绝对路径）
+```
+
+允许格式和配额以 `PRODUCT_SPEC.md` 为准。扩展名不是唯一判断依据；PDF/PNG/JPEG 使用签名识别，文本格式需拒绝二进制内容，OOXML 只做容器/类型基础识别且在导入阶段不解压。完整 OOXML 结构校验和内容解析留给隔离 Docling Worker。类型不一致、空文件、双重扩展、未知格式或超额输入全部 fail closed。
+
+同一会议内以 SHA-256 识别完全相同的内容：重复导入不创建第二条记录或物理副本，而是返回已有 document ID 和稳定结果。不同会议首版不做物理去重；哈希不代表恶意软件检测。
+
+### 6.6 文件引入后的删除协调
+
+当前同步 `delete_meeting` 只适用于没有 artifact/文件的 MVP 1A。首次引入文件时必须演进为持久、幂等、可恢复的协调流程：
+
+```mermaid
+stateDiagram-v2
+    [*] --> deleting: 接受删除请求并持久化 tombstone
+    deleting --> deletionTrash: 同卷移动受控文件
+    deletionTrash --> [*]: 清理文件、派生数据和数据库记录
+    deleting --> delete_failed: 移动或清理失败
+    delete_failed --> deleting: 用户或启动恢复重试
+```
+
+接受会议删除后立即进入 `deleting`，冻结编辑、开始、文件集合和纪要任务。协调器枚举原始文档及未来解析、音频、截图、转写、纪要和导出产物，将文件安全移动到应用私有 `deletion-trash`（或实现等价的可恢复边界），成功后才最终删除数据库记录。失败进入 `delete_failed`、保留安全错误码并允许重试；重复请求返回稳定 pending 状态。不得先删数据库再尽力删文件，也不得先删文件再尝试删除数据库。
+
+单文档删除使用同样模式：先进入 `deleting`，成功清理文件和 artifacts 后才移除元数据，失败进入 `delete_failed`。处于 `importing`/`parsing` 的文档必须先取消或等待安全终止。删除永远不影响用户源文件。
+
 ## 7. 仓库结构
 
 ```text
@@ -227,8 +276,11 @@ Phase 0 不提前写入 `externalBin`，因为仓库尚无可验证的平台二�
 | MVP 1A-3A   | TypeScript Provider 契约、Registry、纯内存 Mock 与模拟会议迁移 | 凭据、令牌、真实 Provider                   |
 | MVP 1A-3B-1 | Sidecar 会话认证、Loopback、稳定错误与基础日志脱敏             | SecretStore、真实 Provider                  |
 | MVP 1A-3B-2 | SecretStore、WinCred、最小 Tauri permissions 与安全配置        | DeepSeek 调用、Python 传密钥、Docling、音频 |
-| MVP 1B-1    | 隔离的 Docling document worker 和来源映射                      | 总结模型                                    |
-| MVP 1B-2    | DeepSeek summary adapter、证据引用和导出                       | 文档解析器变更                              |
+| MVP 1B-0    | 文档导入、存储、状态、删除和后续 PR 的规范门槛                 | 任何功能代码                                |
+| MVP 1B-1A   | 文档存储核心、安全导入、去重和删除协调                         | 正式 UI、解析、外部 AI                      |
+| MVP 1B-1B   | Document commands、documentApi、原生选择器和导入/删除 UI       | 文档解析                                    |
+| MVP 1B-2    | 隔离 Docling worker、资源限制和来源映射                        | 总结模型                                    |
+| MVP 1B-3    | DeepSeek SummaryProvider、证据引用和导出                       | 文档解析器变更                              |
 | MVP 1C      | Sidecar supervisor、崩溃/孤儿进程回收、WASAPI 和实时 ASR       | 翻译、说话人、屏幕                          |
 | MVP 2       | 隔离的翻译、Diart 和 WhisperX worker                           | 屏幕采集                                    |
 | MVP 3       | Window context、accessibility/OCR 和可选 Capture Provider      | 核心强绑定 Screenpipe                       |
@@ -262,7 +314,7 @@ Tauri/Rust supervisor
 └── orchestration sidecar (Python 3.12, lightweight API/database coordination)
     ├── realtime-diarization worker (Diart-compatible locked environment)
     ├── post-meeting-alignment worker (WhisperX-compatible locked environment)
-    └── document worker (Docling-compatible locked environment)
+    └── document worker (Docling-compatible locked environment, MVP 1B-2)
 ```
 
 worker 之间只交换受控文件引用和版本化 JSON，不共享 site-packages。每个 worker 必须有独立 lockfile、许可清单、资源上限和合成数据测试。
@@ -271,7 +323,7 @@ worker 之间只交换受控文件引用和版本化 JSON，不共享 site-packa
 
 - Screenpipe 在 MVP 3 也只能作为可替换的 Capture Provider；核心窗口选择、权限、事件模型和删除语义不得依赖它。采用前需用户决定商业授权、采集范围和 Windows 资源预算。
 - WhisperX 的 diarization 模型可能需要 Hugging Face token 和模型条款同意；不得把该 token 写入配置或仓库。
-- Docling 只在 MVP 1B-1 引入，DeepSeek 只在 MVP 1B-2 引入；不得在同一 PR 同时改变解析与总结管线。真实调用/下载需要对应阶段授权。
+- Docling 只在 MVP 1B-2 引入，DeepSeek 只在 MVP 1B-3 引入；不得在同一 PR 同时改变存储、解析与总结信任边界。真实调用/下载需要对应阶段授权。
 
 ### 11.3 Windows 本地验收门槛
 

@@ -2,7 +2,7 @@
 
 MeetingLens is a privacy-first desktop workspace for meeting capture, transcription, translation, document context, speaker diarization, and verifiable AI summaries.
 
-Phase 0 through MVP 1A-3B-1 are complete: the repository contains the product specification, a Tauri 2 + React + TypeScript desktop UI, a dependency-free authenticated Python runtime sidecar, a tested local SQLite meeting data core, typed Meeting commands, a complete synthetic meeting flow, and replaceable in-memory Provider mocks. The current implementation stage is `feat/provider-security-foundation` (MVP 1A-3B-2).
+Phase 0 through MVP 1A are complete: the repository contains the product specification, a Tauri 2 + React + TypeScript desktop UI, a dependency-free authenticated Python runtime sidecar, a tested local SQLite meeting data core, typed Meeting commands, a complete synthetic meeting flow, replaceable in-memory Provider mocks, and a Windows Credential Manager SecretStore. The current stage is the documentation-only `docs/define-document-import-lifecycle` gate (MVP 1B-0).
 
 The Provider runtime defines Capture, Transcription, Translation, Summary, and DocumentParser capability boundaries. Current implementations are explicit deterministic in-memory mocks: they do not access devices, files, or networks, and can be replaced through an application-owned Registry without changing page business logic.
 
@@ -74,6 +74,14 @@ On Windows, Settings can save or delete the approved DeepSeek API key through th
 
 The production Credential Manager target is `com.gray.meetinglens/secret/deepseek-api-key`. Non-Windows builds fail closed without a plaintext fallback. Input is briefly present in WebView memory while the user enters and saves it; MeetingLens does not claim protection against malware running with the same Windows user privileges.
 
+## Planned document import boundary
+
+Document import is not implemented yet. The first implementation will accept only files actively selected through MeetingLens's native picker, treat every file as untrusted, and keep source paths inside the Rust trust boundary. React will receive safe metadata rather than absolute paths, and neither the current Python Sidecar nor DeepSeek will receive file contents.
+
+The initial allowlist is PDF, DOCX, PPTX, XLSX, TXT, Markdown, CSV, PNG, JPG, and JPEG. Limits are 100 MiB per file, 10 files per selection, 20 files per meeting, 500 MiB per meeting, and 255 UTF-8 bytes per original filename. Extension-only validation is insufficient; unknown, mismatched, empty, executable, script, macro, archive, HTML, and disguised double-extension files fail closed.
+
+Files will be streamed into private staging storage, hashed with SHA-256, validated, and atomically renamed to UUID-based paths. Introducing files also requires recoverable, idempotent meeting/document deletion with `deleting` and `delete_failed` states; the current synchronous hard delete remains valid only for the no-attachment MVP 1A baseline.
+
 ## Project documents
 
 - [Product specification](PRODUCT_SPEC.md)
@@ -91,15 +99,18 @@ The production Credential Manager target is `com.gray.meetinglens/secret/deepsee
 4. **MVP 1A-2-2 — complete:** desktop UI and complete synthetic meeting flow (`feat/meeting-ui-mock`, PR #7).
 5. **MVP 1A-3A — complete:** Provider contracts, Registry, and deterministic in-memory mocks (`feat/provider-contracts-mocks`, PR #8).
 6. **MVP 1A-3B-1 — complete:** authenticated local Sidecar session and loopback boundary (`feat/local-sidecar-auth`, PR #9).
-7. **MVP 1A-3B-2 — current:** SecretStore and Windows Credential Manager (`feat/provider-security-foundation`, PR #10).
-8. **MVP 1B-1:** isolated document validation and Docling parsing (`feat/document-processing`).
-9. **MVP 1B-2:** staged DeepSeek minutes, evidence links, and export (`feat/deepseek-summary`).
-10. **MVP 1C:** sidecar supervisor, Windows audio, and realtime transcription in separate PRs.
-11. **MVP 2:** realtime translation and speaker diarization.
-12. **MVP 3:** meeting-window selection, OCR, and screen context.
-13. **MVP 4:** Windows packaging and product hardening.
+7. **MVP 1A-3B-2 — complete:** SecretStore and Windows Credential Manager (`feat/provider-security-foundation`, PR #10).
+8. **MVP 1B-0 — current:** document import, storage, lifecycle, and deletion specification (`docs/define-document-import-lifecycle`, PR #11).
+9. **MVP 1B-1A:** document storage core, safe import, deduplication, and recoverable deletion (`feat/document-storage-core`).
+10. **MVP 1B-1B:** Document commands, native picker, and import/delete UI (`feat/document-import-ui`).
+11. **MVP 1B-2:** isolated Docling Worker and structured parsing (`feat/docling-worker`).
+12. **MVP 1B-3:** DeepSeek SummaryProvider, evidence links, and export (`feat/deepseek-summary-provider`).
+13. **MVP 1C:** sidecar supervisor, Windows audio, and realtime transcription in separate PRs.
+14. **MVP 2:** realtime translation and speaker diarization.
+15. **MVP 3:** meeting-window selection, OCR, and screen context.
+16. **MVP 4:** Windows packaging and product hardening.
 
-The authoritative branch mapping, exclusions, and acceptance criteria are in [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md). Docling and DeepSeek are separate PRs. Screenpipe, if adopted, is an optional provider rather than a core dependency.
+The authoritative branch mapping, exclusions, and acceptance criteria are in [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md). Storage, import UI, Docling, and DeepSeek are separate PRs. Screenpipe, if adopted, is an optional provider rather than a core dependency.
 
 ## Pull request policy
 

@@ -12,7 +12,7 @@
 4. 涉及 Windows 桌面行为时，由用户本机实际运行验收，不能只凭 CI 声称完成。
 5. 合并后再从最新 `main` 创建下一个分支，不堆叠未审查的大型 PR。
 
-MVP 1A-2 实现前已使用 `docs/define-meeting-lifecycle` 固定会议状态转换、删除演进策略和 PR 边界。Provider 与安全基础继续拆成 1A-3A、1A-3B-1 和 1A-3B-2 三个顺序 PR，避免把能力契约、Sidecar 会话认证与操作系统凭据存储放入同一审查单元。
+MVP 1A-2 实现前已使用 `docs/define-meeting-lifecycle` 固定会议状态转换、删除演进策略和 PR 边界。Provider 与安全基础随后通过 1A-3A、1A-3B-1 和 1A-3B-2 三个顺序 PR 完成，避免把能力契约、Sidecar 会话认证与操作系统凭据存储放入同一审查单元。MVP 1B 在任何文件实现前先使用纯文档 PR #11 固定不可信输入、私有存储和可恢复删除语义。
 
 ## 2. 统一路线图
 
@@ -24,9 +24,12 @@ MVP 1A-2 实现前已使用 `docs/define-meeting-lifecycle` 固定会议状态�
 | MVP 1A-2-2  | 桌面 UI、模拟转写和完整模拟会议流程            | `feat/meeting-ui-mock` / PR #7                          | 已完成并合并 |
 | MVP 1A-3A   | Provider 契约、Registry 和内存 Mock            | `feat/provider-contracts-mocks` / PR #8                 | 已完成并合并 |
 | MVP 1A-3B-1 | Sidecar 会话认证、Loopback 和基础日志脱敏      | `feat/local-sidecar-auth` / PR #9                       | 已完成并合并 |
-| MVP 1A-3B-2 | SecretStore、Windows Credential Manager        | `feat/provider-security-foundation` / PR #10            | 当前阶段     |
-| MVP 1B-1    | 文档上传、验证、隔离和 Docling 解析            | `feat/document-processing`                              | 待开始       |
-| MVP 1B-2    | DeepSeek 分阶段总结、证据引用和纪要导出        | `feat/deepseek-summary`                                 | 待开始       |
+| MVP 1A-3B-2 | SecretStore、Windows Credential Manager        | `feat/provider-security-foundation` / PR #10            | 已完成并合并 |
+| MVP 1B-0    | 文件导入、生命周期、私有存储和删除语义         | `docs/define-document-import-lifecycle` / PR #11        | 当前阶段     |
+| MVP 1B-1A   | 文档存储核心、安全导入、去重和删除协调         | `feat/document-storage-core`                            | 待开始       |
+| MVP 1B-1B   | Document Commands、原生选择器和导入 UI         | `feat/document-import-ui`                               | 待开始       |
+| MVP 1B-2    | 隔离 Docling Worker 和结构化解析               | `feat/docling-worker`                                   | 待开始       |
+| MVP 1B-3    | DeepSeek SummaryProvider、证据引用和导出       | `feat/deepseek-summary-provider`                        | 待开始       |
 | MVP 1C      | Windows 音频、实时转写、sidecar 生命周期       | 见 §8 的三个小 PR                                       | 待开始       |
 | MVP 2       | 实时翻译与说话人                               | `feat/realtime-translation`、`feat/speaker-diarization` | 待开始       |
 | MVP 3       | 会议窗口、OCR 和屏幕上下文                     | `feat/window-context`、`feat/screen-ocr`                | 待开始       |
@@ -162,31 +165,78 @@ MVP 1A-2 固定拆成以下两个顺序 PR。前一个 PR 合并后，后一个 
 
 验收：空白或超长输入失败关闭；WebView 不能读回凭据；SQLite、浏览器存储、日志、命令行和构建输出中不出现密钥；Windows 本机使用隔离测试 target 验证写入/读取/替换/删除，并通过设置页验证正式 target 的重启持久化和最终清理，但任何位置都不显示值。
 
-## 7. MVP 1B：文档与纪要（两个独立 PR）
+## 7. MVP 1B：文档与纪要（规范门槛 + 四个实现 PR）
 
-### 7.1 MVP 1B-1：文档处理
+### 7.1 MVP 1B-0：定义文档导入与删除生命周期
 
-分支：`feat/document-processing`
+分支：`docs/define-document-import-lifecycle`
 
-- 上传类型、签名/MIME/大小校验和隔离目录
-- artifact/document/document_chunk 持久化
-- 独立 Docling worker、固定依赖、模型下载策略和资源上限
-- 页码/章节来源映射、取消、失败恢复和完整删除
-- 畸形文件、路径逃逸、压缩炸弹和不支持格式测试
+仅更新规格，固定：不可信文件边界、原生选择器来源、格式 allowlist、配额、meeting/document 状态、UUID 私有路径、staging/原子 rename、同会议 SHA-256 去重、会议/文档删除 tombstone、稳定错误码和后续分支。
 
-验收：只使用合成文档；Windows/Python 3.12 本机验证解析、内存/冷启动和删除；本 PR 不接入任何总结模型。
+不得修改 Rust、React、Python、migration、依赖或 lockfile，不得声称文件导入、Docling 或删除协调已实现。
 
-### 7.2 MVP 1B-2：DeepSeek 会议纪要
+验收：七份项目文档没有格式/配额/状态/分支冲突；Prettier、Markdown 链接、全项目检查、敏感信息和禁止文件扫描通过；PR 保持未合并等待用户决定。
 
-分支：`feat/deepseek-summary`
+### 7.2 MVP 1B-1A：文档存储核心
 
-- 在 1B-1 的稳定结构化文档管线上接入 DeepSeek adapter
-- 分段事实提取 → 主题归并 → 决策/行动项/未决问题 → 最终合并
+分支：`feat/document-storage-core`
+
+范围：
+
+- documents migration 与元数据 service
+- 应用私有 `meeting-data` 布局和受控相对路径
+- 安全流式复制、100 MiB/数量/累计配额和 UTF-8 文件名限制
+- allowlist、扩展/签名基础识别、OOXML 基础容器识别和未知类型 fail closed
+- SHA-256、同会议重复文件检测和原子 staging → 正式目录
+- 文档删除协调、会议删除 tombstone、`deleting/delete_failed` 与启动重试基础
+- 只使用合成文件，无正式 UI
+
+验收：覆盖大小变化/复制中超限、类型不一致、双重扩展、路径逃逸、重复内容、事务/rename 失败、删除失败和崩溃恢复；Windows 本机验证私有路径、原子移动、源文件不变和无孤儿文件。本 PR 不引入 Docling。
+
+### 7.3 MVP 1B-1B：文档导入 UI
+
+分支：`feat/document-import-ui`
+
+范围：
+
+- Rust/Tauri Document Commands 和集中式、可 mock 的 `documentApi`
+- MeetingLens 原生文件选择器；WebView 不取得任意文件系统权限或绝对路径
+- 会议详情和会议中页面的文档列表、添加、导入进度、安全错误
+- 删除确认、pending/failed 状态和重试交互
+- Rust 最终执行状态、类型和配额规则；页面不能直接写状态
+
+验收：Windows 本机通过原生选择器导入 allowlist 合成文件，验证重启持久化、状态冻结、重复检测、删除/重试及无路径泄漏。本 PR 不解析文件。
+
+### 7.4 MVP 1B-2：Docling Worker
+
+分支：`feat/docling-worker`
+
+范围：
+
+- 独立 Python Worker 环境、精确 lockfile、许可与模型下载门槛
+- 只接收 Rust 注册的受控文档引用，不接受任意绝对路径
+- 解析任务、取消、超时、独立内存/页数/输出限制和失败恢复
+- `parsing/parsed/parse_failed` 状态及页码/章节/表格来源映射
+- 畸形/恶意文件、OOXML 结构、压缩炸弹和资源耗尽测试
+
+验收：只使用合成文档；Windows/Python 3.12 本机验证解析、内存、冷启动、取消和清理。本 PR 不调用 DeepSeek。
+
+### 7.5 MVP 1B-3：DeepSeek SummaryProvider
+
+分支：`feat/deepseek-summary-provider`
+
+范围：
+
+- Rust 从 SecretStore 在受信任范围取得 key，不把 key 交给 WebView
+- DeepSeek Provider 和显式连接测试
+- 转写与文档内容分段、事实提取、主题归并、决定/行动项/未决问题
 - 时间戳、文档块和 evidence item 引用
 - 用户发送预览、明确同意、裁剪、脱敏、超时、重试、取消
 - Markdown 和 DOCX 纪要导出
 
-验收：默认使用 Mock Provider；真实 API 调用必须由用户单独授权；无 key/无同意/空范围 fail closed；长会议不得一次发送全部数据；Docling 与 DeepSeek 不在同一 PR 引入。
+验收：默认使用 Mock Provider；真实 API 调用必须由用户单独授权；无 key/无同意/空范围 fail closed；长会议不得一次发送全部数据。本 PR 不实现真实音频。
+
+Screenpipe、Whisper、WhisperX、Diart、OCR 和真实音频仍属于后续阶段。
 
 ## 8. MVP 1C：真实音频、转写与 sidecar 生命周期
 
@@ -243,4 +293,4 @@ Screenpipe 只能是可替换的可选 Capture Provider，不得成为核心强�
 
 ## 14. 当前下一步
 
-PR #9 已合并，当前只能执行 `feat/provider-security-foundation`。该 PR 仅实现 MVP 1A-3B-2 的 SecretStore、Windows Credential Manager、受限 Tauri commands 和设置页安全配置；不得调用 DeepSeek、把 key 传给 Python、实现真实 Provider、文档、音频或屏幕能力。PR #10 必须保持未自动合并，等待用户决定后才能开始 MVP 1B。
+PR #10 已 squash merge，MVP 1A 工程与安全基础完成。当前只能执行纯文档分支 `docs/define-document-import-lifecycle`（PR #11），用于冻结文件导入、存储、状态和删除语义；不得实现产品功能。PR #11 由用户决定合并后，才能从最新 `main` 创建 `feat/document-storage-core`，且后续必须依次完成 `feat/document-import-ui`、`feat/docling-worker` 和 `feat/deepseek-summary-provider`。
