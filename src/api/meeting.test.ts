@@ -175,6 +175,27 @@ describe("meetingApi response and error handling", () => {
     ).rejects.toMatchObject({ code: "meeting_invalid_state" });
   });
 
+  it.each([
+    ["meeting_delete_pending", "The meeting deletion is already in progress."],
+    ["meeting_delete_failed", "The meeting could not be deleted safely."],
+  ] as const)(
+    "converts %s without trusting backend text",
+    async (code, message) => {
+      const adapter: InvokeAdapter = {
+        invoke: async () =>
+          Promise.reject({
+            code,
+            message: "ignored private detail",
+            retryable: true,
+          }),
+      };
+
+      await expect(
+        createMeetingApi(adapter).delete(meetingId),
+      ).rejects.toMatchObject({ code, message, retryable: true });
+    },
+  );
+
   it("turns invoke rejection into a safe internal error", async () => {
     const adapter: InvokeAdapter = {
       invoke: async () =>

@@ -62,7 +62,7 @@ erDiagram
 - MVP 1A-2 的合成会议没有异步处理步骤，因此结束后直接进入 `ready`。
 - `processing` 保留给 MVP 1C 及后续真实异步处理，只能由受信任后端在创建相应 job 后进入，WebView 不得自行设置。
 - `failed` 与 `archived` 同样只能通过后续定义的专用 service 操作进入，不属于通用会议更新字段。
-- `deleting` 和 `delete_failed` 只由未来删除协调 service 进入；普通更新、开始、结束、导入和处理接口均不得写入或绕过。
+- `deleting` 和 `delete_failed` 只由删除协调 service 进入；普通更新、开始、结束、导入和处理接口均不得写入或绕过。
 - 重复开始、重复结束、`draft → ready`、`ready → recording` 等非法转换必须原子拒绝，并返回稳定错误码 `meeting_invalid_state`。
 - 时间戳由后端生成；前端传入的开始/结束时间不得作为状态转换依据。
 - 生命周期相关的非法操作统一使用对外错误码 `meeting_invalid_state`；不得再引入含义重复的 `invalid_state_transition`。
@@ -131,7 +131,7 @@ erDiagram
 
 ### `documents`
 
-该表是未来 migration 的规范草案；PR #11 不创建或迁移数据库。
+该表已由 schema migration v2 创建。当前 service 只进入 `importing/staged/import_failed/deleting/delete_failed`；解析状态仅为后续 migration 兼容预留，当前没有业务入口。
 
 | 字段                      | 类型         | 说明                                                                                |
 | ------------------------- | ------------ | ----------------------------------------------------------------------------------- |
@@ -171,6 +171,10 @@ erDiagram
 页面和通用 update 不得直接修改状态。安全导入阶段只实现 `importing/staged/import_failed/deleting/delete_failed`；`parsing/parsed/parse_failed` 由 MVP 1B-2 引入。未知状态 fail closed。
 
 同一会议使用 `(meeting_id, sha256)` 唯一约束识别相同内容。重复时不创建第二条记录或物理副本，返回 `document_already_imported` 和已有 document ID。不同会议首版不做物理去重；文件名不参与重复判断，同名不同内容允许导入，不同名相同内容视为重复。
+
+### `deletion_jobs`
+
+schema v2 使用统一删除任务表协调 meeting/document 的文件清理：`id` 为 UUID，`entity_kind` 只能是 `meeting/document`，并保存受控 `meeting_id`、可选 `document_id`、`pending/failed` 状态、可选 trash 相对路径、0–3 的自动重试计数、安全错误码和 UTC 时间戳。partial unique indexes 保证每个 meeting 或 document 同时最多一个删除任务；实体最终删除时由外键级联移除任务。启动恢复最多自动尝试三次，显式用户重试仍可重新进入 `deleting`。
 
 ### `document_chunks`
 
@@ -291,7 +295,7 @@ erDiagram
 
 - 启用 `PRAGMA foreign_keys = ON`。
 - 使用 WAL 时，`.db-wal` 和 `.db-shm` 必须保持本地且被 Git 忽略。
-- 对 `transcript_segments(meeting_id, start_ms)`、`screen_events(meeting_id, captured_at_ms)`、`documents(meeting_id, status)`、`document_chunks(document_id, ordinal)`、`processing_jobs(status, created_at)` 和 `artifacts(meeting_id, kind)` 建索引。
+- 当前 schema v2 已建立 `idx_documents_meeting_status`、`idx_documents_meeting_sha256`、两个 deletion job partial unique indexes 和 `idx_deletion_jobs_status`。其他计划表在所属 migration 中建立对应索引。
 - `documents(meeting_id, sha256)` 对非 NULL 哈希使用唯一约束，确保同一会议内容去重；跨会议不共享物理副本。
 - 状态字段使用 `CHECK` 约束或迁移层枚举校验。
 - 所有迁移在事务中执行，并在 schema 版本表中记录。
@@ -306,7 +310,8 @@ app-data/
     │   ├── documents/<document-id>.<safe-extension>
     │   └── artifacts/
     ├── staging/<random-import-id>.tmp
-    └── deletion-trash/<deletion-id>/
+    ├── deletion-trash/<deletion-id>/
+    └── .meetinglens-storage.lock
 ```
 
 数据库保存相对于 `app-data` 的路径；本 PR 不移动现有 SQLite。任何文件访问必须先解析、规范化并确认最终路径仍位于应用私有根目录内。目标路径只由 Rust 使用 meeting/document UUID 构造；原始文件名不能参与路径拼接。拒绝 `..`、绝对路径、盘符、UNC、Alternate Data Streams 和任何逃逸结果。
@@ -315,7 +320,7 @@ app-data/
 
 ## 6. 删除与保留
 
-MVP 1A-1 尚无会议所有的 artifact、后台 job 或文件句柄。当前实现可在同一事务内设置 `deleted_at` 后硬删除 meeting；任一步失败则整笔回滚。此时 `deleted_at` 是删除协调边界的预留字段，不要求留下持久 tombstone。
+MVP 1A 的无文件基线曾使用事务内硬删除；schema v2 已由 MVP 1B-1A 替换为下述 tombstone + deletion job 协调流程。
 
 MVP 1A-2-1 的当前无文件删除状态契约固定如下：
 
@@ -350,7 +355,7 @@ MVP 1A-2-1 的当前无文件删除状态契约固定如下：
 
 会议处于 `draft`、`recording` 或 `ready` 时允许增删文档；`processing`、`deleting`、`delete_failed`、`failed`、`archived` 和未知状态下，普通用户文档集合变更 fail closed。`delete_failed` 仅允许删除协调器重试，不允许以单文档操作绕过会议 tombstone。
 
-引入文件的 PR 必须同时迁移删除实现和测试，不得继续把无文件阶段的同事务硬删除语义当作完整删除流程。当前 PR #11 只定义语义，不修改现有 `delete_meeting` Command。
+MVP 1B-1A 已同时迁移删除实现和测试；`delete_meeting` command 继续只调用 Meeting service，不直接操作文件系统。
 
 默认保留策略在实现前由产品决策确认；首个版本不进行静默自动删除。
 
@@ -381,5 +386,6 @@ MVP 1A-2-1 的当前无文件删除状态契约固定如下：
 ## 8. 数据模型版本化
 
 - `schema_migrations(version, applied_at, checksum)` 记录数据库迁移。
+- 当前 SQLite schema 版本为 2：v1 是 meeting 数据核心；v2 以事务方式保留既有 meeting 数据并扩展删除状态，同时创建 `documents`、`deletion_jobs` 和相关索引。重复启动按 checksum 幂等跳过，冲突或中途失败 fail closed。
 - Sidecar API 和 `content_json` 都包含独立 `api_version/schema_version`。
 - 破坏性迁移必须先备份并获得用户批准，不得自动丢弃未知字段。

@@ -16,7 +16,9 @@ export type MeetingStatus =
   | "processing"
   | "ready"
   | "failed"
-  | "archived";
+  | "archived"
+  | "deleting"
+  | "delete_failed";
 
 export interface CreateMeetingRequest {
   title: string;
@@ -55,6 +57,8 @@ export type MeetingErrorCode =
   | "invalid_meeting_id"
   | "meeting_not_found"
   | "meeting_invalid_state"
+  | "meeting_delete_failed"
+  | "meeting_delete_pending"
   | "database_unavailable"
   | "persistence_error"
   | "internal_error";
@@ -64,6 +68,8 @@ const safeMessages: Record<MeetingErrorCode, string> = {
   invalid_meeting_id: "The meeting ID is invalid.",
   meeting_not_found: "The meeting was not found.",
   meeting_invalid_state: "The meeting cannot be changed in its current state.",
+  meeting_delete_failed: "The meeting could not be deleted safely.",
+  meeting_delete_pending: "The meeting deletion is already in progress.",
   database_unavailable: "Meeting storage is unavailable.",
   persistence_error: "Meeting data could not be saved.",
   internal_error: "An internal error occurred.",
@@ -80,6 +86,8 @@ const meetingStatuses = new Set<MeetingStatus>([
   "ready",
   "failed",
   "archived",
+  "deleting",
+  "delete_failed",
 ]);
 
 export class MeetingApiError extends Error {

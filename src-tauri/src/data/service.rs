@@ -4,6 +4,7 @@ use rusqlite::TransactionBehavior;
 use uuid::Uuid;
 
 use super::database::Database;
+use super::document_service::{DocumentService, execute_meeting_delete};
 use super::error::{DataError, DataResult};
 use super::model::{CreateMeeting, Meeting, MeetingStatus, UpdateMeeting};
 use super::paths::StoragePaths;
@@ -19,19 +20,28 @@ pub struct MeetingService {
 
 impl MeetingService {
     pub fn initialize(app_data_root: impl AsRef<Path>) -> DataResult<Self> {
-        Ok(Self {
+        let service = Self {
             database: Database::initialize(app_data_root)?,
-        })
+        };
+        DocumentService::new(service.database.clone())
+            .reconcile()
+            .map_err(|_| DataError::StorageUnavailable)?;
+        Ok(service)
     }
 
     pub fn storage_paths(&self) -> &StoragePaths {
         self.database.paths()
     }
 
+    pub fn documents(&self) -> DocumentService {
+        DocumentService::new(self.database.clone())
+    }
+
     pub fn create(&self, input: CreateMeeting) -> DataResult<Meeting> {
         let title = normalize_required(&input.title, MAX_TITLE_CHARS)?;
         let primary_language = normalize_required(&input.primary_language, MAX_LANGUAGE_CHARS)?;
         let id = Uuid::new_v4().to_string();
+        let _guard = self.database.mutation_guard()?;
         let mut connection = self.database.connect()?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -65,6 +75,7 @@ impl MeetingService {
             return Err(DataError::InvalidInput);
         }
 
+        let _guard = self.database.mutation_guard()?;
         let mut connection = self.database.connect()?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -90,6 +101,7 @@ impl MeetingService {
 
     pub fn start(&self, id: &str) -> DataResult<Meeting> {
         validate_id(id)?;
+        let _guard = self.database.mutation_guard()?;
         let mut connection = self.database.connect()?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -110,6 +122,7 @@ impl MeetingService {
 
     pub fn end(&self, id: &str) -> DataResult<Meeting> {
         validate_id(id)?;
+        let _guard = self.database.mutation_guard()?;
         let mut connection = self.database.connect()?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
@@ -130,16 +143,24 @@ impl MeetingService {
 
     pub fn delete(&self, id: &str) -> DataResult<()> {
         validate_id(id)?;
+        let _guard = self.database.mutation_guard()?;
         let mut connection = self.database.connect()?;
+        let current = repository::get_including_deleted(&connection, id)?;
+        if current.status == MeetingStatus::Deleting {
+            return Err(DataError::MeetingDeletePending);
+        }
+        if !matches!(
+            current.status,
+            MeetingStatus::Draft | MeetingStatus::Ready | MeetingStatus::DeleteFailed
+        ) {
+            return Err(DataError::InvalidState);
+        }
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(DataError::from)?;
-        let current = repository::get(&transaction, id)?;
-        if !matches!(current.status, MeetingStatus::Draft | MeetingStatus::Ready) {
-            return Err(DataError::InvalidState);
-        }
-        repository::delete(&transaction, id)?;
-        transaction.commit().map_err(DataError::from)
+        repository::begin_delete(&transaction, id, &Uuid::new_v4().to_string())?;
+        transaction.commit().map_err(DataError::from)?;
+        execute_meeting_delete(&self.database, id)
     }
 }
 
@@ -326,7 +347,7 @@ mod tests {
     }
 
     #[test]
-    fn delete_rolls_back_if_the_final_delete_fails() {
+    fn failed_delete_is_tombstoned_and_can_be_retried() {
         let directory = TestDirectory::new();
         let service = MeetingService::initialize(&directory.0).expect("service should initialize");
         let meeting = service
@@ -346,24 +367,55 @@ mod tests {
             .expect("failure trigger should be installed");
         drop(connection);
 
-        assert_eq!(service.delete(&meeting.id), Err(DataError::Database));
         assert_eq!(
-            service
-                .get(&meeting.id)
-                .expect("rolled-back meeting should remain")
-                .title,
-            "Synthetic rollback check"
+            service.delete(&meeting.id),
+            Err(DataError::MeetingDeleteFailed)
         );
-
+        assert_eq!(service.get(&meeting.id), Err(DataError::NotFound));
         let connection = service.database.connect().expect("database should connect");
-        let deleted_at: Option<String> = connection
-            .query_row(
-                "SELECT deleted_at FROM meetings WHERE id = ?1",
-                params![meeting.id],
-                |row| row.get(0),
-            )
-            .expect("deleted marker should be readable");
-        assert_eq!(deleted_at, None);
+        let failed = repository::get_including_deleted(&connection, &meeting.id)
+            .expect("tombstoned meeting should remain for recovery");
+        assert_eq!(failed.status, MeetingStatus::DeleteFailed);
+        assert_eq!(
+            failed.deletion_error_code.as_deref(),
+            Some("meeting_delete_failed")
+        );
+        connection
+            .execute_batch("DROP TRIGGER synthetic_delete_failure;")
+            .expect("failure trigger should be removed");
+        drop(connection);
+
+        service
+            .delete(&meeting.id)
+            .expect("explicit retry should finish deletion");
+        assert_eq!(
+            repository::get_including_deleted(
+                &service.database.connect().expect("database should connect"),
+                &meeting.id,
+            ),
+            Err(DataError::NotFound)
+        );
+    }
+
+    #[test]
+    fn repeated_delete_while_tombstone_is_pending_returns_stable_pending() {
+        let directory = TestDirectory::new();
+        let service = MeetingService::initialize(&directory.0).expect("service should initialize");
+        let meeting = service
+            .create(create_input("Synthetic pending deletion"))
+            .expect("meeting should be created");
+        let mut connection = service.database.connect().expect("database should connect");
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .expect("transaction should begin");
+        repository::begin_delete(&transaction, &meeting.id, &Uuid::new_v4().to_string())
+            .expect("deletion should begin");
+        transaction.commit().expect("tombstone should commit");
+
+        assert_eq!(
+            service.delete(&meeting.id),
+            Err(DataError::MeetingDeletePending)
+        );
     }
 
     #[test]

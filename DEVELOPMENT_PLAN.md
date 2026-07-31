@@ -25,8 +25,8 @@ MVP 1A-2 实现前已使用 `docs/define-meeting-lifecycle` 固定会议状态�
 | MVP 1A-3A   | Provider 契约、Registry 和内存 Mock            | `feat/provider-contracts-mocks` / PR #8                 | 已完成并合并 |
 | MVP 1A-3B-1 | Sidecar 会话认证、Loopback 和基础日志脱敏      | `feat/local-sidecar-auth` / PR #9                       | 已完成并合并 |
 | MVP 1A-3B-2 | SecretStore、Windows Credential Manager        | `feat/provider-security-foundation` / PR #10            | 已完成并合并 |
-| MVP 1B-0    | 文件导入、生命周期、私有存储和删除语义         | `docs/define-document-import-lifecycle` / PR #11        | 当前阶段     |
-| MVP 1B-1A   | 文档存储核心、安全导入、去重和删除协调         | `feat/document-storage-core`                            | 待开始       |
+| MVP 1B-0    | 文件导入、生命周期、私有存储和删除语义         | `docs/define-document-import-lifecycle` / PR #11        | 已完成并合并 |
+| MVP 1B-1A   | 文档存储核心、安全导入、去重和删除协调         | `feat/document-storage-core` / PR #12                   | 当前阶段     |
 | MVP 1B-1B   | Document Commands、原生选择器和导入 UI         | `feat/document-import-ui`                               | 待开始       |
 | MVP 1B-2    | 隔离 Docling Worker 和结构化解析               | `feat/docling-worker`                                   | 待开始       |
 | MVP 1B-3    | DeepSeek SummaryProvider、证据引用和导出       | `feat/deepseek-summary-provider`                        | 待开始       |
@@ -193,6 +193,8 @@ MVP 1A-2 固定拆成以下两个顺序 PR。前一个 PR 合并后，后一个 
 
 验收：覆盖大小变化/复制中超限、类型不一致、双重扩展、路径逃逸、重复内容、事务/rename 失败、删除失败和崩溃恢复；Windows 本机验证私有路径、原子移动、源文件不变和无孤儿文件。本 PR 不引入 Docling。
 
+实现基线：schema migration v2 创建 `documents`/`deletion_jobs`；Rust 内部 `DocumentService` 执行流式复制、SHA-256、签名/OOXML 中央目录/UTF-8 检查、固定配额、UUID 私有路径、删除协调和启动对账。应用生命周期文件锁拒绝第二写入实例，进程内 mutex 串行化 mutation；没有 Document command、picker 或 React 文件 API。
+
 ### 7.3 MVP 1B-1B：文档导入 UI
 
 分支：`feat/document-import-ui`
@@ -293,4 +295,4 @@ Screenpipe 只能是可替换的可选 Capture Provider，不得成为核心强�
 
 ## 14. 当前下一步
 
-PR #10 已 squash merge，MVP 1A 工程与安全基础完成。当前只能执行纯文档分支 `docs/define-document-import-lifecycle`（PR #11），用于冻结文件导入、存储、状态和删除语义；不得实现产品功能。PR #11 由用户决定合并后，才能从最新 `main` 创建 `feat/document-storage-core`，且后续必须依次完成 `feat/document-import-ui`、`feat/docling-worker` 和 `feat/deepseek-summary-provider`。
+PR #11 已 squash merge，MVP 1B-0 规范门槛完成。当前仅交付 `feat/document-storage-core`（PR #12）并等待用户决定是否合并；不得开始 UI、Docling 或 DeepSeek。PR #12 合并后才能从最新 `main` 创建 `feat/document-import-ui`，随后再依次完成 `feat/docling-worker` 和 `feat/deepseek-summary-provider`。

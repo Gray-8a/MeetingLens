@@ -6,6 +6,8 @@ use super::error::{DataError, DataResult};
 #[serde(rename_all = "snake_case")]
 pub enum MeetingStatus {
     Archived,
+    DeleteFailed,
+    Deleting,
     Draft,
     Failed,
     Processing,
@@ -17,6 +19,8 @@ impl MeetingStatus {
     pub const fn as_str(self) -> &'static str {
         match self {
             Self::Archived => "archived",
+            Self::DeleteFailed => "delete_failed",
+            Self::Deleting => "deleting",
             Self::Draft => "draft",
             Self::Failed => "failed",
             Self::Processing => "processing",
@@ -28,6 +32,8 @@ impl MeetingStatus {
     pub(crate) fn from_database(value: &str) -> DataResult<Self> {
         match value {
             "archived" => Ok(Self::Archived),
+            "delete_failed" => Ok(Self::DeleteFailed),
+            "deleting" => Ok(Self::Deleting),
             "draft" => Ok(Self::Draft),
             "failed" => Ok(Self::Failed),
             "processing" => Ok(Self::Processing),
@@ -49,6 +55,7 @@ pub struct Meeting {
     pub ended_at: Option<String>,
     pub created_at: String,
     pub updated_at: String,
+    pub deletion_error_code: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]

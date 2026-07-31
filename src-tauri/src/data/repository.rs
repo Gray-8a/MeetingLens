@@ -12,7 +12,8 @@ const MEETING_COLUMNS: &str = "
     started_at,
     ended_at,
     created_at,
-    updated_at
+    updated_at,
+    deletion_error_code
 ";
 
 pub(crate) struct NewMeeting<'a> {
@@ -43,6 +44,15 @@ pub(crate) fn insert(transaction: &Transaction<'_>, meeting: NewMeeting<'_>) -> 
 pub(crate) fn get(connection: &Connection, id: &str) -> DataResult<Meeting> {
     let sql =
         format!("SELECT {MEETING_COLUMNS} FROM meetings WHERE id = ?1 AND deleted_at IS NULL");
+    connection
+        .query_row(&sql, [id], meeting_from_row)
+        .optional()
+        .map_err(DataError::from)?
+        .ok_or(DataError::NotFound)
+}
+
+pub(crate) fn get_including_deleted(connection: &Connection, id: &str) -> DataResult<Meeting> {
+    let sql = format!("SELECT {MEETING_COLUMNS} FROM meetings WHERE id = ?1");
     connection
         .query_row(&sql, [id], meeting_from_row)
         .optional()
@@ -136,26 +146,126 @@ pub(crate) fn end(transaction: &Transaction<'_>, id: &str) -> DataResult<()> {
     Ok(())
 }
 
-pub(crate) fn delete(transaction: &Transaction<'_>, id: &str) -> DataResult<()> {
-    let marked = transaction
+pub(crate) fn begin_delete(
+    transaction: &Transaction<'_>,
+    id: &str,
+    job_id: &str,
+) -> DataResult<()> {
+    let changed = transaction
         .execute(
             "
             UPDATE meetings
-            SET deleted_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+            SET status = 'deleting',
+                deleted_at = COALESCE(deleted_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                deletion_error_code = NULL,
                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-            WHERE id = ?1 AND deleted_at IS NULL
+            WHERE id = ?1 AND status IN ('draft', 'ready', 'delete_failed')
             ",
             [id],
         )
         .map_err(DataError::from)?;
 
-    if marked == 0 {
-        return Err(DataError::NotFound);
+    if changed == 0 {
+        return Err(DataError::InvalidState);
     }
 
     transaction
-        .execute("DELETE FROM meetings WHERE id = ?1", [id])
+        .execute(
+            "
+            INSERT INTO deletion_jobs(
+                id, entity_kind, meeting_id, document_id, status,
+                attempt_count, created_at, updated_at
+            )
+            VALUES (
+                ?2, 'meeting', ?1, NULL, 'pending', 0,
+                strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
+                strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            )
+            ON CONFLICT(meeting_id) WHERE entity_kind = 'meeting'
+            DO UPDATE SET
+                status = 'pending',
+                error_code = NULL,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            ",
+            params![id, job_id],
+        )
         .map_err(DataError::from)?;
+    Ok(())
+}
+
+pub(crate) fn all_ids_including_deleted(connection: &Connection) -> DataResult<Vec<String>> {
+    let mut statement = connection
+        .prepare("SELECT id FROM meetings ORDER BY id")
+        .map_err(DataError::from)?;
+    statement
+        .query_map([], |row| row.get(0))
+        .map_err(DataError::from)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(DataError::from)
+}
+
+pub(crate) fn mark_delete_failed(
+    transaction: &Transaction<'_>,
+    id: &str,
+    error_code: &str,
+) -> DataResult<()> {
+    transaction
+        .execute(
+            "
+            UPDATE meetings
+            SET status = 'delete_failed',
+                deletion_error_code = ?2,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE id = ?1 AND status = 'deleting'
+            ",
+            params![id, error_code],
+        )
+        .map_err(DataError::from)?;
+    transaction
+        .execute(
+            "
+            UPDATE deletion_jobs
+            SET status = 'failed',
+                attempt_count = MIN(attempt_count + 1, 3),
+                error_code = ?2,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE entity_kind = 'meeting' AND meeting_id = ?1
+            ",
+            params![id, error_code],
+        )
+        .map_err(DataError::from)?;
+    Ok(())
+}
+
+pub(crate) fn update_meeting_trash_path(
+    transaction: &Transaction<'_>,
+    id: &str,
+    relative_path: &str,
+) -> DataResult<()> {
+    transaction
+        .execute(
+            "
+            UPDATE deletion_jobs
+            SET trash_relative_path = ?2,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE entity_kind = 'meeting' AND meeting_id = ?1
+            ",
+            params![id, relative_path],
+        )
+        .map_err(DataError::from)?;
+    Ok(())
+}
+
+pub(crate) fn finalize_delete(transaction: &Transaction<'_>, id: &str) -> DataResult<()> {
+    let changed = transaction
+        .execute(
+            "DELETE FROM meetings WHERE id = ?1 AND status = 'deleting'",
+            [id],
+        )
+        .map_err(DataError::from)?;
+    if changed == 0 {
+        return Err(DataError::InvalidState);
+    }
     Ok(())
 }
 
@@ -179,5 +289,6 @@ fn meeting_from_row(row: &Row<'_>) -> rusqlite::Result<Meeting> {
         ended_at: row.get(6)?,
         created_at: row.get(7)?,
         updated_at: row.get(8)?,
+        deletion_error_code: row.get(9)?,
     })
 }

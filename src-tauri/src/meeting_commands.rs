@@ -473,6 +473,8 @@ mod tests {
             (DataError::InvalidId, "invalid_meeting_id"),
             (DataError::NotFound, "meeting_not_found"),
             (DataError::InvalidState, "meeting_invalid_state"),
+            (DataError::MeetingDeleteFailed, "meeting_delete_failed"),
+            (DataError::MeetingDeletePending, "meeting_delete_pending"),
             (DataError::StorageUnavailable, "database_unavailable"),
             (DataError::Database, "persistence_error"),
             (DataError::MigrationConflict, "persistence_error"),
@@ -499,6 +501,10 @@ mod tests {
         assert!(!production.contains("insert "));
         assert!(!production.contains("update meetings"));
         assert!(!production.contains("delete from"));
+        assert!(!production.contains("std::fs"));
+        assert!(!production.contains("remove_file"));
+        assert!(!production.contains("remove_dir"));
+        assert!(!production.contains("fs::rename"));
 
         let app_builder = include_str!("lib.rs");
         for command in MEETING_COMMAND_NAMES {
