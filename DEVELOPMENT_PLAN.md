@@ -27,8 +27,9 @@ MVP 1A-2 实现前已使用 `docs/define-meeting-lifecycle` 固定会议状态�
 | MVP 1A-3B-2 | SecretStore、Windows Credential Manager        | `feat/provider-security-foundation` / PR #10            | 已完成并合并 |
 | MVP 1B-0    | 文件导入、生命周期、私有存储和删除语义         | `docs/define-document-import-lifecycle` / PR #11        | 已完成并合并 |
 | MVP 1B-1A   | 文档存储核心、安全导入、去重和删除协调         | `feat/document-storage-core` / PR #12                   | 已完成并合并 |
-| MVP 1B-1B   | Document Commands、原生选择器和导入 UI         | `feat/document-import-ui`                               | 当前阶段     |
-| MVP 1B-2    | 隔离 Docling Worker 和结构化解析               | `feat/docling-worker`                                   | 待开始       |
+| MVP 1B-1B   | Document Commands、原生选择器和导入 UI         | `feat/document-import-ui` / PR #13                      | 已完成并合并 |
+| MVP 1B-2A   | 隔离 Docling Worker 与受限进程协议             | `feat/docling-worker`                                   | 当前阶段     |
+| MVP 1B-2B   | 解析任务、持久化、状态和产品接线               | `feat/document-parsing-orchestration`                   | 待开始       |
 | MVP 1B-3    | DeepSeek SummaryProvider、证据引用和导出       | `feat/deepseek-summary-provider`                        | 待开始       |
 | MVP 1C      | Windows 音频、实时转写、sidecar 生命周期       | 见 §8 的三个小 PR                                       | 待开始       |
 | MVP 2       | 实时翻译与说话人                               | `feat/realtime-translation`、`feat/speaker-diarization` | 待开始       |
@@ -165,7 +166,7 @@ MVP 1A-2 固定拆成以下两个顺序 PR。前一个 PR 合并后，后一个 
 
 验收：空白或超长输入失败关闭；WebView 不能读回凭据；SQLite、浏览器存储、日志、命令行和构建输出中不出现密钥；Windows 本机使用隔离测试 target 验证写入/读取/替换/删除，并通过设置页验证正式 target 的重启持久化和最终清理，但任何位置都不显示值。
 
-## 7. MVP 1B：文档与纪要（规范门槛 + 四个实现 PR）
+## 7. MVP 1B：文档与纪要（规范门槛 + 五个实现 PR）
 
 ### 7.1 MVP 1B-0：定义文档导入与删除生命周期
 
@@ -211,7 +212,7 @@ MVP 1A-2 固定拆成以下两个顺序 PR。前一个 PR 合并后，后一个 
 
 实现基线：React 只通过集中、可替换的 `documentApi` 调用六个自定义 commands；`select_and_import_documents` 在 Rust 中打开原生多选对话框，并通过有类型的 Tauri channel 回传有界进度。DTO 不包含源路径、存储路径、哈希或内部错误。会议详情提供完整列表、导入、删除和重试，会议中页面提供紧凑状态；最终状态、格式、去重和配额仍由 `DocumentService` 执行。
 
-### 7.4 MVP 1B-2：Docling Worker
+### 7.4 MVP 1B-2A：Docling Worker 基础
 
 分支：`feat/docling-worker`
 
@@ -219,13 +220,28 @@ MVP 1A-2 固定拆成以下两个顺序 PR。前一个 PR 合并后，后一个 
 
 - 独立 Python Worker 环境、精确 lockfile、许可与模型下载门槛
 - 只接收 Rust 注册的受控文档引用，不接受任意绝对路径
-- 解析任务、取消、超时、独立内存/页数/输出限制和失败恢复
-- `parsing/parsed/parse_failed` 状态及页码/章节/表格来源映射
-- 畸形/恶意文件、OOXML 结构、压缩炸弹和资源耗尽测试
+- 单请求进程、取消、超时、Windows Job Object 内存限制和完整子进程树回收
+- 页数、输入、协议和解析产物输出限制；固定相对产物清单及 Rust 二次完整性校验
+- 明确离线、CPU-only、无插件/远程服务/隐式模型下载；模型来源、revision 和本地 manifest 固定
+- 畸形协议、路径逃逸、篡改、崩溃、超时、取消和资源耗尽自动化测试
 
-验收：只使用合成文档；Windows/Python 3.12 本机验证解析、内存、冷启动、取消和清理。本 PR 不调用 DeepSeek。
+验收：只使用合成文档；Windows/Python 3.12 本机验证 TXT/Markdown/CSV/Office/PDF/图片/OCR、内存、冷启动、取消和清理。CI 不下载模型，不能替代本地 PDF/OCR 验收。本 PR 不迁移数据库、不注册 Tauri command、不改 UI 或文档状态、不调用 DeepSeek。
 
-### 7.5 MVP 1B-3：DeepSeek SummaryProvider
+### 7.5 MVP 1B-2B：文档解析编排
+
+分支：`feat/document-parsing-orchestration`
+
+范围：
+
+- schema v3 的解析任务、结构化 chunks/artifacts 和稳定来源映射
+- 由 Rust 根据 document ID 解析受控私有路径，调用 1B-2A Worker 后二次校验并持久化
+- `staged → parsing → parsed/parse_failed` 状态机、取消、重试、启动恢复和删除协调
+- 最小 Tauri commands、集中式前端 API、显式用户触发和安全状态 UI
+- Worker 不直接访问 SQLite，WebView 不获得文件路径、原文产物或进程能力
+
+验收：重启恢复、并发/重复请求、取消、超时、篡改产物、删除竞态和无路径/正文泄漏测试；Windows 本机从已导入合成文档完成解析、持久化、重启和删除闭环。本 PR 不调用 DeepSeek。
+
+### 7.6 MVP 1B-3：DeepSeek SummaryProvider
 
 分支：`feat/deepseek-summary-provider`
 
@@ -297,4 +313,4 @@ Screenpipe 只能是可替换的可选 Capture Provider，不得成为核心强�
 
 ## 14. 当前下一步
 
-PR #12 已 squash merge，MVP 1B-1A 存储核心完成。当前仅交付 `feat/document-import-ui`（MVP 1B-1B）并等待用户决定是否合并；不得开始 Docling 或 DeepSeek。该 PR 合并后才能从最新 `main` 创建 `feat/docling-worker`，随后再交付 `feat/deepseek-summary-provider`。
+PR #13 已 squash merge，MVP 1B-1B 导入 UI 完成。当前仅交付 `feat/docling-worker`（MVP 1B-2A）并等待用户决定是否合并；不得开始数据库/状态/UI 编排或 DeepSeek。该 PR 合并后才能从最新 `main` 创建 `feat/document-parsing-orchestration`；1B-2B 合并后才能开始 `feat/deepseek-summary-provider`。

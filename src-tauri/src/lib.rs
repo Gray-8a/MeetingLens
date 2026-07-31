@@ -1,4 +1,5 @@
 pub mod data;
+pub mod docling_worker;
 mod document_commands;
 mod meeting_commands;
 mod secret_commands;

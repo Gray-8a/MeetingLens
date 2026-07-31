@@ -183,7 +183,15 @@ MVP 1B-1A 提供受信任 Rust 调用栈复用的 `DocumentService`；MVP 1B-1B 
 
 `select_and_import_documents` 使用有类型的 Tauri `Channel` 返回每个文件的安全阶段、已处理字节与总字节；终态 response DTO 只包含 document ID、清理后的显示名、检测类型、大小、状态、UTC 时间和稳定错误码。其他 commands 提供 list/get/delete/retry 和固定导入策略。Command 层不包含 SQL、复制或路径拼接，所有最终状态、类型、配额、去重和删除规则仍由 `DocumentService` 执行。
 
-现有 TypeScript `DocumentParserProvider`/`DocumentReference` 和 `MockDocumentParserProvider` 只是 MVP 1A-3A 的纯内存契约，不是文件导入 API，也不授权 WebView 读取 `artifactId` 对应的文件。Mock 中 10,000,000 bytes、255 characters 和少量 MIME 的合成校验不是生产 allowlist/配额；后续实现必须以 `PRODUCT_SPEC.md` 的 100 MiB、UTF-8 byte 限制和完整 allowlist 为准，并在 MVP 1B-2 将解析输入收窄为 Rust 注册的 document ID/受控引用。
+现有 TypeScript `DocumentParserProvider`/`DocumentReference` 和 `MockDocumentParserProvider` 只是 MVP 1A-3A 的纯内存契约，不是文件导入 API，也不授权 WebView 读取 `artifactId` 对应的文件。Mock 中 10,000,000 bytes、255 characters 和少量 MIME 的合成校验不是生产 allowlist/配额；生产边界以 `PRODUCT_SPEC.md` 的 100 MiB、UTF-8 byte 限制和完整 allowlist 为准。MVP 1B-2A 的 Rust Worker client 只接受受控 staging 根目录内且 size/SHA-256 已注册的私有输入；MVP 1B-2B 再由 document ID 编排该边界。
+
+### 6.6 隔离 Docling Worker 基础
+
+MVP 1B-2A 将文档解析器放在 `workers/docling` 的独立 Python 3.12/uv lock 环境，而不是现有 HTTP Sidecar。它不监听端口、不读取 SQLite、不注册 Tauri command，也不向 WebView 暴露文件或进程能力。Rust 每次请求启动一个 `python -I -m meetinglens_docling_worker` 子进程，清空继承环境后只加入离线运行所需 allowlist，并通过有界 JSON Lines stdin/stdout 完成一次 health、capabilities 或 parse 操作。
+
+Windows 上子进程在写入请求前加入启用 `KILL_ON_JOB_CLOSE` 与内存上限的 Job Object；成功、失败、取消、150 秒超时或协议异常都会回收完整进程树。Worker 校验输入处于批准 staging 根、是普通文件且匹配已注册 size/SHA-256；固定输出 `document.json`、`content.md`、`content.txt` 和 `manifest.json` 到批准输出根，再由 Rust 重新校验相对路径、大小、总量与 SHA-256。任何绝对路径、UNC、ADS、遍历、未知产物或不匹配都 fail closed。
+
+Docling 运行模式固定为 CPU-only、无远程服务、无插件、无隐式模型下载。模型只能通过显式脚本写入仓库外的版本化应用目录，manifest 固定 layout、TableFormer 和 RapidOCR 来源 revision 并列出每个文件的哈希。缺少、版本不兼容或被修改的模型会返回稳定错误；无模型时 TXT/Markdown/CSV/Office 仍可解析，PDF/图片/OCR fail closed。MVP 1B-2B 才负责 schema、解析任务、document 状态、产物持久化和 UI 接线。
 
 ```mermaid
 sequenceDiagram
@@ -208,7 +216,7 @@ sequenceDiagram
 
 同一会议内以 SHA-256 识别完全相同的内容：重复导入不创建第二条记录或物理副本，而是返回已有 document ID 和稳定结果。不同会议首版不做物理去重；哈希不代表恶意软件检测。
 
-### 6.6 文件删除协调
+### 6.7 文件删除协调
 
 MVP 1B-1A 已将同步硬删除演进为持久、幂等、可恢复的协调流程：
 
@@ -236,6 +244,8 @@ MeetingLens/
 ├── sidecar/
 │   ├── meetinglens_sidecar/   # Python 服务
 │   └── tests/                 # Sidecar 自动化测试
+├── workers/docling/           # 独立离线解析 Worker、锁文件与测试
+├── scripts/                   # Worker 环境/模型显式准备脚本
 ├── .github/workflows/         # CI
 ├── PRODUCT_SPEC.md
 ├── ARCHITECTURE.md
@@ -283,7 +293,8 @@ Phase 0 不提前写入 `externalBin`，因为仓库尚无可验证的平台二�
 | MVP 1B-0    | 文档导入、存储、状态、删除和后续 PR 的规范门槛                 | 任何功能代码                                |
 | MVP 1B-1A   | 文档存储核心、安全导入、去重和删除协调                         | 正式 UI、解析、外部 AI                      |
 | MVP 1B-1B   | Document commands、documentApi、原生选择器和导入/删除 UI       | 文档解析                                    |
-| MVP 1B-2    | 隔离 Docling worker、资源限制和来源映射                        | 总结模型                                    |
+| MVP 1B-2A   | 隔离 Docling worker、锁定环境、受限协议和进程/资源边界         | DB、状态、commands、UI、总结模型            |
+| MVP 1B-2B   | 解析任务、状态机、结构化产物持久化和产品接线                   | 总结模型                                    |
 | MVP 1B-3    | DeepSeek SummaryProvider、证据引用和导出                       | 文档解析器变更                              |
 | MVP 1C      | Sidecar supervisor、崩溃/孤儿进程回收、WASAPI 和实时 ASR       | 翻译、说话人、屏幕                          |
 | MVP 2       | 隔离的翻译、Diart 和 WhisperX worker                           | 屏幕采集                                    |
@@ -307,7 +318,7 @@ Phase 0 不提前写入 `externalBin`，因为仓库尚无可验证的平台二�
 | Native dialog   | `tauri-plugin-dialog 2.7.2`             | 已采用并精确锁定；MIT/Apache-2.0。只从 Rust 打开选择器，WebView 未获得 dialog/fs permission。  |
 | Python          | `3.12.x`                                | 项目统一基线；业务 sidecar 后续不得静默退回其他版本。                                          |
 | DeepSeek        | `deepseek-v4-flash` / `deepseek-v4-pro` | 官方当前模型；旧模型名已弃用。启用前复核价格、数据条款和 base URL。                            |
-| Docling         | `2.115.0`                               | 支持 Python 3.12 与 Windows；模型下载、格式覆盖、内存和冷启动需在文档处理分支实测。            |
+| docling-slim    | `2.117.0`                               | Python 3.12/Windows 独立环境；只启用所需格式、本地模型和 RapidOCR ONNX extras。                |
 | Diart           | `0.9.2`                                 | 依赖 `numpy<2`，其参考环境偏向 Python 3.10，并建议旧版 pyannote；不能直接进入主 sidecar。      |
 | WhisperX        | `3.8.6`                                 | Python `>=3.10,<3.14`，但要求 `numpy>=2.1`、`pyannote-audio>=4`；与 Diart 当前依赖冲突。       |
 | faster-whisper  | `1.2.1`                                 | 可用 CPU int8；GPU 路径要求 CUDA 12/cuDNN 9 并受 CTranslate2 兼容性约束。                      |
@@ -322,7 +333,7 @@ Tauri/Rust supervisor
 └── orchestration sidecar (Python 3.12, lightweight API/database coordination)
     ├── realtime-diarization worker (Diart-compatible locked environment)
     ├── post-meeting-alignment worker (WhisperX-compatible locked environment)
-    └── document worker (Docling-compatible locked environment, MVP 1B-2)
+    └── document worker (Docling locked environment, MVP 1B-2A)
 ```
 
 worker 之间只交换受控文件引用和版本化 JSON，不共享 site-packages。每个 worker 必须有独立 lockfile、许可清单、资源上限和合成数据测试。
@@ -331,7 +342,7 @@ worker 之间只交换受控文件引用和版本化 JSON，不共享 site-packa
 
 - Screenpipe 在 MVP 3 也只能作为可替换的 Capture Provider；核心窗口选择、权限、事件模型和删除语义不得依赖它。采用前需用户决定商业授权、采集范围和 Windows 资源预算。
 - WhisperX 的 diarization 模型可能需要 Hugging Face token 和模型条款同意；不得把该 token 写入配置或仓库。
-- Docling 只在 MVP 1B-2 引入，DeepSeek 只在 MVP 1B-3 引入；不得在同一 PR 同时改变存储、解析与总结信任边界。真实调用/下载需要对应阶段授权。
+- Docling 进程基础只在 MVP 1B-2A 引入，解析持久化/产品接线只在 MVP 1B-2B 引入，DeepSeek 只在 MVP 1B-3 引入；不得在同一 PR 同时改变存储、解析编排与总结信任边界。模型准备必须显式执行，外部 AI 调用仍需对应阶段授权。
 
 ### 11.3 Windows 本地验收门槛
 

@@ -76,10 +76,11 @@ Phase 0 已通过 PR #1 合并，并在 Windows 本机实际启动 Tauri 窗口�
 
 ### 5.3 MVP 1B：文档与会议纪要
 
-- **MVP 1B-0（当前）**：通过 PR #11 定义文件导入、文档状态、私有存储、配额、去重和可恢复删除语义，不实现产品功能。
+- **MVP 1B-0**：通过 PR #11 定义文件导入、文档状态、私有存储、配额、去重和可恢复删除语义，不实现产品功能。
 - **MVP 1B-1A**：文档元数据、应用私有存储、安全流式复制、类型/配额校验、SHA-256、去重以及会议/文档删除协调基础。
 - **MVP 1B-1B**：原生文件选择器、Document Tauri Commands、集中式 `documentApi`、文件列表、导入进度和删除/重试交互，不解析文件。
-- **MVP 1B-2**：独立 Docling Worker、解析任务、取消、超时、资源限制、畸形文件测试和结构化解析产物，不调用 DeepSeek。
+- **MVP 1B-2A（当前）**：独立离线 Docling Worker、锁定依赖/模型、受限进程协议、取消、超时、资源限制和结构化临时产物，不接数据库、commands 或 UI。
+- **MVP 1B-2B**：解析任务、文档状态、结构化 chunks/artifacts 持久化、恢复/删除协调和用户触发 UI，不调用 DeepSeek。
 - **MVP 1B-3**：在稳定文档管线上实现 DeepSeek SummaryProvider、分阶段总结、证据引用以及 Markdown/DOCX 导出。
 
 四个实现范围必须使用独立 PR；文件存储、UI、重型解析器和外部 AI 不得合并到同一审查单元。
@@ -88,7 +89,7 @@ Phase 0 已通过 PR #1 合并，并在 Windows 本机实际启动 Tauri 窗口�
 
 第一版只接受用户通过 MeetingLens 原生文件选择器主动选择的本地文件。Teams、Zoom、Google Meet、邮件或聊天中的附件必须先由用户自行下载，再手动导入。首版不自动读取聊天/云盘附件，不监控 Downloads 或桌面，不读取剪贴板文件，不接受任意路径拖放、远程 URL 或网络共享自动导入。
 
-所有导入文件均视为不可信数据。MeetingLens 只复制和保存文件，不启动文件、不调用系统文件关联或 Microsoft Office 自动化、不执行宏/脚本/嵌入对象、不自动访问外部链接，也不在 WebView 中直接渲染未经处理的文件。解析只能由未来的隔离 Docling Worker 执行；当前 Python Sidecar 和 DeepSeek 均不接收文件内容。
+所有导入文件均视为不可信数据。MeetingLens 只复制和保存文件，不启动文件、不调用系统文件关联或 Microsoft Office 自动化、不执行宏/脚本/嵌入对象、不自动访问外部链接，也不在 WebView 中直接渲染未经处理的文件。解析只能由隔离、离线、受 Rust 限制的 Docling Worker 执行；当前 Python HTTP Sidecar 和 DeepSeek 均不接收文件内容。1B-2A 不持久化解析结果，1B-2B 才能接入文档生命周期。
 
 React 只接收 document ID、原始显示名称、安全类型、大小、状态和导入时间。Rust 负责原生选择、最终校验、私有存储和路径边界，源文件绝对路径不得写入 SQLite 或返回前端。
 
