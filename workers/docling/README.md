@@ -1,6 +1,6 @@
 # MeetingLens Docling Worker
 
-This directory contains the isolated, offline document-parser process for MVP 1B-2A. It is not the existing authenticated HTTP Sidecar and it exposes no network listener. Rust starts one Python process per request, sends one bounded JSON Lines request on standard input, reads one bounded response from standard output, and terminates the complete Windows Job Object on success, cancellation, timeout, crash, or resource-limit failure.
+This directory contains the isolated, offline document-parser process delivered in PR #14. It is not the existing authenticated HTTP Sidecar and it exposes no network listener. Rust starts one Python process per request, sends one bounded JSON Lines request on standard input, reads one bounded response from standard output, and terminates the complete Windows Job Object on success, cancellation, timeout, crash, or resource-limit failure.
 
 ## Scope
 
@@ -14,7 +14,7 @@ This PR provides only the parser foundation:
 - explicit local-model provisioning and compatibility verification;
 - Rust process control, timeout, cancellation, memory limit, and output revalidation.
 
-It does **not** add Tauri commands, WebView access, database migrations, parsing jobs, document state transitions, product UI, background supervision, packaging, DeepSeek calls, or remote model access. Those orchestration changes belong to `feat/document-parsing-orchestration` (MVP 1B-2B).
+It does **not** add Tauri commands, WebView access, database migrations, parsing jobs, document state transitions, product UI, background supervision, packaging, DeepSeek calls, or remote model access. The foundation was merged in PR #14 and is retained as an optional reference-document enhancement. Product orchestration is scheduled for PR #20 (`feat/document-parsing-orchestration`); it is not a prerequisite for pasted/TXT/SRT/VTT transcripts or transcript-only summaries.
 
 ## Locked environment
 

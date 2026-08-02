@@ -14,27 +14,33 @@
 
 MVP 1A-2 实现前已使用 `docs/define-meeting-lifecycle` 固定会议状态转换、删除演进策略和 PR 边界。Provider 与安全基础随后通过 1A-3A、1A-3B-1 和 1A-3B-2 三个顺序 PR 完成，避免把能力契约、Sidecar 会话认证与操作系统凭据存储放入同一审查单元。MVP 1B 在任何文件实现前先使用纯文档 PR #11 固定不可信输入、私有存储和可恢复删除语义。
 
+PR #14 合并后，路线以“尽快生成真实、可追溯纪要”为价值中心重新排序：先补一等公民 transcript 数据和导入路径，再交付 transcript-only Summary；Docling 保留为参考文档增强并在 PR #20 接线，屏幕能力排在说话人增强和实时翻译之前。
+
 ## 2. 统一路线图
 
-| 阶段        | 目标                                           | 计划分支/PR                                             | 状态         |
-| ----------- | ---------------------------------------------- | ------------------------------------------------------- | ------------ |
-| Phase 0     | 规格与技术基线                                 | `docs/project-specification` / PR #1                    | 已完成并合并 |
-| MVP 1A-1    | SQLite、迁移、会议 CRUD、删除语义和持久化      | `feat/meeting-data-core` / PR #3                        | 已完成并合并 |
-| MVP 1A-2-1  | Meeting Tauri Command API 与 TypeScript 客户端 | `feat/meeting-command-api` / PR #6                      | 已完成并合并 |
-| MVP 1A-2-2  | 桌面 UI、模拟转写和完整模拟会议流程            | `feat/meeting-ui-mock` / PR #7                          | 已完成并合并 |
-| MVP 1A-3A   | Provider 契约、Registry 和内存 Mock            | `feat/provider-contracts-mocks` / PR #8                 | 已完成并合并 |
-| MVP 1A-3B-1 | Sidecar 会话认证、Loopback 和基础日志脱敏      | `feat/local-sidecar-auth` / PR #9                       | 已完成并合并 |
-| MVP 1A-3B-2 | SecretStore、Windows Credential Manager        | `feat/provider-security-foundation` / PR #10            | 已完成并合并 |
-| MVP 1B-0    | 文件导入、生命周期、私有存储和删除语义         | `docs/define-document-import-lifecycle` / PR #11        | 已完成并合并 |
-| MVP 1B-1A   | 文档存储核心、安全导入、去重和删除协调         | `feat/document-storage-core` / PR #12                   | 已完成并合并 |
-| MVP 1B-1B   | Document Commands、原生选择器和导入 UI         | `feat/document-import-ui` / PR #13                      | 已完成并合并 |
-| MVP 1B-2A   | 隔离 Docling Worker 与受限进程协议             | `feat/docling-worker`                                   | 当前阶段     |
-| MVP 1B-2B   | 解析任务、持久化、状态和产品接线               | `feat/document-parsing-orchestration`                   | 待开始       |
-| MVP 1B-3    | DeepSeek SummaryProvider、证据引用和导出       | `feat/deepseek-summary-provider`                        | 待开始       |
-| MVP 1C      | Windows 音频、实时转写、sidecar 生命周期       | 见 §8 的三个小 PR                                       | 待开始       |
-| MVP 2       | 实时翻译与说话人                               | `feat/realtime-translation`、`feat/speaker-diarization` | 待开始       |
-| MVP 3       | 会议窗口、OCR 和屏幕上下文                     | `feat/window-context`、`feat/screen-ocr`                | 待开始       |
-| MVP 4       | 安装包与产品化                                 | `chore/windows-packaging`、`feat/product-hardening`     | 待开始       |
+| 阶段/PR      | 目标                                                 | 计划分支                                         | 状态         |
+| ------------ | ---------------------------------------------------- | ------------------------------------------------ | ------------ |
+| Phase 0      | 规格与技术基线                                       | `docs/project-specification` / PR #1             | 已完成并合并 |
+| MVP 1A-1     | SQLite、迁移、会议 CRUD、删除语义和持久化            | `feat/meeting-data-core` / PR #3                 | 已完成并合并 |
+| MVP 1A-2-1   | Meeting Tauri Command API 与 TypeScript 客户端       | `feat/meeting-command-api` / PR #6               | 已完成并合并 |
+| MVP 1A-2-2   | 桌面 UI、模拟转写和完整模拟会议流程                  | `feat/meeting-ui-mock` / PR #7                   | 已完成并合并 |
+| MVP 1A-3A    | Provider 契约、Registry 和内存 Mock                  | `feat/provider-contracts-mocks` / PR #8          | 已完成并合并 |
+| MVP 1A-3B-1  | Sidecar 会话认证、Loopback 和基础日志脱敏            | `feat/local-sidecar-auth` / PR #9                | 已完成并合并 |
+| MVP 1A-3B-2  | SecretStore、Windows Credential Manager              | `feat/provider-security-foundation` / PR #10     | 已完成并合并 |
+| 文档基线     | 文件导入生命周期与删除语义                           | `docs/define-document-import-lifecycle` / PR #11 | 已完成并合并 |
+| 文档存储     | 安全导入、去重、删除协调与 UI                        | PR #12–#13                                       | 已完成并合并 |
+| Docling 基础 | 隔离 Worker、离线模型与受限进程协议                  | `feat/docling-worker` / PR #14                   | 已完成并合并 |
+| PR #15       | 转录、快速纪要、输入快照和新路线规格                 | `docs/transcript-and-summary-spec`               | 当前阶段     |
+| PR #16       | schema v3、转录来源/片段、TXT/SRT/VTT/粘贴解析       | `feat/transcript-data-core`                      | 待开始       |
+| PR #17       | 转录 Commands/API、导入/粘贴/预览和首页快速入口      | `feat/transcript-import-ui`                      | 待开始       |
+| PR #18       | transcript-only DeepSeek 纪要、模板、证据与 Markdown | `feat/deepseek-summary-mvp`                      | 待开始       |
+| PR #19       | 用户编辑、revision/stale、章节重生成和 DOCX          | `feat/summary-editing-export`                    | 待开始       |
+| PR #20       | Docling 解析编排、产物提交、取消/重试/恢复           | `feat/document-parsing-orchestration`            | 已排期       |
+| PR #21       | 文档 chunks/页码/章节/表格证据接入 Summary           | `feat/document-evidence-index`                   | 已排期       |
+| 后续         | Sidecar supervisor、真实音频、实时 ASR               | 见 §8                                            | 待开始       |
+| 后续         | 屏幕窗口与 screen events                             | 见 §9                                            | 待开始       |
+| 后续         | 说话人增强与实时翻译                                 | 见 §10                                           | 待开始       |
+| 产品化       | Windows 安装包与加固                                 | 见 §11                                           | 待开始       |
 
 除上表和各阶段明确列出的子分支外，不再使用表外的历史任务名或笼统阶段称呼。
 
@@ -166,9 +172,9 @@ MVP 1A-2 固定拆成以下两个顺序 PR。前一个 PR 合并后，后一个 
 
 验收：空白或超长输入失败关闭；WebView 不能读回凭据；SQLite、浏览器存储、日志、命令行和构建输出中不出现密钥；Windows 本机使用隔离测试 target 验证写入/读取/替换/删除，并通过设置页验证正式 target 的重启持久化和最终清理，但任何位置都不显示值。
 
-## 7. MVP 1B：文档与纪要（规范门槛 + 五个实现 PR）
+## 7. 转录优先的纪要主路径与文档增强
 
-### 7.1 MVP 1B-0：定义文档导入与删除生命周期
+### 7.1 已完成：定义文档导入与删除生命周期
 
 分支：`docs/define-document-import-lifecycle`
 
@@ -178,7 +184,7 @@ MVP 1A-2 固定拆成以下两个顺序 PR。前一个 PR 合并后，后一个 
 
 验收：七份项目文档没有格式/配额/状态/分支冲突；Prettier、Markdown 链接、全项目检查、敏感信息和禁止文件扫描通过；PR 保持未合并等待用户决定。
 
-### 7.2 MVP 1B-1A：文档存储核心
+### 7.2 已完成：文档存储核心
 
 分支：`feat/document-storage-core`
 
@@ -196,7 +202,7 @@ MVP 1A-2 固定拆成以下两个顺序 PR。前一个 PR 合并后，后一个 
 
 完成基线：schema migration v2 创建 `documents`/`deletion_jobs`；Rust 内部 `DocumentService` 执行流式复制、SHA-256、签名/OOXML 中央目录/UTF-8 检查、固定配额、UUID 私有路径、删除协调和启动对账。应用生命周期文件锁拒绝第二写入实例，进程内 mutex 串行化 mutation；PR #12 没有 Document command、picker 或 React 文件 API。
 
-### 7.3 MVP 1B-1B：文档导入 UI
+### 7.3 已完成：文档导入 UI
 
 分支：`feat/document-import-ui`
 
@@ -212,7 +218,7 @@ MVP 1A-2 固定拆成以下两个顺序 PR。前一个 PR 合并后，后一个 
 
 实现基线：React 只通过集中、可替换的 `documentApi` 调用六个自定义 commands；`select_and_import_documents` 在 Rust 中打开原生多选对话框，并通过有类型的 Tauri channel 回传有界进度。DTO 不包含源路径、存储路径、哈希或内部错误。会议详情提供完整列表、导入、删除和重试，会议中页面提供紧凑状态；最终状态、格式、去重和配额仍由 `DocumentService` 执行。
 
-### 7.4 MVP 1B-2A：Docling Worker 基础
+### 7.4 已完成：Docling Worker 基础
 
 分支：`feat/docling-worker`
 
@@ -227,62 +233,105 @@ MVP 1A-2 固定拆成以下两个顺序 PR。前一个 PR 合并后，后一个 
 
 验收：只使用合成文档；Windows/Python 3.12 本机验证 TXT/Markdown/CSV/Office/PDF/图片/OCR、内存、冷启动、取消和清理。CI 不下载模型，不能替代本地 PDF/OCR 验收。本 PR 不迁移数据库、不注册 Tauri command、不改 UI 或文档状态、不调用 DeepSeek。
 
-### 7.5 MVP 1B-2B：文档解析编排
+完成证据：PR #14 已合并。Worker 具备独立 Python 3.12/uv lock、显式离线模型、JSONL stdio、Windows Job Object、4 GiB 限制、超时/取消/崩溃回收及 TXT/Markdown/CSV/Office/PDF/图片/OCR 本机 Smoke；尚未接数据库、Provider、Commands 或 UI。Docling 作为后续参考文档增强保留，不是 transcript-only 纪要的前置依赖。
+
+### 7.5 PR #15：转录与纪要规格对齐
+
+分支：`docs/transcript-and-summary-spec`
+
+纯文档范围：冻结产品核心价值、`transcript_sources`/`transcript_segments`、相对 offset、输入/删除/修正语义、Summary 输入快照、evidence 规则、三个模板、首页快速入口和 PR #16–#21 顺序。不得修改代码、migration、Provider 契约实现、依赖或 lockfile。
+
+验收：PR #1–#14 状态正确；七份核心文档与 Worker README 不再保留旧路线、阶段、数据模型、时间语义或分支顺序冲突；格式、链接、全项目和敏感信息检查通过。
+
+### 7.6 PR #16：Transcript Data Core
+
+分支：`feat/transcript-data-core`
+
+范围：
+
+- schema v3：`transcript_sources`、`transcript_segments` 和必要索引
+- 粘贴 UTF-8、TXT、SRT、VTT 的轻量同步 parser，不调用 Docling/网络
+- `pasted_text/imported_txt/imported_srt/imported_vtt`；`live_asr/platform_export` 仅保留
+- 2 MiB 粘贴、10 MiB 文件、20,000 segments/source、64 KiB/segment 和严格控制字符限制
+- 同会议来源 SHA-256 去重、revision、source/segment 删除语义
+- 相对 `start_offset_ms/end_offset_ms` 与可空 source `base_started_at`
+
+本 PR 不做 UI、Commands、DeepSeek、平台专用 adapters 或原始转录文件长期存储。实现时同步调整 Provider/API 的 `TranscriptionSegment` 时间字段，不能保留 ISO 与 offset 两套真相。
+
+### 7.7 PR #17：Transcript Import UI
+
+分支：`feat/transcript-import-ui`
+
+范围：
+
+- Transcript Tauri Commands、集中式 `transcriptApi` 和无路径 DTO
+- Rust 原生 TXT/SRT/VTT 选择器、粘贴面板、解析预览、来源列表和基础 speaker 修正
+- 首页入口：开始实时会议、粘贴会议记录、导入会议转录、导入会议材料、历史会议
+- 会议日期默认用户本地今天且可编辑；高级“新建会议”向导继续保留
+- 自动创建 meeting 或选择已有 meeting；用户不必手动操作内部状态机
+
+本 PR 不调用 DeepSeek，不实现平台专用导出、视频/音频文件转录或 Docling 接线。
+
+### 7.8 PR #18：DeepSeek Summary MVP
+
+分支：`feat/deepseek-summary-mvp`
+
+范围：
+
+- transcript-only SummaryProvider；Rust 从 SecretStore 取得 key，React/Docling/日志不得读取
+- 用户选择来源后创建不可变 run/revision 快照：source/segment IDs、segment revision/order、speaker、offset、language、模板、输出语言和创建时间
+- 外发前显示来源、segment 数、时间范围、speaker、模板、语言、文档包含状态和发送内容类型，并要求本次确认
+- 三个模板：详实会议纪要、简洁会议总结、行动项与决定清单；中文、英文、双语
+- 分段事实提取、主题归并、decision/action/open question/conflict/risk 和 evidence ID 验证
+- Markdown 与一键复制；不接 Docling、不做 DOCX、不做章节重生成
+
+生成资格取决于至少一个可冻结的用户确认输入。允许 `draft/recording/ready + transcript`，禁止 `deleting/delete_failed`、空输入和无法安全冻结的输入；不得新增 summary 型 meeting 状态。
+
+行为规则：不得发明参会人、负责人、截止日期或共识；缺负责人标“未分配”，缺截止日期为空；decision 区分 `proposed/confirmed/superseded`，行动项区分明确分配/建议/未确认；冲突和“无法确定”必须保留。每项关键决定、行动项和争议必须带当前快照中的有效 evidence，未知 ID 不接受。
+
+### 7.9 PR #19：Summary Editing and Export
+
+分支：`feat/summary-editing-export`
+
+范围：用户编辑保存、summary revision、输入变化 stale 提示、speaker 修正后显式重新生成、章节级重生成、DOCX 和完整历史。重新生成不能覆盖用户编辑章节，后台不得静默重生成；PDF 留到产品化阶段。
+
+### 7.10 PR #20：Document Parsing Orchestration
 
 分支：`feat/document-parsing-orchestration`
 
-范围：
+范围：基于合并时最新 schema 顺序递增 migration（不得再称 v3）、解析任务、Docling Worker 接入、artifact 原子提交、`staged → parsing → parsed/parse_failed`、取消/重试/恢复和安全 UI。本 PR 不调用 DeepSeek，也不重新实现 transcript pipeline。
 
-- schema v3 的解析任务、结构化 chunks/artifacts 和稳定来源映射
-- 由 Rust 根据 document ID 解析受控私有路径，调用 1B-2A Worker 后二次校验并持久化
-- `staged → parsing → parsed/parse_failed` 状态机、取消、重试、启动恢复和删除协调
-- 最小 Tauri commands、集中式前端 API、显式用户触发和安全状态 UI
-- Worker 不直接访问 SQLite，WebView 不获得文件路径、原文产物或进程能力
+### 7.11 PR #21：Document Evidence Index
 
-验收：重启恢复、并发/重复请求、取消、超时、篡改产物、删除竞态和无路径/正文泄漏测试；Windows 本机从已导入合成文档完成解析、持久化、重启和删除闭环。本 PR 不调用 DeepSeek。
+分支：`feat/document-evidence-index`
 
-### 7.6 MVP 1B-3：DeepSeek SummaryProvider
+范围：`document_chunks`、页码/章节/表格定位和 document evidence 接入现有 Summary pipeline。文档提供背景和材料，不能在没有 transcript 或人工确认时自动证明会议决定。本 PR 不创建第二套 Summary 或 transcript 体系。
 
-分支：`feat/deepseek-summary-provider`
-
-范围：
-
-- Rust 从 SecretStore 在受信任范围取得 key，不把 key 交给 WebView
-- DeepSeek Provider 和显式连接测试
-- 转写与文档内容分段、事实提取、主题归并、决定/行动项/未决问题
-- 时间戳、文档块和 evidence item 引用
-- 用户发送预览、明确同意、裁剪、脱敏、超时、重试、取消
-- Markdown 和 DOCX 纪要导出
-
-验收：默认使用 Mock Provider；真实 API 调用必须由用户单独授权；无 key/无同意/空范围 fail closed；长会议不得一次发送全部数据。本 PR 不实现真实音频。
-
-Screenpipe、Whisper、WhisperX、Diart、OCR 和真实音频仍属于后续阶段。
-
-## 8. MVP 1C：真实音频、转写与 sidecar 生命周期
+## 8. 后续：Sidecar 生命周期、真实音频与实时 ASR
 
 该阶段风险较高，固定拆为三个顺序 PR：
 
 1. `feat/sidecar-supervisor`：sidecar 打包、随机端口接线、健康恢复、崩溃重启、退出清理、孤儿进程回收和生命周期安全日志。
 2. `feat/audio-capture`：WASAPI 系统音频与麦克风、设备枚举、明确开始/停止、持续录音指示、分块文件和异常恢复。
-3. `feat/realtime-transcription`：实时 ASR、片段顺序/去重、时间戳持久化、CPU 回退、取消与会后校正入口。
+3. `feat/realtime-transcription`：实时 ASR 写入既有 `transcript_sources/transcript_segments`、片段顺序/去重、相对 offset、CPU 回退、取消与会后校正入口。
 
 验收：每个 PR 使用合成音频自动测试，并在 Windows 本机验证真实设备/权限/窗口/进程行为；应用退出或崩溃后不得留下 sidecar 或文件句柄；日志不得包含音频、转录正文、设备 ID 或绝对用户路径。
 
-## 9. MVP 2：实时翻译与说话人
-
-- `feat/realtime-translation`：流式片段协议、`deepseek-v4-flash` 中英翻译、原文/译文对照、延迟和失败处理。
-- `feat/speaker-diarization`：匿名实时 diarization、可选短 voice sample、人工命名/纠错，以及隔离的 WhisperX 会后校正 worker。
-
-Diart 与 WhisperX 必须保持独立环境、进程和 lockfile；不得默认做跨会议真实身份识别。
-
-## 10. MVP 3：会议窗口、OCR 与屏幕上下文
+## 9. 后续：会议窗口、OCR 与屏幕上下文
 
 - `feat/window-context`：用户显式选择目标窗口、窗口身份验证、暂停/撤销和 accessibility tree 提取。
 - `feat/screen-ocr`：本地 OCR 回退、敏感内容遮蔽、关键事件/evidence 生成和截图短期缓存删除。
 
 Screenpipe 只能是可替换的可选 Capture Provider，不得成为核心强依赖。采用前必须获得用户批准，并复审商业许可、默认采集范围、本地 API 暴露和 Windows 资源占用。
 
-## 11. MVP 4：安装包与产品化
+## 10. 后续：说话人增强与实时翻译
+
+- `feat/speaker-diarization`：匿名实时 diarization、可选短 voice sample、人工命名/纠错，以及隔离的 WhisperX 会后校正 worker。
+- `feat/realtime-translation`：流式片段协议、`deepseek-v4-flash` 中英翻译、原文/译文对照、延迟和失败处理。
+
+Diart 与 WhisperX 必须保持独立环境、进程和 lockfile；不得默认做跨会议真实身份识别。平台专用 transcript adapters 只有取得脱敏测试样例后安排；视频导入、音频文件离线转录和跨会议声纹复用继续作为未来增强。
+
+## 11. 产品化：安装包与加固
 
 - `chore/windows-packaging`：Windows 安装包、签名、SBOM、升级/回滚、安装与卸载冒烟测试。
 - `feat/product-hardening`：托盘、诊断/隐私设置、长期稳定性、性能、崩溃恢复和删除完整性。
@@ -313,4 +362,4 @@ Screenpipe 只能是可替换的可选 Capture Provider，不得成为核心强�
 
 ## 14. 当前下一步
 
-PR #13 已 squash merge，MVP 1B-1B 导入 UI 完成。当前仅交付 `feat/docling-worker`（MVP 1B-2A）并等待用户决定是否合并；不得开始数据库/状态/UI 编排或 DeepSeek。该 PR 合并后才能从最新 `main` 创建 `feat/document-parsing-orchestration`；1B-2B 合并后才能开始 `feat/deepseek-summary-provider`。
+PR #1–#14 已合并，Docling Worker Foundation 已完成但未接入产品。当前只交付纯文档分支 `docs/transcript-and-summary-spec`（PR #15），冻结转录、纪要和新路线；不得开始产品代码。PR #15 合并后才能从最新 `main` 创建 `feat/transcript-data-core`，随后严格按 PR #16–#21 顺序推进。原 `feat/document-parsing-orchestration` 顺延到 PR #20，不能作为 transcript-only 纪要的前置任务。

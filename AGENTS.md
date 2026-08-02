@@ -78,6 +78,15 @@
 5. 所有 required checks 通过前不得把工作报告为完成。
 6. 不得启用 auto-merge，不得自动合并到 `main`；合并决定由用户作出。
 
+## 产品价值与近期顺序
+
+- MeetingLens 的第一核心价值是让用户以最少步骤把已有会议转录、粘贴文本、实时转写和相关材料转化为详实、可编辑、可追溯的会议纪要。
+- 转录是纪要的第一类来源；参考文档是可选增强。`transcripts` 与 `documents` 是不同语义和信任边界，转录导入不得强制经过 DocumentService 或 Docling。
+- Docling Worker Foundation 已完成并保留，但数据库/UI 编排顺延到 `feat/document-parsing-orchestration`；不得把它恢复为 transcript-only 纪要的前置依赖。
+- 当前固定顺序为：`docs/transcript-and-summary-spec` → `feat/transcript-data-core` → `feat/transcript-import-ui` → `feat/deepseek-summary-mvp` → `feat/summary-editing-export` → `feat/document-parsing-orchestration` → `feat/document-evidence-index`。
+- 第一版转录只承诺粘贴 UTF-8 文本以及 TXT/SRT/VTT。平台专用 adapter 必须取得脱敏真实样例后单独增加；视频/音频文件转录不属于近期范围。
+- 纪要资格取决于是否存在可冻结的用户确认输入，不得以 `meeting.status == ready` 作为唯一门槛。纪要运行使用不可变输入快照，重新生成创建 revision，不得静默覆盖用户编辑。
+
 ## 文档导入与删除边界
 
 - 用户导入文件一律视为不可信数据；“保存在本地”不代表文件可信或可以执行。
@@ -85,7 +94,7 @@
 - 文件选择、类型/配额校验、私有目录路径构造、流式复制、哈希和删除协调必须由 Rust 信任边界执行；Python Sidecar 和 DeepSeek 不得绕过该边界取得原始文件。
 - 原始文件名只可作为显示元数据，不能参与目录拼接；应用内部路径必须使用受控 meeting/document UUID 并验证仍位于应用私有根目录。
 - 首次引入会议文件的实现 PR 必须同步实现可恢复、幂等的会议和文档删除协调；不得继续沿用无附件阶段的直接硬删除。
-- 文档功能必须按 `DEVELOPMENT_PLAN.md` 依次拆分为存储核心、导入 UI、隔离 Docling Worker 和 DeepSeek SummaryProvider，不得在一个 PR 中合并多个信任边界。
+- 文档功能必须按 `DEVELOPMENT_PLAN.md` 拆分为已完成的存储核心、导入 UI、隔离 Docling Worker，以及后续独立的解析编排和证据索引；转录数据、转录 UI、摘要 Provider 与文档增强不得在一个 PR 中合并多个信任边界。
 
 ## 必须先获得批准的操作
 
