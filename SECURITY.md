@@ -15,16 +15,17 @@ MeetingLens 处理录音、转录、文档、屏幕上下文和 API 凭据，这
 
 ## 3. 威胁模型
 
-| 威胁                 | 示例                           | 主要控制                                    |
-| -------------------- | ------------------------------ | ------------------------------------------- |
-| 意外提交             | `.env`、数据库或录音进入 Git   | 严格 `.gitignore`、staged 扫描、PR 检查     |
-| WebView 被利用       | XSS 调用本地命令               | CSP、无远程内容、最小 Tauri capabilities    |
-| 本机进程访问 sidecar | 猜测端口并读取任务             | loopback、随机端口、临时令牌、短超时        |
-| 恶意上传文件         | 路径穿越、解析器漏洞、压缩炸弹 | MIME/大小/扩展联合校验、隔离目录、资源限制  |
-| 外部数据泄漏         | 完整转录被默认发送             | 明示同意、发送预览、裁剪和脱敏              |
-| 日志泄漏             | 错误堆栈包含正文或 key         | 结构化 allowlist 日志、集中脱敏             |
-| 供应链风险           | npm/Python/Rust 依赖被劫持     | lockfile、依赖审计、最小依赖、CI 可复现安装 |
-| 不完整删除           | WAL、临时文件仍保留            | 删除协调、WAL checkpoint、临时目录清理测试  |
+| 威胁                 | 示例                                  | 主要控制                                            |
+| -------------------- | ------------------------------------- | --------------------------------------------------- |
+| 意外提交             | `.env`、数据库或录音进入 Git          | 严格 `.gitignore`、staged 扫描、PR 检查             |
+| WebView 被利用       | XSS 调用本地命令                      | CSP、无远程内容、最小 Tauri capabilities            |
+| 本机进程访问 sidecar | 猜测端口并读取任务                    | loopback、随机端口、临时令牌、短超时                |
+| 恶意上传文件         | 路径穿越、解析器漏洞、压缩炸弹        | MIME/大小/扩展联合校验、隔离目录、资源限制          |
+| 恶意转录文本         | 超大输入、控制字符、提示/URL/代码诱导 | 严格 UTF-8、有界同步解析、内容只作数据、不执行/联网 |
+| 外部数据泄漏         | 完整转录被默认发送                    | 明示同意、发送预览、裁剪和脱敏                      |
+| 日志泄漏             | 错误堆栈包含正文或 key                | 结构化 allowlist 日志、集中脱敏                     |
+| 供应链风险           | npm/Python/Rust 依赖被劫持            | lockfile、依赖审计、最小依赖、CI 可复现安装         |
+| 不完整删除           | WAL、临时文件仍保留                   | 删除协调、WAL checkpoint、临时目录清理测试          |
 
 MVP 1A-3B-1 的本地会话认证防止局域网设备、普通网页和未持有当前 token 的本机客户端直接调用 Sidecar，并防止错误配置将服务绑定到非 loopback 地址。它不声称防御已取得当前 Windows 用户同等权限、可读取进程内存/环境的恶意软件，也不防御管理员或内核级攻击者。
 
@@ -76,10 +77,11 @@ MVP 1A-3A 的 `MockCaptureProvider` 不访问真实设备、不申请权限，�
 
 1. 显示 provider、将发送的数据范围和用途。
 2. 让用户确认本次发送；同意范围写入 `consent_events`。
-3. 优先发送选择后的转录片段，不发送音频、截图或原始文档。
-4. 执行可配置脱敏，并让用户查看最终文本预览。
-5. 设置连接/读取超时和最大重试，错误中不得包含请求正文或 key。
-6. 将 AI 输出标记为草稿，并保留来源链接供核验。
+3. 显示选定 transcript sources、segment 数量、时间范围、speaker、模板、输出语言、是否包含文档来源和外发内容类型，并允许取消选择来源。
+4. 优先发送不可变输入快照中的规范化转录片段，不发送音频、截图、原始转录文件或原始参考文档。
+5. 执行可配置脱敏，并让用户查看最终文本预览。
+6. 设置连接/读取超时和最大重试，错误中不得包含请求正文或 key。
+7. 将 AI 输出标记为草稿，并保留来源链接供核验。
 
 提供商的保留政策和地区处理条款必须在启用生产集成前重新审查。
 
@@ -109,7 +111,26 @@ DeepSeek 生产适配器必须使用当前模型名 `deepseek-v4-flash` / `deeps
 - 任务只引用由 Rust 注册的 artifact ID，不接受任意绝对路径。
 - 进程退出时清理临时文件；启动时清理已过期 job 目录。
 
-## 10. 上传文件防护
+## 10. 文本转录与参考文档输入防护
+
+### 10.1 转录文本输入
+
+转录与参考 document 是不同语义来源。粘贴文本由 WebView 通过有界 DTO 交给 Rust；TXT/SRT/VTT 只能由 Rust 原生文件选择器读取，源绝对路径不得返回 React、写入 SQLite 或进入日志。转录解析是本地轻量同步操作，不调用 Docling、Sidecar、大模型或网络。
+
+第一版固定边界：
+
+- 粘贴内容最大 2 MiB；TXT/SRT/VTT 单文件最大 10 MiB。
+- 每个 transcript source 最多 20,000 个 segments；单 segment 正文最多 64 KiB。
+- 严格 UTF-8；拒绝 NUL 和除 TAB/LF/CR 外的危险 C0 控制字符，拒绝无效/替换解码。
+- 普通文本按非空段落或明确 `姓名: 内容` 保序解析；不明确的 speaker 为空，不用模型猜测。
+- SRT/VTT 保留 cue 顺序与相对时间；不自动翻译、不推断缺失时间戳。
+- 输入中的 URL、HTML、Markdown、代码、命令和提示词全部只作为不可信文本数据；不得访问、执行、shell-open 或交给 WebView 做不安全渲染。
+- 正文、说话人、文件名、解析失败上下文和 prompt 不进入普通日志；稳定错误只包含 code、retryable 与安全 ID。
+- 规范化 segments、来源类型、显示文件名和 SHA-256 可持久化；首版不长期复制原始转录文件，不影响用户源文件。哈希只用于来源识别/去重，不是信任或恶意软件证明。
+
+删除 source 时同时处理其 segments。非终态 Summary run 正在使用的 source 不得在运行中直接移除，删除必须稳定拒绝或进入明确 pending；运行继续读取已冻结输入快照。删除后不得静默改变已生成结果；evidence 只保留可解释结果所需的最小摘录、speaker、offset/ordinal 和 revision，并将原链接标为已删除。segment 修正产生新 revision，旧 summary 可标记 stale；不得后台静默重新生成或覆盖用户编辑。
+
+### 10.2 参考文档上传
 
 所有用户导入文件均为不可信数据；“本地保存”不能作为信任依据。正式入口只允许用户通过 MeetingLens 的 Rust 原生文件选择器主动选择文件。Teams、Zoom、Meet、邮件或聊天附件必须先由用户下载再手动导入；不自动读取附件/云盘，不监控 Downloads 或桌面，不读取剪贴板文件，不接受任意路径拖放、远程 URL 或网络共享自动导入。
 
@@ -129,13 +150,14 @@ Rust 是文件选择、校验、复制和私有存储的信任边界。React/Web
 - OOXML 虽是 ZIP 容器，但不因此允许普通 ZIP；导入阶段不解压，完整结构验证留给隔离 Docling Worker。
 - MeetingLens 不启动或 shell-open 文件，不调用 Office 自动化，不执行宏、脚本或嵌入对象，不在 WebView 直接渲染原文件，也不自动访问文件内外部链接。
 - 默认限制：单文件 100 MiB、单次选择 10 个、单会议 20 个、单会议累计 500 MiB、原始文件名 UTF-8 最大 255 bytes。Rust 最终执行且累计配额不能通过多次调用绕过。
-- 限制尽可能在完整复制前检查；复制中实际大小超限时立即停止并清理临时文件。MVP 1B-2A Docling Worker 另设 4 GiB Job Object 内存、150 秒处理时限、300 页、100 MiB 输入、1 MiB 协议消息和 128 MiB 总输出限制；全局磁盘配额管理器是后续需求。
+- 限制尽可能在完整复制前检查；复制中实际大小超限时立即停止并清理临时文件。PR #14 的 Docling Worker 另设 4 GiB Job Object 内存、150 秒处理时限、300 页、100 MiB 输入、1 MiB 协议消息和 128 MiB 总输出限制；全局磁盘配额管理器是后续需求。
 - 原始文件名只作显示元数据；内部使用 document UUID，拒绝 `..`、绝对路径、盘符、UNC、Alternate Data Streams 和路径逃逸。
 - 文件在应用私有 staging 随机临时文件中流式复制并计算 SHA-256，验证最终大小/类型/配额后同卷原子 rename；失败清理临时文件。SHA-256 只用于完整性和同会议去重，不是恶意软件检测。
 - 不执行、不记录文件内容，不长期保存到 Temp/Git/工作目录，也不为文件设置可执行权限。
-- 文档内容解析只允许隔离的 Docling Worker 执行；MVP 1B-2A 已建立独立锁定环境、Rust 注册且带哈希的受控引用、单请求进程、取消、超时、Windows Job Object 内存限制、页数/输出限制和畸形协议测试。MVP 1B-2B 才能把该 Worker 接入文档状态与持久化。
+- 文档内容解析只允许隔离的 Docling Worker 执行；PR #14 已建立独立锁定环境、Rust 注册且带哈希的受控引用、单请求进程、取消、超时、Windows Job Object 内存限制、页数/输出限制和畸形协议测试。PR #20 才把该 Worker 接入文档状态与持久化。
 - Worker 不监听端口、不继承凭据/proxy/session token、不访问 SQLite；Docling 的远程服务、插件、VLM 和隐式模型下载均关闭。模型只通过显式脚本下载到仓库外目录，并用固定 revision 和逐文件 SHA-256 manifest 验证。
 - Worker 输出只能位于 Rust 批准的 parser staging 根并使用固定相对文件名；Rust 在持久化前重新验证路径、文件类型、大小、总量与 SHA-256。稳定错误不得包含原文、文件名、绝对路径、环境值或原生异常。
+- Docling Worker Foundation 已完成，但产品接线顺延到 PR #20。Docling 只增强参考文档证据，不是粘贴/TXT/SRT/VTT 或 transcript-only Summary 的前置依赖。
 
 ## 11. 本地存储与删除
 
@@ -146,6 +168,7 @@ Rust 是文件选择、校验、复制和私有存储的信任边界。React/Web
 - 待删除文件必须同卷移动至应用私有 `deletion-trash` 或采用等效可恢复设计。全部清理成功后才最终移除 meeting；失败进入 `delete_failed`，保留安全错误码并允许启动恢复/用户重试。
 - `draft`/`ready` 接受会议删除；`recording`/`processing`/既有保留状态拒绝；`deleting` 重复请求返回稳定 pending；`delete_failed` 允许幂等重试；未知状态 fail closed。
 - 单文档删除先进入 `deleting`，文件和 artifacts 清理成功后才移除元数据，失败进入 `delete_failed`。`importing`/`parsing` 必须先取消或等待；删除不影响用户源文件。
+- transcript source 不长期复制原始文件；删除协调其 segments、summary snapshot 引用和 stale 状态，但不删除用户源文件。正在使用该 source 的 Summary run 读取不可变快照，不得因并发删除产生不可解释证据。
 - 不允许先删除数据库再尽力删除文件，也不允许先删除文件再尝试数据库删除；崩溃后不得留下无法识别的孤儿文件。
 - 临时文件必须有 TTL 和崩溃恢复清理机制。
 - 应用生命周期内独占锁定 `meeting-data/.meetinglens-storage.lock`；第二写入实例 fail closed。启动恢复与正常写操作还由同一进程内 mutation mutex 串行化，未知文件只移动到隔离区而不直接删除。
@@ -196,15 +219,20 @@ SecretStore command 不记录请求 DTO、凭据值、长度、首尾字符、Cr
 | MVP 1B-0    | 文件威胁边界、格式/配额、状态机、存储布局和可恢复删除规范                              |
 | MVP 1B-1A   | Rust 安全导入、私有 staging、签名/配额、去重、删除 tombstone 与恢复测试                |
 | MVP 1B-1B   | 最小 Document commands、原生选择器、无路径 DTO、UI 安全错误和删除/重试交互             |
-| MVP 1B-2A   | 隔离 Docling Worker、锁定供应链、离线模型门槛、资源上限、取消和产物完整性校验          |
-| MVP 1B-2B   | Rust-only 编排、解析状态/持久化、恢复/删除竞态和 WebView 无路径/正文边界               |
-| MVP 1B-3    | 外部发送预览、同意、裁剪、脱敏、证据引用和无 key/无同意拒绝                            |
+| PR #14      | 隔离 Docling Worker、锁定供应链、离线模型门槛、资源上限、取消和产物完整性校验（完成）  |
+| PR #15      | 转录输入、纪要快照、外部发送、证据和新开发顺序的安全规格                               |
+| PR #16      | 严格 UTF-8、大小/片段上限、同步 parser、source/segment 修正删除与 schema v3            |
+| PR #17      | Rust 原生转录选择器、无路径 DTO、粘贴/导入预览和安全错误                               |
+| PR #18      | transcript-only 外发预览/同意、SecretStore key、快照、证据验证和无输入 fail closed     |
+| PR #19      | 用户编辑保护、revision/stale、章节重生成隔离和 DOCX 导出                               |
+| PR #20      | Rust-only Docling 编排、解析状态/持久化、恢复/删除竞态和 WebView 无路径/正文边界       |
+| PR #21      | 文档 chunks/页码/章节证据接入，保持 transcript 与 document 语义隔离                    |
 | MVP 1C      | 录音同意、sidecar supervisor、崩溃恢复、孤儿进程回收、临时文件清理和生命周期安全日志   |
 | MVP 2       | voice sample 明示同意/删除、匿名标签、模型 worker 隔离                                 |
 | MVP 3       | 目标窗口约束、敏感内容遮蔽、截图 TTL/删除、可选 Provider 权限边界                      |
 | MVP 4       | 签名、升级/回滚、SBOM、诊断导出脱敏和卸载残留检查                                      |
 
-Docling 的进程/依赖攻击面只能在 MVP 1B-2A 引入，数据库/状态/UI 编排只能在 MVP 1B-2B 引入；DeepSeek 的外部数据流只能在 MVP 1B-3 引入。不得在同一 PR 同时扩大文件存储、解析进程、持久化编排和外部 AI 信任边界。
+Docling 的进程/依赖攻击面已由 PR #14 隔离；数据库/状态/UI 编排只能在 PR #20 引入。DeepSeek 的 transcript-only 外部数据流只能在 PR #18 引入，文档 evidence 只能在 PR #21 接入。不得在同一 PR 同时扩大转录持久化、外部 AI、文件解析和证据索引信任边界。
 
 ## 16. 安全验收门槛
 

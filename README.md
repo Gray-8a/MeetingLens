@@ -1,10 +1,12 @@
 # MeetingLens
 
-MeetingLens is a privacy-first desktop workspace for meeting capture, transcription, translation, document context, speaker diarization, and verifiable AI summaries.
+MeetingLens is a privacy-first Windows desktop workspace whose first goal is to turn pasted or imported meeting transcripts into detailed, editable, evidence-linked minutes with as few steps as possible. Live capture, document context, screen evidence, speaker enhancement, and translation extend that core path.
 
-Phase 0 through MVP 1A and the MVP 1B document-import flow are complete. The current `feat/docling-worker` stage implements MVP 1B-2A: an isolated, offline Docling process boundary with a locked Python environment, bounded protocol and artifacts, explicit model provisioning, Windows Job Object resource control, and safe Rust revalidation. It is not connected to SQLite, Tauri commands, document state, or product UI; that orchestration remains for MVP 1B-2B. DeepSeek document processing remains unimplemented.
+PR #1–#14 are merged. The meeting data/UI foundation, Provider mocks, authenticated Sidecar boundary, Windows SecretStore, secure document import, and isolated Docling Worker are complete. Docling is not connected to SQLite, Tauri commands, document state, or product UI and is retained for later reference-document enrichment. The current schema is v2; transcript persistence/import and real summary generation remain unimplemented.
 
 The Provider runtime defines Capture, Transcription, Translation, Summary, and DocumentParser capability boundaries. Current implementations are explicit deterministic in-memory mocks: they do not access devices, files, or networks, and can be replaced through an application-owned Registry without changing page business logic.
+
+The near-term value path is transcript-first: PR #15 freezes the specification; PR #16 adds schema v3 transcript sources/segments and paste/TXT/SRT/VTT parsing; PR #17 adds paste/import/preview quick actions; PR #18 delivers transcript-only DeepSeek summaries. Docling product wiring follows later and is not a prerequisite for text summaries.
 
 ## Prerequisites
 
@@ -86,9 +88,17 @@ Files are streamed into private staging storage, hashed with SHA-256, validated,
 
 ## Isolated document parser
 
-MVP 1B-2A uses a separate Python 3.12 environment under `workers/docling`; it is not installed into the authenticated HTTP Sidecar. Rust owns the parser process and launches one request per process with a cleared environment, no network listener, bounded standard I/O, a 150-second timeout, and a 4 GiB Windows Job Object memory cap. Inputs and outputs remain beneath Rust-approved staging roots and are revalidated by size and SHA-256. Model downloads are explicit and versioned outside the repository; see [the worker guide](workers/docling/README.md).
+PR #14 established a separate Python 3.12 environment under `workers/docling`; it is not installed into the authenticated HTTP Sidecar. Rust owns the parser process and launches one request per process with a cleared environment, no network listener, bounded standard I/O, a 150-second timeout, and a 4 GiB Windows Job Object memory cap. Inputs and outputs remain beneath Rust-approved staging roots and are revalidated by size and SHA-256. Model downloads are explicit and versioned outside the repository; see [the worker guide](workers/docling/README.md). Database-backed parsing orchestration remains deferred to PR #20 and is not a prerequisite for transcript import or summary generation.
 
-The validated local model inventory is 564,981,412 bytes. Windows CPU smoke currently reports every allowlisted format available with RapidOCR/ONNX Runtime, a final acceptance peak process-tree RSS of about 1.67 GB, and no network listener or residual Worker process. These capabilities are independent acceptance results; the product does not expose parsing until MVP 1B-2B.
+The validated local model inventory is 564,981,412 bytes. Windows CPU smoke currently reports every allowlisted format available with RapidOCR/ONNX Runtime, a final acceptance peak process-tree RSS of about 1.67 GB, and no network listener or residual Worker process. These capabilities are independent acceptance results; the product does not expose parsing until PR #20.
+
+## Transcript-first summary path
+
+The first implementation supports pasted UTF-8 text and native TXT/SRT/VTT import. Transcripts are distinct from reference documents: they use a lightweight local parser, do not require Docling, and persist normalized sources and ordered segments rather than copying the original transcript file indefinitely. Platform-specific export adapters require sanitized real samples before support is claimed; video and audio-file transcription are future enhancements.
+
+Transcript positions use optional relative millisecond offsets plus an optional source base time. Inputs without timestamps use a stable segment ordinal. Summary generation is eligible whenever the user has at least one valid input that can be frozen, including draft or in-progress meetings; it is not restricted to `ready`. Every run uses an immutable input snapshot so edits, source deletion, and regeneration cannot silently rewrite an existing or user-edited summary.
+
+The initial templates are detailed meeting minutes, concise meeting summary, and actions/decisions. Output can be Chinese, English, or bilingual. Before any DeepSeek request, the UI must preview selected sources, segment count, time range, speakers, template, output language, and outbound data type, and require explicit confirmation.
 
 ## Project documents
 
@@ -111,13 +121,14 @@ The validated local model inventory is 564,981,412 bytes. Windows CPU smoke curr
 8. **MVP 1B-0 — complete:** document import, storage, lifecycle, and deletion specification (`docs/define-document-import-lifecycle`, PR #11).
 9. **MVP 1B-1A — complete:** document storage core, safe import, deduplication, and recoverable deletion (`feat/document-storage-core`, PR #12).
 10. **MVP 1B-1B — complete:** Document commands, native picker, typed progress, and import/delete UI (`feat/document-import-ui`, PR #13).
-11. **MVP 1B-2A — current:** isolated offline Docling Worker foundation (`feat/docling-worker`).
-12. **MVP 1B-2B:** parsing jobs, persistence, state transitions, and product wiring (`feat/document-parsing-orchestration`).
-13. **MVP 1B-3:** DeepSeek SummaryProvider, evidence links, and export (`feat/deepseek-summary-provider`).
-14. **MVP 1C:** sidecar supervisor, Windows audio, and realtime transcription in separate PRs.
-15. **MVP 2:** realtime translation and speaker diarization.
-16. **MVP 3:** meeting-window selection, OCR, and screen context.
-17. **MVP 4:** Windows packaging and product hardening.
+11. **Complete:** isolated offline Docling Worker foundation (`feat/docling-worker`, PR #14); product wiring is intentionally deferred.
+12. **Current documentation:** transcript/summary product and architecture alignment (`docs/transcript-and-summary-spec`, PR #15).
+13. **Next:** schema v3 transcript data core and paste/TXT/SRT/VTT parsing (`feat/transcript-data-core`, PR #16).
+14. **Then:** transcript import/paste UI and human-centered home shortcuts (`feat/transcript-import-ui`, PR #17).
+15. **First real minutes:** transcript-only DeepSeek summary, immutable snapshot, templates, evidence, and Markdown (`feat/deepseek-summary-mvp`, PR #18).
+16. **Editing/export:** revisions, stale state, section regeneration, and DOCX (`feat/summary-editing-export`, PR #19).
+17. **Reference enrichment:** Docling orchestration (`feat/document-parsing-orchestration`, PR #20), then document evidence indexing (`feat/document-evidence-index`, PR #21).
+18. **Later:** Sidecar supervisor, Windows audio and realtime ASR into transcript segments; screen context; speaker enhancement; realtime translation; Windows packaging.
 
 The authoritative branch mapping, exclusions, and acceptance criteria are in [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md). Storage, import UI, Docling, and DeepSeek are separate PRs. Screenpipe, if adopted, is an optional provider rather than a core dependency.
 
