@@ -1,9 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AppLink, meetingPath } from "../app/navigation";
-import { useServices } from "../app/services";
+import { useTranslation } from "react-i18next";
 import {
   DocumentApiError,
-  documentErrorMessage,
   type DocumentErrorCode,
   type DocumentImportBatchResult,
   type DocumentImportPolicyResponse,
@@ -11,6 +9,17 @@ import {
   type DocumentResponse,
 } from "../api/document";
 import type { MeetingStatus } from "../api/meeting";
+import { AppLink, meetingPath } from "../app/navigation";
+import { useServices } from "../app/services";
+import i18n from "../i18n";
+import { documentErrorMessage } from "../i18n/errors";
+import {
+  formatCompletedDate,
+  formatFileSize,
+  formatNumber,
+  formatPercent,
+} from "../i18n/formatters";
+import { statusLabel } from "../lib/presentation";
 import { ErrorNotice, LoadingState } from "./UiState";
 
 interface DocumentPanelProps {
@@ -21,8 +30,6 @@ interface DocumentPanelProps {
 
 interface SafeDocumentError {
   code: DocumentErrorCode;
-  message: string;
-  retryable: boolean;
 }
 
 export function DocumentPanel({
@@ -30,6 +37,7 @@ export function DocumentPanel({
   meetingStatus,
   variant = "full",
 }: DocumentPanelProps) {
+  const { t } = useTranslation();
   const { documentApi } = useServices();
   const activeRef = useRef(true);
   const [documents, setDocuments] = useState<DocumentResponse[]>([]);
@@ -124,11 +132,7 @@ export function DocumentPanel({
               : candidate,
           ),
         );
-        setError({
-          code: "document_delete_pending",
-          message: "The document is still being deleted.",
-          retryable: true,
-        });
+        setError({ code: "document_delete_pending" });
       }
     } catch (reason: unknown) {
       if (activeRef.current) setError(toSafeDocumentError(reason));
@@ -152,9 +156,12 @@ export function DocumentPanel({
       <section className="document-panel document-panel--compact content-panel">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">Meeting files</p>
+            <p className="eyebrow">{t("document.meetingFiles")}</p>
             <h2>
-              {documents.length} {documents.length === 1 ? "file" : "files"}
+              {t("document.fileCount", {
+                count: documents.length,
+                formattedCount: formatNumber(documents.length),
+              })}
             </h2>
           </div>
           <button
@@ -164,19 +171,22 @@ export function DocumentPanel({
             onClick={() => void selectAndImport()}
             type="button"
           >
-            {importing ? "Importing…" : "Add files"}
+            {importing ? t("common.importing") : t("common.addFiles")}
           </button>
         </div>
         {error ? (
-          <ErrorNotice code={error.code} message={error.message} />
+          <ErrorNotice
+            code={error.code}
+            message={documentErrorMessage(error.code)}
+          />
         ) : null}
         {latestProgress ? (
           <DocumentProgressLine progress={latestProgress} />
         ) : (
-          <p className="field-help">Files stay local and are not parsed yet.</p>
+          <p className="field-help">{t("document.filesStayLocal")}</p>
         )}
         <AppLink className="text-link" to={meetingPath(meetingId)}>
-          Open full file list
+          {t("document.openFullList")}
         </AppLink>
       </section>
     );
@@ -190,12 +200,9 @@ export function DocumentPanel({
     >
       <div className="section-heading">
         <div>
-          <p className="eyebrow">Local context</p>
-          <h2 id="meeting-documents-title">Meeting files</h2>
-          <p className="supporting-copy">
-            Stored locally only. Files are not opened, parsed, or sent to Python
-            or external AI.
-          </p>
+          <p className="eyebrow">{t("document.localContext")}</p>
+          <h2 id="meeting-documents-title">{t("document.meetingFiles")}</h2>
+          <p className="supporting-copy">{t("document.description")}</p>
         </div>
         <button
           className="button button--secondary"
@@ -204,18 +211,26 @@ export function DocumentPanel({
           onClick={() => void selectAndImport()}
           type="button"
         >
-          {importing ? "Selecting and importing…" : "Add files"}
+          {importing
+            ? t("document.selectingAndImporting")
+            : t("common.addFiles")}
         </button>
       </div>
 
       {policy ? (
-        <div className="document-policy" aria-label="Document import limits">
+        <div
+          className="document-policy"
+          aria-label={t("document.importLimits")}
+        >
           <span>
-            {documents.length} / {policy.maxMeetingFileCount} files
+            {t("document.policyCount", {
+              current: formatNumber(documents.length),
+              maximum: formatNumber(policy.maxMeetingFileCount),
+            })}
           </span>
           <span>
-            {formatBytes(usageBytes)} /{" "}
-            {formatBytes(policy.maxMeetingTotalBytes)}
+            {formatFileSize(usageBytes)} /{" "}
+            {formatFileSize(policy.maxMeetingTotalBytes)}
           </span>
           <span>
             {policy.allowedExtensions
@@ -230,11 +245,17 @@ export function DocumentPanel({
           className="restriction"
           data-acceptance="document-import-restriction"
         >
-          Files cannot be changed while this meeting is{" "}
-          {meetingStatus.replace("_", " ")}.
+          {t("document.changeRestricted", {
+            status: statusLabel(meetingStatus),
+          })}
         </p>
       ) : null}
-      {error ? <ErrorNotice code={error.code} message={error.message} /> : null}
+      {error ? (
+        <ErrorNotice
+          code={error.code}
+          message={documentErrorMessage(error.code)}
+        />
+      ) : null}
 
       {recentProgress.length > 0 ? (
         <div
@@ -242,7 +263,7 @@ export function DocumentPanel({
           data-acceptance="document-import-progress"
           aria-live="polite"
         >
-          <h3>Import progress</h3>
+          <h3>{t("document.importProgress")}</h3>
           <ul>
             {recentProgress.map((event) => (
               <li key={`${event.batchId}-${event.fileIndex}`}>
@@ -258,8 +279,9 @@ export function DocumentPanel({
         <div className="document-batch-summary" aria-live="polite">
           {batchResult.duplicates.map((item) => (
             <p key={`duplicate-${item.documentId}`}>
-              {displayFilename(item.originalFilename)} is already in this
-              meeting.
+              {t("document.alreadyInMeeting", {
+                filename: displayFilename(item.originalFilename),
+              })}
             </p>
           ))}
           {batchResult.failed.map((item) => (
@@ -271,14 +293,11 @@ export function DocumentPanel({
         </div>
       ) : null}
 
-      {loading ? <LoadingState label="Loading meeting files…" /> : null}
+      {loading ? <LoadingState label={t("document.loading")} /> : null}
       {!loading && documents.length === 0 ? (
         <div className="document-empty" data-acceptance="document-empty-state">
-          <h3>No files added</h3>
-          <p>
-            Use the native picker to copy approved files into private app
-            storage.
-          </p>
+          <h3>{t("document.emptyTitle")}</h3>
+          <p>{t("document.emptyBody")}</p>
         </div>
       ) : null}
       {!loading && documents.length > 0 ? (
@@ -292,9 +311,9 @@ export function DocumentPanel({
                   <strong>{displayFilename(document.originalFilename)}</strong>
                   <span>
                     {document.safeExtension.toUpperCase()} ·{" "}
-                    {formatBytes(document.sizeBytes ?? 0)}
+                    {formatFileSize(document.sizeBytes ?? 0)}
                   </span>
-                  <span>{formatDocumentDate(document.importedAt)}</span>
+                  <span>{formatCompletedDate(document.importedAt)}</span>
                 </div>
                 <span
                   className={`document-status document-status--${document.status}`}
@@ -309,20 +328,20 @@ export function DocumentPanel({
                       onClick={() => void deleteDocument(document, true)}
                       type="button"
                     >
-                      {deleting ? "Retrying…" : "Retry deletion"}
+                      {deleting
+                        ? t("common.retrying")
+                        : t("common.retryDeletion")}
                     </button>
                   ) : confirmingDelete === document.id ? (
                     <div className="document-delete-confirm" role="group">
-                      <span>
-                        Delete local copy? The source file is unchanged.
-                      </span>
+                      <span>{t("document.deleteCopyQuestion")}</span>
                       <button
                         className="button button--danger"
                         disabled={deleting}
                         onClick={() => void deleteDocument(document, false)}
                         type="button"
                       >
-                        {deleting ? "Deleting…" : "Confirm"}
+                        {deleting ? t("common.deleting") : t("common.confirm")}
                       </button>
                       <button
                         className="button button--ghost"
@@ -330,18 +349,20 @@ export function DocumentPanel({
                         onClick={() => setConfirmingDelete(null)}
                         type="button"
                       >
-                        Cancel
+                        {t("common.cancel")}
                       </button>
                     </div>
                   ) : (
                     <button
-                      aria-label={`Delete ${displayFilename(document.originalFilename)}`}
+                      aria-label={t("document.deleteFileAria", {
+                        filename: displayFilename(document.originalFilename),
+                      })}
                       className="button button--danger-outline"
                       disabled={!canDelete || deleting}
                       onClick={() => setConfirmingDelete(document.id)}
                       type="button"
                     >
-                      Delete
+                      {t("common.delete")}
                     </button>
                   )}
                 </div>
@@ -359,16 +380,17 @@ function DocumentProgressLine({
 }: {
   progress: DocumentImportProgress;
 }) {
+  const { t } = useTranslation();
   const total = progress.totalBytes;
-  const percentage =
+  const ratio =
     total && total > 0
-      ? Math.min(100, Math.round((progress.bytesProcessed / total) * 100))
+      ? Math.min(1, Math.max(0, progress.bytesProcessed / total))
       : null;
   return (
     <div className="document-progress-line">
       <span>{displayFilename(progress.originalFilename)}</span>
-      <span>{progressLabel(progress.phase)}</span>
-      {percentage === null ? null : <span>{percentage}%</span>}
+      <span>{t(`document.progress.${progress.phase}`)}</span>
+      {ratio === null ? null : <span>{formatPercent(ratio)}</span>}
       {progress.errorCode ? (
         <span>{formatDocumentError(progress.errorCode)}</span>
       ) : null}
@@ -390,32 +412,7 @@ function canDeleteDocument(status: DocumentResponse["status"]): boolean {
 }
 
 function documentStatusLabel(status: DocumentResponse["status"]): string {
-  const labels: Record<DocumentResponse["status"], string> = {
-    importing: "Importing",
-    staged: "Imported",
-    import_failed: "Import failed",
-    parsing: "Parsing",
-    parsed: "Parsed",
-    parse_failed: "Parse failed",
-    deleting: "Deleting",
-    delete_failed: "Delete failed",
-    unknown: "Unavailable",
-  };
-  return labels[status];
-}
-
-function progressLabel(phase: DocumentImportProgress["phase"]): string {
-  const labels: Record<DocumentImportProgress["phase"], string> = {
-    selected: "Selected",
-    validating: "Validating",
-    copying: "Copying",
-    committing: "Saving",
-    imported: "Imported",
-    duplicate: "Already imported",
-    failed: "Failed",
-    complete: "Complete",
-  };
-  return labels[phase];
+  return i18n.t(`document.status.${status}`);
 }
 
 function displayFilename(value: string): string {
@@ -425,39 +422,12 @@ function displayFilename(value: string): string {
       ? "�"
       : character;
   }).join("");
-  return safe.length === 0 ? "Selected file" : safe;
-}
-
-function formatBytes(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  const units = ["KiB", "MiB", "GiB"];
-  let value = bytes / 1024;
-  let unit = units[0];
-  for (let index = 1; index < units.length && value >= 1024; index += 1) {
-    value /= 1024;
-    unit = units[index];
-  }
-  return `${value >= 10 ? value.toFixed(0) : value.toFixed(1)} ${unit}`;
-}
-
-function formatDocumentDate(value: string | null): string {
-  if (value === null) return "Not completed";
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "Unknown time" : date.toLocaleString();
+  return safe.length === 0 ? i18n.t("common.selectedFile") : safe;
 }
 
 function toSafeDocumentError(reason: unknown): SafeDocumentError {
-  if (reason instanceof DocumentApiError) {
-    return {
-      code: reason.code,
-      message: reason.message,
-      retryable: reason.retryable,
-    };
-  }
   return {
-    code: "internal_error",
-    message: "An internal error occurred.",
-    retryable: false,
+    code: reason instanceof DocumentApiError ? reason.code : "internal_error",
   };
 }
 

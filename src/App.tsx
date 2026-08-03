@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import "./App.css";
 import {
   AppLink,
@@ -14,6 +15,7 @@ import {
 import { StatusBadge } from "./components/StatusBadge";
 import { toSidecarError } from "./lib/sidecar";
 import { HistoryPage } from "./pages/HistoryPage";
+import { HelpPage } from "./pages/HelpPage";
 import { HomePage, type DatabaseStatus } from "./pages/HomePage";
 import { LiveMeetingPage } from "./pages/LiveMeetingPage";
 import { MeetingDetailPage } from "./pages/MeetingDetailPage";
@@ -39,6 +41,7 @@ function App({ services }: AppProps) {
 }
 
 function MeetingLensApp({ services }: { services: AppServices }) {
+  const { t } = useTranslation();
   const { route } = useNavigation();
   const [databaseStatus, setDatabaseStatus] =
     useState<DatabaseStatus>("checking");
@@ -88,33 +91,36 @@ function MeetingLensApp({ services }: { services: AppServices }) {
     setMeetingStatus(status);
   }, []);
 
-  const pageTitle = useMemo(() => titleForRoute(route), [route]);
+  const pageTitle = useMemo(
+    () => t(`app.pageTitle.${route.name}`),
+    [route.name, t],
+  );
 
   return (
     <div className="desktop-shell">
       <a className="skip-link" href="#main-content">
-        Skip to content
+        {t("app.skipToContent")}
       </a>
       <aside className="sidebar">
-        <AppLink aria-label="MeetingLens home" className="brand" to="/">
+        <AppLink aria-label={t("app.brandHomeAria")} className="brand" to="/">
           <span className="brand-mark" aria-hidden="true">
             ML
           </span>
           <span>
-            <strong>MeetingLens</strong>
-            <small>Local meeting workspace</small>
+            <strong>{t("app.name")}</strong>
+            <small>{t("app.subtitle")}</small>
           </span>
         </AppLink>
-        <nav aria-label="Primary navigation">
+        <nav aria-label={t("app.primaryNavigation")}>
           <NavItem
             active={route.name === "home"}
-            label="Home"
+            label={t("app.nav.home")}
             mark="HM"
             to="/"
           />
           <NavItem
             active={route.name === "new"}
-            label="New meeting"
+            label={t("app.nav.newMeeting")}
             mark="NM"
             to="/new"
           />
@@ -124,22 +130,28 @@ function MeetingLensApp({ services }: { services: AppServices }) {
               route.name === "meeting" ||
               route.name === "live"
             }
-            label="History"
+            label={t("app.nav.history")}
             mark="HS"
             to="/history"
           />
           <NavItem
             active={route.name === "settings"}
-            label="Settings"
+            label={t("app.nav.settings")}
             mark="ST"
             to="/settings"
+          />
+          <NavItem
+            active={route.name === "help"}
+            label={t("app.nav.help")}
+            mark="HP"
+            to="/help"
           />
         </nav>
         <div className="privacy-note">
           <span aria-hidden="true">LP</span>
           <div>
-            <strong>Local-first</strong>
-            <p>No recording or external AI in this demo.</p>
+            <strong>{t("app.privacy.title")}</strong>
+            <p>{t("app.privacy.body")}</p>
           </div>
         </div>
       </aside>
@@ -147,20 +159,22 @@ function MeetingLensApp({ services }: { services: AppServices }) {
       <div className="workspace">
         <header className="workspace-header">
           <div>
-            <p className="breadcrumb">MeetingLens / {pageTitle}</p>
+            <p className="breadcrumb">
+              {t("app.breadcrumb", { page: pageTitle })}
+            </p>
             <h2>{pageTitle}</h2>
           </div>
-          <div className="runtime-status" aria-label="Runtime status">
+          <div className="runtime-status" aria-label={t("app.runtimeStatus")}>
             <StatusChip
-              label="Service"
+              label={t("app.runtime.service")}
               status={
                 localServiceStatus === "authenticated"
-                  ? "Authenticated"
+                  ? t("app.runtime.authenticated")
                   : localServiceStatus === "checking"
-                    ? "Checking"
+                    ? t("app.runtime.checking")
                     : localServiceStatus === "error"
-                      ? "Error"
-                      : "Unavailable"
+                      ? t("app.runtime.error")
+                      : t("app.runtime.unavailable")
               }
               tone={
                 localServiceStatus === "authenticated"
@@ -171,13 +185,13 @@ function MeetingLensApp({ services }: { services: AppServices }) {
               }
             />
             <StatusChip
-              label="Database"
+              label={t("app.runtime.database")}
               status={
                 databaseStatus === "ready"
-                  ? "Ready"
+                  ? t("app.runtime.ready")
                   : databaseStatus === "checking"
-                    ? "Checking"
-                    : "Unavailable"
+                    ? t("app.runtime.checking")
+                    : t("app.runtime.unavailable")
               }
               tone={
                 databaseStatus === "ready"
@@ -251,6 +265,8 @@ function RouteContent({
           localServiceStatus={localServiceStatus}
         />
       );
+    case "help":
+      return <HelpPage />;
   }
 }
 
@@ -295,23 +311,6 @@ function StatusChip({
       </span>
     </span>
   );
-}
-
-function titleForRoute(route: AppRoute): string {
-  switch (route.name) {
-    case "home":
-      return "Home";
-    case "new":
-      return "New meeting";
-    case "history":
-      return "Meeting history";
-    case "meeting":
-      return "Meeting details";
-    case "live":
-      return "Meeting in progress";
-    case "settings":
-      return "Settings";
-  }
 }
 
 export default App;

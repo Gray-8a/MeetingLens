@@ -14,7 +14,7 @@ This PR provides only the parser foundation:
 - explicit local-model provisioning and compatibility verification;
 - Rust process control, timeout, cancellation, memory limit, and output revalidation.
 
-It does **not** add Tauri commands, WebView access, database migrations, parsing jobs, document state transitions, product UI, background supervision, packaging, DeepSeek calls, or remote model access. The foundation was merged in PR #14 and is retained as an optional reference-document enhancement. Product orchestration is scheduled for PR #20 (`feat/document-parsing-orchestration`); it is not a prerequisite for pasted/TXT/SRT/VTT transcripts or transcript-only summaries.
+It does **not** add Tauri commands, WebView access, database migrations, parsing jobs, document state transitions, product UI, background supervision, packaging, DeepSeek calls, or remote model access. The foundation was merged in PR #14 and is retained as an optional reference-document enhancement. Product orchestration is scheduled for `feat/document-parsing-orchestration`; it is not a prerequisite for pasted/TXT/SRT/VTT transcripts or transcript-only summaries. Future PR numbers are assigned only when their branches are created.
 
 ## Locked environment
 

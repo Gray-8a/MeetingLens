@@ -7,12 +7,14 @@ import liveSource from "./pages/LiveMeetingPage.tsx?raw";
 import newSource from "./pages/NewMeetingPage.tsx?raw";
 import settingsSource from "./pages/SettingsPage.tsx?raw";
 import documentPanelSource from "./components/DocumentPanel.tsx?raw";
+import helpSource from "./pages/HelpPage.tsx?raw";
 import App from "./App";
 import { DocumentApiError } from "./api/document";
 import { MeetingApiError } from "./api/meeting";
 import { SecretApiError } from "./api/secret";
 import type { AppServices } from "./app/services";
 import { formatLocalDate } from "./lib/presentation";
+import i18n, { changeUiLocale, UI_LOCALE_STORAGE_KEY } from "./i18n";
 import { SidecarApiError } from "./lib/sidecar";
 import type {
   TranscriptionListener,
@@ -293,8 +295,8 @@ describe("MeetingLens desktop UI", () => {
     );
 
     await screen.findByText("Synthetic planning meeting");
-    expect(screen.getAllByText("Draft").length).toBeGreaterThan(0);
-    expect(screen.getAllByText("Recording").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Preparing").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("In meeting").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Ready").length).toBeGreaterThan(0);
   });
 
@@ -1337,7 +1339,9 @@ describe("MeetingLens desktop UI", () => {
     renderAt("/history", new FakeMeetingApi([deleting]));
     await screen.findByText(deleting.title);
 
-    expect(screen.getByText(/Deletion pending/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/Meeting deletion is still pending/),
+    ).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Delete" })).toBeDisabled();
     expect(
       screen.queryByRole("button", { name: "Retry deletion" }),
@@ -1354,5 +1358,141 @@ describe("MeetingLens desktop UI", () => {
         "\n",
       ),
     ).not.toContain("select_and_import_documents");
+  });
+
+  it("switches the settings page language immediately", async () => {
+    const user = userEvent.setup();
+    renderAt("/settings", new FakeMeetingApi());
+    await screen.findByRole("heading", { name: "Settings", level: 1 });
+
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Select interface language" }),
+      "zh-CN",
+    );
+
+    expect(
+      await screen.findByRole("heading", { name: "设置", level: 1 }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "选择界面语言" })).toHaveValue(
+      "zh-CN",
+    );
+  });
+
+  it("switches all primary navigation labels together", async () => {
+    renderAt("/", new FakeMeetingApi());
+    await act(async () => changeUiLocale("zh-CN", undefined));
+
+    const navigation = screen.getByRole("navigation", { name: "主导航" });
+    for (const label of ["首页", "新建会议", "历史记录", "设置", "帮助"]) {
+      expect(
+        within(navigation).getByRole("link", { name: label }),
+      ).toBeInTheDocument();
+    }
+  });
+
+  it("renders the Help page in Simplified Chinese", async () => {
+    await i18n.changeLanguage("zh-CN");
+    renderAt("/help", new FakeMeetingApi());
+
+    expect(
+      await screen.findByRole("heading", { name: "帮助", level: 1 }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("开发预览版").length).toBeGreaterThan(0);
+    expect(
+      screen.getByRole("heading", { name: "隐私与本地存储" }),
+    ).toBeInTheDocument();
+  });
+
+  it("renders the Help page in English", async () => {
+    renderAt("/help", new FakeMeetingApi());
+
+    expect(
+      await screen.findByRole("heading", { name: "Help", level: 1 }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Privacy and local storage" }),
+    ).toBeInTheDocument();
+  });
+
+  it("states preview limitations without claiming unfinished features", async () => {
+    renderAt("/help", new FakeMeetingApi());
+    await screen.findByRole("heading", { name: "What is not available yet" });
+
+    expect(
+      screen.getByText(/Real recording, realtime transcription/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/Docling is not connected to this UI yet/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/no real DeepSeek Provider uses it/),
+    ).toBeInTheDocument();
+    expect(helpSource).not.toContain("dangerouslySetInnerHTML");
+  });
+
+  it("does not reset meeting data when the interface language changes", async () => {
+    const meeting = syntheticMeeting({ title: "Persistent synthetic meeting" });
+    const api = new FakeMeetingApi([meeting]);
+    renderAt("/history", api);
+    await screen.findByText(meeting.title);
+
+    await act(async () => changeUiLocale("zh-CN", undefined));
+
+    expect(screen.getByText(meeting.title)).toBeInTheDocument();
+    expect(api.meetings).toEqual([meeting]);
+    expect(api.deleteCalls).toEqual([]);
+  });
+
+  it("does not change Provider state when the interface language changes", async () => {
+    const services = appServices(new FakeMeetingApi());
+    const before = services.providers.snapshots();
+    window.history.replaceState(null, "", "#/settings");
+    render(<App services={services} />);
+    await screen.findByRole("heading", { name: "Provider runtime" });
+
+    await act(async () => changeUiLocale("zh-CN", undefined));
+
+    expect(services.providers.snapshots()).toEqual(before);
+    expect(
+      screen.getByRole("heading", { name: "Provider 运行环境" }),
+    ).toBeInTheDocument();
+  });
+
+  it("does not change imported file metadata when the interface language changes", async () => {
+    const imported = syntheticDocument({ originalFilename: "synthetic.txt" });
+    const documents = new FakeDocumentApi([imported]);
+    renderAt(
+      `/meetings/${meetingIds.draft}`,
+      new FakeMeetingApi([syntheticMeeting()]),
+      undefined,
+      documents,
+    );
+    await screen.findByText(imported.originalFilename);
+
+    await act(async () => changeUiLocale("zh-CN", undefined));
+
+    expect(screen.getByText(imported.originalFilename)).toBeInTheDocument();
+    expect(documents.documents).toEqual([imported]);
+    expect(documents.selectCalls).toEqual([]);
+  });
+
+  it("keeps UI locale separate from meeting and future summary languages", async () => {
+    const meeting = syntheticMeeting({ primaryLanguage: "en-AU" });
+    renderAt(`/meetings/${meeting.id}`, new FakeMeetingApi([meeting]));
+    await screen.findByText("en-AU");
+
+    await act(async () => changeUiLocale("zh-CN", undefined));
+
+    expect(screen.getByText("en-AU")).toBeInTheDocument();
+    expect(screen.queryByLabelText(/纪要输出语言/)).not.toBeInTheDocument();
+    expect(window.localStorage?.getItem?.(UI_LOCALE_STORAGE_KEY)).not.toBe(
+      "en-AU",
+    );
+  });
+
+  it("adds no mixed component exports that increase Fast Refresh warnings", () => {
+    expect(helpSource).toMatch(/export function HelpPage/);
+    expect(helpSource).not.toMatch(/export (const|let|class) /);
+    expect(settingsSource).not.toMatch(/export (const|let|class) /);
   });
 });

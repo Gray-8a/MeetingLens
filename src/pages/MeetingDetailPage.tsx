@@ -1,11 +1,16 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useTranslation } from "react-i18next";
 import { AppLink, liveMeetingPath, useNavigation } from "../app/navigation";
 import { useServices } from "../app/services";
 import type { MeetingResponse } from "../api/meeting";
 import { DocumentPanel } from "../components/DocumentPanel";
 import { StatusBadge } from "../components/StatusBadge";
 import { ErrorNotice, LoadingState } from "../components/UiState";
-import { formatLocalDate, uiError } from "../lib/presentation";
+import {
+  formatLocalDate,
+  meetingErrorMessage,
+  uiError,
+} from "../lib/presentation";
 import type { DatabaseStatus } from "./HomePage";
 
 interface MeetingDetailPageProps {
@@ -19,6 +24,7 @@ export function MeetingDetailPage({
   onDatabaseStatus,
   onMeetingStatus,
 }: MeetingDetailPageProps) {
+  const { t } = useTranslation();
   const { meetingApi } = useServices();
   const { navigate } = useNavigation();
   const [meeting, setMeeting] = useState<MeetingResponse | null>(null);
@@ -27,9 +33,7 @@ export function MeetingDetailPage({
   const [error, setError] = useState<ReturnType<typeof uiError> | null>(null);
   const [editing, setEditing] = useState(false);
   const [title, setTitle] = useState("");
-  const [validationMessage, setValidationMessage] = useState<string | null>(
-    null,
-  );
+  const [titleMissing, setTitleMissing] = useState(false);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
 
   const loadMeeting = useCallback(async () => {
@@ -68,7 +72,7 @@ export function MeetingDetailPage({
     if (!meeting || busyAction) return;
     const normalized = title.trim();
     if (normalized.length === 0) {
-      setValidationMessage("Enter a meeting title.");
+      setTitleMissing(true);
       return;
     }
 
@@ -82,7 +86,7 @@ export function MeetingDetailPage({
       setMeeting(updated);
       setTitle(updated.title);
       setEditing(false);
-      setValidationMessage(null);
+      setTitleMissing(false);
     } catch (reason: unknown) {
       setError(uiError(reason));
     } finally {
@@ -147,16 +151,19 @@ export function MeetingDetailPage({
     }
   }
 
-  if (loading) return <LoadingState label="Loading meeting details…" />;
+  if (loading) return <LoadingState label={t("meetingDetail.loading")} />;
 
   if (meeting === null) {
     return (
       <section className="content-panel narrow-panel">
         {error ? (
-          <ErrorNotice code={error.code} message={error.message} />
+          <ErrorNotice
+            code={error.code}
+            message={meetingErrorMessage(error.code)}
+          />
         ) : null}
         <AppLink className="button button--secondary" to="/history">
-          Back to history
+          {t("meetingDetail.backToHistory")}
         </AppLink>
       </section>
     );
@@ -169,50 +176,59 @@ export function MeetingDetailPage({
     <div className="page-stack">
       <section className="detail-hero" data-acceptance="meeting-detail">
         <div>
-          <p className="eyebrow">Meeting details</p>
+          <p className="eyebrow">{t("meetingDetail.eyebrow")}</p>
           <div className="title-with-status">
             <h1>{meeting.title}</h1>
             <StatusBadge status={meeting.status} />
           </div>
-          <p className="meeting-id">ID: {meeting.id}</p>
+          <p className="meeting-id">
+            {t("meetingDetail.meetingId", { id: meeting.id })}
+          </p>
         </div>
         <AppLink className="text-link" to="/history">
-          Back to history
+          {t("meetingDetail.backToHistory")}
         </AppLink>
       </section>
 
-      {error ? <ErrorNotice code={error.code} message={error.message} /> : null}
+      {error ? (
+        <ErrorNotice
+          code={error.code}
+          message={meetingErrorMessage(error.code)}
+        />
+      ) : null}
 
       <section className="detail-grid">
         <article className="content-panel">
-          <p className="eyebrow">Timeline</p>
+          <p className="eyebrow">{t("meetingDetail.timeline")}</p>
           <dl className="detail-list">
             <div>
-              <dt>Created</dt>
+              <dt>{t("meetingDetail.created")}</dt>
               <dd>{formatLocalDate(meeting.createdAt)}</dd>
             </div>
             <div>
-              <dt>Started</dt>
+              <dt>{t("meetingDetail.started")}</dt>
               <dd>{formatLocalDate(meeting.startedAt)}</dd>
             </div>
             <div>
-              <dt>Ended</dt>
+              <dt>{t("meetingDetail.ended")}</dt>
               <dd>{formatLocalDate(meeting.endedAt)}</dd>
             </div>
             <div>
-              <dt>Language baseline</dt>
+              <dt>{t("meetingDetail.languageBaseline")}</dt>
               <dd>{meeting.primaryLanguage}</dd>
             </div>
           </dl>
         </article>
 
         <article className="content-panel">
-          <p className="eyebrow">Actions</p>
+          <p className="eyebrow">{t("meetingDetail.actions")}</p>
           {meeting.status === "draft" ? (
             <>
               {editing ? (
                 <form className="inline-form" onSubmit={saveTitle}>
-                  <label htmlFor="edit-meeting-title">Meeting title</label>
+                  <label htmlFor="edit-meeting-title">
+                    {t("meetingDetail.meetingTitle")}
+                  </label>
                   <input
                     data-acceptance="edit-title-input"
                     disabled={busyAction === "update"}
@@ -220,12 +236,14 @@ export function MeetingDetailPage({
                     maxLength={200}
                     onChange={(event) => {
                       setTitle(event.target.value);
-                      setValidationMessage(null);
+                      setTitleMissing(false);
                     }}
                     value={title}
                   />
-                  {validationMessage ? (
-                    <p className="field-error">{validationMessage}</p>
+                  {titleMissing ? (
+                    <p className="field-error">
+                      {t("newMeeting.titleRequired")}
+                    </p>
                   ) : null}
                   <div className="form-actions">
                     <button
@@ -234,17 +252,20 @@ export function MeetingDetailPage({
                       disabled={busyAction === "update"}
                       type="submit"
                     >
-                      {busyAction === "update" ? "Saving…" : "Save title"}
+                      {busyAction === "update"
+                        ? t("common.saving")
+                        : t("meetingDetail.saveTitle")}
                     </button>
                     <button
                       className="button button--ghost"
                       onClick={() => {
                         setEditing(false);
                         setTitle(meeting.title);
+                        setTitleMissing(false);
                       }}
                       type="button"
                     >
-                      Cancel
+                      {t("common.cancel")}
                     </button>
                   </div>
                 </form>
@@ -255,7 +276,7 @@ export function MeetingDetailPage({
                   onClick={() => setEditing(true)}
                   type="button"
                 >
-                  Edit title
+                  {t("meetingDetail.editTitle")}
                 </button>
               )}
               <button
@@ -265,7 +286,9 @@ export function MeetingDetailPage({
                 onClick={() => void startMeeting()}
                 type="button"
               >
-                {busyAction === "start" ? "Starting…" : "Start meeting"}
+                {busyAction === "start"
+                  ? t("common.starting")
+                  : t("meetingDetail.startMeeting")}
               </button>
             </>
           ) : null}
@@ -276,7 +299,7 @@ export function MeetingDetailPage({
                 className="button button--primary"
                 to={liveMeetingPath(meeting.id)}
               >
-                Enter live meeting
+                {t("meetingDetail.enterLive")}
               </AppLink>
               <button
                 className="button button--secondary"
@@ -284,24 +307,24 @@ export function MeetingDetailPage({
                 onClick={() => void endMeeting()}
                 type="button"
               >
-                {busyAction === "end" ? "Ending…" : "End meeting"}
+                {busyAction === "end"
+                  ? t("common.ending")
+                  : t("meetingDetail.endMeeting")}
               </button>
             </>
           ) : null}
 
           {meeting.status === "ready" ? (
-            <p className="supporting-copy">
-              This synthetic meeting is complete and stored locally.
-            </p>
+            <p className="supporting-copy">{t("meetingDetail.readyBody")}</p>
           ) : null}
 
           {confirmingDelete && canDelete ? (
             <div
               className="confirm-panel"
               role="group"
-              aria-label="Confirm meeting deletion"
+              aria-label={t("meetingDetail.confirmDeleteAria")}
             >
-              <p>Delete this local meeting? This cannot be undone.</p>
+              <p>{t("meetingDetail.confirmDeleteBody")}</p>
               <button
                 className="button button--danger"
                 data-acceptance="confirm-delete"
@@ -309,7 +332,9 @@ export function MeetingDetailPage({
                 onClick={() => void deleteMeeting()}
                 type="button"
               >
-                {busyAction === "delete" ? "Deleting…" : "Confirm delete"}
+                {busyAction === "delete"
+                  ? t("common.deleting")
+                  : t("common.confirmDelete")}
               </button>
               <button
                 className="button button--ghost"
@@ -317,7 +342,7 @@ export function MeetingDetailPage({
                 onClick={() => setConfirmingDelete(false)}
                 type="button"
               >
-                Cancel
+                {t("common.cancel")}
               </button>
             </div>
           ) : canRetryDelete ? (
@@ -328,7 +353,9 @@ export function MeetingDetailPage({
               onClick={() => void deleteMeeting()}
               type="button"
             >
-              {busyAction === "delete" ? "Retrying…" : "Retry meeting deletion"}
+              {busyAction === "delete"
+                ? t("common.retrying")
+                : t("meetingDetail.retryMeetingDeletion")}
             </button>
           ) : (
             <button
@@ -338,20 +365,20 @@ export function MeetingDetailPage({
               onClick={() => setConfirmingDelete(true)}
               type="button"
             >
-              Delete meeting
+              {t("meetingDetail.deleteMeeting")}
             </button>
           )}
 
           {!canDelete && !canRetryDelete ? (
             <p className="restriction">
               {meeting.status === "deleting"
-                ? "Meeting deletion is still pending · meeting_delete_pending"
-                : "Finish the meeting before deleting it · meeting_invalid_state"}
+                ? t("meetingDetail.deletionPending")
+                : t("meetingDetail.finishBeforeDelete")}
             </p>
           ) : null}
           {meeting.status === "ready" ? (
             <button className="button button--ghost" disabled type="button">
-              Start meeting
+              {t("meetingDetail.startMeeting")}
             </button>
           ) : null}
         </article>

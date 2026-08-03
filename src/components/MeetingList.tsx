@@ -1,3 +1,4 @@
+import { useTranslation } from "react-i18next";
 import type { MeetingResponse } from "../api/meeting";
 import { meetingPath, AppLink } from "../app/navigation";
 import { formatLocalDate } from "../lib/presentation";
@@ -22,8 +23,10 @@ export function MeetingList({
   onRetryDelete,
   onCancelDelete,
 }: MeetingListProps) {
+  const { t } = useTranslation();
+
   return (
-    <div className="meeting-list" aria-label="Meetings">
+    <div className="meeting-list" aria-label={t("meetingList.ariaLabel")}>
       {meetings.map((meeting) => {
         const canDelete =
           meeting.status === "draft" || meeting.status === "ready";
@@ -45,15 +48,15 @@ export function MeetingList({
               </div>
               <dl className="meeting-times">
                 <div>
-                  <dt>Created</dt>
+                  <dt>{t("meetingList.created")}</dt>
                   <dd>{formatLocalDate(meeting.createdAt)}</dd>
                 </div>
                 <div>
-                  <dt>Started</dt>
+                  <dt>{t("meetingList.started")}</dt>
                   <dd>{formatLocalDate(meeting.startedAt)}</dd>
                 </div>
                 <div>
-                  <dt>Ended</dt>
+                  <dt>{t("meetingList.ended")}</dt>
                   <dd>{formatLocalDate(meeting.endedAt)}</dd>
                 </div>
               </dl>
@@ -63,7 +66,7 @@ export function MeetingList({
                 className="button button--secondary"
                 to={meetingPath(meeting.id)}
               >
-                View details
+                {t("meetingList.viewDetails")}
               </AppLink>
               {canRetryDelete && onRetryDelete ? (
                 <button
@@ -72,14 +75,16 @@ export function MeetingList({
                   onClick={() => onRetryDelete(meeting.id)}
                   type="button"
                 >
-                  {deleting ? "Retrying…" : "Retry deletion"}
+                  {deleting ? t("common.retrying") : t("common.retryDeletion")}
                 </button>
               ) : onRequestDelete && onConfirmDelete && onCancelDelete ? (
                 confirming ? (
                   <div
                     className="confirm-actions"
                     role="group"
-                    aria-label={`Confirm deleting ${meeting.title}`}
+                    aria-label={t("meetingList.confirmDeleting", {
+                      title: meeting.title,
+                    })}
                   >
                     <button
                       className="button button--danger"
@@ -87,7 +92,9 @@ export function MeetingList({
                       onClick={() => onConfirmDelete(meeting.id)}
                       type="button"
                     >
-                      {deleting ? "Deleting…" : "Confirm delete"}
+                      {deleting
+                        ? t("common.deleting")
+                        : t("common.confirmDelete")}
                     </button>
                     <button
                       className="button button--ghost"
@@ -95,7 +102,7 @@ export function MeetingList({
                       onClick={onCancelDelete}
                       type="button"
                     >
-                      Cancel
+                      {t("common.cancel")}
                     </button>
                   </div>
                 ) : (
@@ -108,15 +115,15 @@ export function MeetingList({
                     onClick={() => onRequestDelete(meeting.id)}
                     type="button"
                   >
-                    Delete
+                    {t("common.delete")}
                   </button>
                 )
               ) : null}
               {!canDelete && !canRetryDelete && onRequestDelete ? (
                 <p className="restriction" id={`delete-help-${meeting.id}`}>
                   {meeting.status === "deleting"
-                    ? "Deletion pending · meeting_delete_pending"
-                    : "Finish the meeting before deleting it · meeting_invalid_state"}
+                    ? t("meetingList.deletionPending")
+                    : t("meetingList.finishBeforeDelete")}
                 </p>
               ) : null}
             </div>
