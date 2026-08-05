@@ -15,7 +15,8 @@ export type AppRoute =
   | { name: "history" }
   | { name: "meeting"; meetingId: string }
   | { name: "live"; meetingId: string }
-  | { name: "settings" };
+  | { name: "settings" }
+  | { name: "help" };
 
 interface NavigationValue {
   route: AppRoute;
@@ -33,6 +34,7 @@ export function parseRoute(path: string): AppRoute {
   if (path === "/new") return { name: "new" };
   if (path === "/history") return { name: "history" };
   if (path === "/settings") return { name: "settings" };
+  if (path === "/help") return { name: "help" };
 
   const liveMatch = path.match(/^\/meetings\/([^/]+)\/live$/);
   if (liveMatch) {

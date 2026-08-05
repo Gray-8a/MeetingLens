@@ -1,13 +1,20 @@
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { meetingPath, useNavigation } from "../app/navigation";
 import { useServices } from "../app/services";
 import type { MeetingResponse } from "../api/meeting";
 import { DocumentPanel } from "../components/DocumentPanel";
 import { StatusBadge } from "../components/StatusBadge";
 import { ErrorNotice, InfoNotice, LoadingState } from "../components/UiState";
-import { formatDuration, uiError } from "../lib/presentation";
-import { toProviderError, type ProviderError } from "../providers/errors";
+import { providerErrorMessage } from "../i18n/errors";
+import { formatNumber } from "../i18n/formatters";
+import {
+  formatDuration,
+  meetingErrorMessage,
+  uiError,
+} from "../lib/presentation";
 import type { TranscriptionSegment } from "../providers/contracts";
+import { toProviderError, type ProviderError } from "../providers/errors";
 import type { DatabaseStatus } from "./HomePage";
 
 interface LiveMeetingPageProps {
@@ -21,6 +28,7 @@ export function LiveMeetingPage({
   onDatabaseStatus,
   onMeetingStatus,
 }: LiveMeetingPageProps) {
+  const { t } = useTranslation();
   const services = useServices();
   const { navigate } = useNavigation();
   const [meeting, setMeeting] = useState<MeetingResponse | null>(null);
@@ -182,20 +190,23 @@ export function LiveMeetingPage({
     }
   }
 
-  if (loading) return <LoadingState label="Opening the meeting…" />;
+  if (loading) return <LoadingState label={t("live.opening")} />;
 
   if (meeting === null) {
     return (
       <section className="content-panel narrow-panel">
         {error ? (
-          <ErrorNotice code={error.code} message={error.message} />
+          <ErrorNotice
+            code={error.code}
+            message={meetingErrorMessage(error.code)}
+          />
         ) : null}
         <button
           className="button button--secondary"
           onClick={() => navigate("/history")}
           type="button"
         >
-          Back to history
+          {t("live.backToHistory")}
         </button>
       </section>
     );
@@ -204,14 +215,14 @@ export function LiveMeetingPage({
   if (meeting.status === "draft") {
     return (
       <section className="content-panel narrow-panel">
-        <p className="eyebrow">Meeting not started</p>
+        <p className="eyebrow">{t("live.notStartedEyebrow")}</p>
         <h1>{meeting.title}</h1>
-        <InfoNotice>
-          A draft cannot display the recording workspace until the backend start
-          command succeeds.
-        </InfoNotice>
+        <InfoNotice>{t("live.draftNotice")}</InfoNotice>
         {error ? (
-          <ErrorNotice code={error.code} message={error.message} />
+          <ErrorNotice
+            code={error.code}
+            message={meetingErrorMessage(error.code)}
+          />
         ) : null}
         <button
           className="button button--primary"
@@ -219,7 +230,7 @@ export function LiveMeetingPage({
           onClick={() => void startMeeting()}
           type="button"
         >
-          {busy ? "Starting…" : "Start meeting"}
+          {busy ? t("common.starting") : t("meetingDetail.startMeeting")}
         </button>
       </section>
     );
@@ -229,13 +240,13 @@ export function LiveMeetingPage({
     return (
       <section className="content-panel narrow-panel">
         <StatusBadge status={meeting.status} />
-        <h1>This meeting is no longer recording.</h1>
+        <h1>{t("live.noLongerRecording")}</h1>
         <button
           className="button button--primary"
           onClick={() => navigate(meetingPath(meeting.id))}
           type="button"
         >
-          View meeting details
+          {t("live.viewDetails")}
         </button>
       </section>
     );
@@ -243,45 +254,50 @@ export function LiveMeetingPage({
 
   return (
     <div className="live-page" data-acceptance="live-meeting">
-      {error ? <ErrorNotice code={error.code} message={error.message} /> : null}
+      {error ? (
+        <ErrorNotice
+          code={error.code}
+          message={meetingErrorMessage(error.code)}
+        />
+      ) : null}
       <section className="live-grid">
         <aside className="live-sidebar content-panel">
-          <p className="eyebrow">Synthetic meeting</p>
+          <p className="eyebrow">{t("live.syntheticMeeting")}</p>
           <h1>{meeting.title}</h1>
           <StatusBadge status={meeting.status} />
           <dl className="live-facts">
             <div>
-              <dt>Elapsed</dt>
+              <dt>{t("live.elapsed")}</dt>
               <dd data-testid="meeting-duration">
                 {formatDuration(elapsedMs)}
               </dd>
             </div>
             <div>
-              <dt>Transcript</dt>
-              <dd>{paused ? "Paused" : "Running"}</dd>
+              <dt>{t("live.transcript")}</dt>
+              <dd>{paused ? t("live.paused") : t("live.running")}</dd>
             </div>
             <div>
-              <dt>Important marks</dt>
-              <dd>{importantMarks}</dd>
+              <dt>{t("live.importantMarks")}</dt>
+              <dd>{formatNumber(importantMarks)}</dd>
             </div>
           </dl>
           <div>
-            <h2>Demo participants</h2>
+            <h2>{t("live.demoParticipants")}</h2>
             <ul className="participant-list">
               <li>
-                <span>A</span> Speaker A
+                <span>A</span> {t("live.speakerA")}
               </li>
               <li>
-                <span>B</span> Speaker B
+                <span>B</span> {t("live.speakerB")}
               </li>
               <li>
-                <span>C</span> Speaker C
+                <span>C</span> {t("live.speakerC")}
               </li>
             </ul>
           </div>
           <p className="restriction">
             <span data-acceptance="recording-delete-restriction">
-              Recording meetings cannot be deleted · meeting_invalid_state
+              {t("live.recordingDeleteRestriction")}
             </span>
           </p>
         </aside>
@@ -292,19 +308,19 @@ export function LiveMeetingPage({
         >
           <div className="section-heading">
             <div>
-              <p className="eyebrow">Simulation mode</p>
-              <h2 id="transcript-title">Live transcript</h2>
+              <p className="eyebrow">{t("live.simulationMode")}</p>
+              <h2 id="transcript-title">{t("live.liveTranscript")}</h2>
             </div>
-            <span className="simulation-badge">Synthetic data</span>
+            <span className="simulation-badge">{t("live.syntheticData")}</span>
           </div>
           {transcriptError !== null ? (
             <ErrorNotice
               code={transcriptError.code}
-              message={transcriptError.message}
+              message={providerErrorMessage(transcriptError.code)}
             />
           ) : null}
           {!transcriptError && entries.length === 0 ? (
-            <LoadingState label="Starting synthetic transcript…" />
+            <LoadingState label={t("live.startingTranscript")} />
           ) : null}
           <ol
             className="transcript-stream"
@@ -321,7 +337,9 @@ export function LiveMeetingPage({
                     {formatTranscriptOffset(entry, meeting.startedAt)}
                   </span>
                   <strong>{entry.speakerLabel}</strong>
-                  <span>{entry.isFinal ? "final" : "provisional"}</span>
+                  <span>
+                    {entry.isFinal ? t("live.final") : t("live.provisional")}
+                  </span>
                 </div>
                 <p>{entry.text}</p>
               </li>
@@ -330,18 +348,18 @@ export function LiveMeetingPage({
         </section>
 
         <aside className="meeting-context content-panel">
-          <p className="eyebrow">Temporary context</p>
-          <label htmlFor="temporary-notes">Private temporary notes</label>
+          <p className="eyebrow">{t("live.temporaryContext")}</p>
+          <label htmlFor="temporary-notes">{t("live.privateNotes")}</label>
           <textarea
             id="temporary-notes"
-            placeholder="Not saved to the database"
+            placeholder={t("live.privateNotesPlaceholder")}
             rows={5}
           />
-          <h2>Discussion topic</h2>
-          <p>Validate the local desktop meeting experience.</p>
-          <h2>Demo action item</h2>
-          <p>Review the Provider security boundary in the next milestone.</p>
-          <p className="field-help">This panel exists in memory only.</p>
+          <h2>{t("live.discussionTopic")}</h2>
+          <p>{t("live.discussionBody")}</p>
+          <h2>{t("live.demoAction")}</h2>
+          <p>{t("live.demoActionBody")}</p>
+          <p className="field-help">{t("live.memoryOnly")}</p>
         </aside>
       </section>
 
@@ -351,7 +369,7 @@ export function LiveMeetingPage({
         variant="compact"
       />
 
-      <div className="live-controls" aria-label="Meeting controls">
+      <div className="live-controls" aria-label={t("live.controls")}>
         {paused ? (
           <button
             className="button button--secondary"
@@ -359,7 +377,7 @@ export function LiveMeetingPage({
             onClick={() => void resumeTranscript()}
             type="button"
           >
-            Resume transcript
+            {t("live.resumeTranscript")}
           </button>
         ) : (
           <button
@@ -368,7 +386,7 @@ export function LiveMeetingPage({
             onClick={() => void pauseTranscript()}
             type="button"
           >
-            Pause transcript
+            {t("live.pauseTranscript")}
           </button>
         )}
         <button
@@ -376,7 +394,7 @@ export function LiveMeetingPage({
           onClick={() => setImportantMarks((count) => count + 1)}
           type="button"
         >
-          Add important mark
+          {t("live.addImportantMark")}
         </button>
         <button
           className="button button--danger"
@@ -385,7 +403,7 @@ export function LiveMeetingPage({
           onClick={() => void endMeeting()}
           type="button"
         >
-          {busy ? "Ending…" : "End meeting"}
+          {busy ? t("common.ending") : t("live.endMeeting")}
         </button>
       </div>
     </div>

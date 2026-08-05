@@ -79,17 +79,18 @@ Phase 0 已通过 PR #1 合并，并在 Windows 本机实际启动 Tauri 窗口�
 
 ### 5.3 MVP 1B：转录优先的会议纪要与文档增强
 
-PR #1–#14 已合并。文档安全存储、原生导入 UI 和 Docling Worker Foundation 已完成；Docling 具备独立锁定环境、显式离线模型、stdio 协议、Windows Job Object、超时/取消和多格式本机 Smoke，但尚未接入 SQLite、Provider、Commands 或 UI。当前 SQLite schema 为 v2，模拟字幕仍只在前端内存中，DeepSeek key 可以安全保存但没有真实 Provider 消费，产品当前不能生成真实会议纪要。
+PR #1–#15 已合并。文档安全存储、原生导入 UI 和 Docling Worker Foundation 已完成；Docling 具备独立锁定环境、显式离线模型、stdio 协议、Windows Job Object、超时/取消和多格式本机 Smoke，但尚未接入 SQLite、Provider、Commands 或 UI。当前 SQLite schema 为 v2，模拟字幕仍只在前端内存中，DeepSeek key 可以安全保存但没有真实 Provider 消费，产品当前不能生成真实会议纪要。阶段名和分支名是未来计划的权威标识；PR 编号只记录实际历史。
 
 新的近期顺序为：
 
-1. **PR #15 `docs/transcript-and-summary-spec`**：冻结转录模型、快速入口、纪要行为和路线，不实现功能。
-2. **PR #16 `feat/transcript-data-core`**：schema v3、`transcript_sources`/`transcript_segments`、粘贴/TXT/SRT/VTT 同步解析、去重、修正和删除语义；不做 UI 或 DeepSeek。
-3. **PR #17 `feat/transcript-import-ui`**：Transcript Commands/API、粘贴与原生导入、首页快速入口、片段预览和基础说话人修正；不做 DeepSeek。
-4. **PR #18 `feat/deepseek-summary-mvp`**：transcript-only SummaryProvider、输入快照、外部发送预览和同意、三个模板、证据验证、Markdown 与复制；不接 Docling。
-5. **PR #19 `feat/summary-editing-export`**：用户编辑、summary revision、stale、章节重生成和 DOCX。
-6. **PR #20 `feat/document-parsing-orchestration`**：接入已有 Docling Worker、持久化解析任务和产物、取消/重试/恢复；不调用 DeepSeek，数据库版本必须在 v3 之后顺序递增。
-7. **PR #21 `feat/document-evidence-index`**：document chunks、页码/章节/表格定位，并将文档证据接入已有 Summary pipeline。
+1. **`docs/transcript-and-summary-spec`（已完成，PR #15）**：冻结转录模型、快速入口、纪要行为和路线，不实现功能。
+2. **`feat/i18n-user-guide-foundation`**：横向补齐 zh-CN/en-US、界面语言偏好、开发预览帮助与使用手册；不改变核心价值路线。
+3. **`feat/transcript-data-core`（下一核心阶段）**：schema v3、`transcript_sources`/`transcript_segments`、粘贴/TXT/SRT/VTT 同步解析、去重、修正和删除语义；不做 UI 或 DeepSeek。
+4. **`feat/transcript-import-ui`**：Transcript Commands/API、粘贴与原生导入、首页快速入口、片段预览和基础说话人修正；不做 DeepSeek。
+5. **`feat/deepseek-summary-mvp`**：transcript-only SummaryProvider、输入快照、外部发送预览和同意、三个模板、证据验证、Markdown 与复制；不接 Docling。
+6. **`feat/summary-editing-export`**：用户编辑、summary revision、stale、章节重生成和 DOCX。
+7. **`feat/document-parsing-orchestration`**：接入已有 Docling Worker、持久化解析任务和产物、取消/重试/恢复；不调用 DeepSeek，数据库版本必须在 v3 之后顺序递增。
+8. **`feat/document-evidence-index`**：document chunks、页码/章节/表格定位，并将文档证据接入已有 Summary pipeline。
 
 Docling 是参考文档解析增强，不是 transcript-only 纪要的强制前置。转录证明会上说了什么；文档提供材料与背景，文档中写着某项计划不等于会议已经确认该计划。
 

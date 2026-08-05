@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { AppLink } from "../app/navigation";
 import { useServices } from "../app/services";
 import type { MeetingResponse } from "../api/meeting";
 import { MeetingList } from "../components/MeetingList";
 import { EmptyState, ErrorNotice, LoadingState } from "../components/UiState";
-import { uiError } from "../lib/presentation";
+import { meetingErrorMessage, uiError } from "../lib/presentation";
 import { sortMeetings, type DatabaseStatus } from "./HomePage";
 
 export function HistoryPage({
@@ -12,6 +13,7 @@ export function HistoryPage({
 }: {
   onDatabaseStatus: (status: DatabaseStatus) => void;
 }) {
+  const { t } = useTranslation();
   const { meetingApi } = useServices();
   const [meetings, setMeetings] = useState<MeetingResponse[]>([]);
   const [loading, setLoading] = useState(true);
@@ -70,20 +72,25 @@ export function HistoryPage({
     <section className="content-panel" aria-labelledby="history-title">
       <div className="section-heading">
         <div>
-          <p className="eyebrow">Local history</p>
-          <h1 id="history-title">Meeting history</h1>
-          <p>All entries are read from the local MeetingLens database.</p>
+          <p className="eyebrow">{t("history.eyebrow")}</p>
+          <h1 id="history-title">{t("history.title")}</h1>
+          <p>{t("history.description")}</p>
         </div>
         <AppLink className="button button--primary" to="/new">
-          New meeting
+          {t("history.newMeeting")}
         </AppLink>
       </div>
 
-      {error ? <ErrorNotice code={error.code} message={error.message} /> : null}
-      {loading ? <LoadingState label="Loading meeting history…" /> : null}
+      {error ? (
+        <ErrorNotice
+          code={error.code}
+          message={meetingErrorMessage(error.code)}
+        />
+      ) : null}
+      {loading ? <LoadingState label={t("history.loading")} /> : null}
       {!loading && meetings.length === 0 ? (
-        <EmptyState title="History is empty">
-          <p>Completed and draft meetings will appear here.</p>
+        <EmptyState title={t("history.emptyTitle")}>
+          <p>{t("history.emptyBody")}</p>
         </EmptyState>
       ) : null}
       {!loading && meetings.length > 0 ? (

@@ -1,10 +1,12 @@
 import type { ReactNode } from "react";
+import { useTranslation } from "react-i18next";
 
-export function LoadingState({ label = "Loading…" }: { label?: string }) {
+export function LoadingState({ label }: { label?: string }) {
+  const { t } = useTranslation();
   return (
     <div className="ui-state" role="status">
       <span className="spinner" aria-hidden="true" />
-      <p>{label}</p>
+      <p>{label ?? t("common.loading")}</p>
     </div>
   );
 }
@@ -34,10 +36,11 @@ export function ErrorNotice({
   code: string;
   message: string;
 }) {
+  const { t } = useTranslation();
   return (
     <div className="notice notice--error" role="alert">
       <strong>{message}</strong>
-      <span>Error code: {code}</span>
+      <span>{t("common.errorCode", { code })}</span>
     </div>
   );
 }

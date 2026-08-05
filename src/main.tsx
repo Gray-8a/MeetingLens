@@ -1,6 +1,7 @@
 import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
+import "./i18n";
 
 if (import.meta.env.DEV && import.meta.env.VITE_MEETING_COMMAND_SMOKE === "1") {
   void import("./dev/meetingCommandSmoke").then(({ runMeetingCommandSmoke }) =>
@@ -35,6 +36,12 @@ if (import.meta.env.DEV && import.meta.env.VITE_SECRET_STORE_SMOKE === "1") {
 if (import.meta.env.DEV && import.meta.env.VITE_DOCUMENT_UI_SMOKE === "1") {
   void import("./dev/documentUiSmoke").then(({ runDocumentUiSmoke }) =>
     runDocumentUiSmoke(),
+  );
+}
+
+if (import.meta.env.DEV && import.meta.env.VITE_I18N_UI_SMOKE === "1") {
+  void import("./dev/i18nUiSmoke").then(({ runI18nUiSmoke }) =>
+    runI18nUiSmoke(),
   );
 }
 

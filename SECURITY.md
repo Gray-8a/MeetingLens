@@ -48,6 +48,8 @@ MVP 1A-3B-1 的本地会话认证防止局域网设备、普通网页和未持�
 - Windows 11 发布版使用 Windows Credential Manager；不得把 key 放入 WebView 的 localStorage、前端 bundle 或 sidecar 命令行参数。
 - 非 Windows 平台 fail closed，不使用文件、SQLite、注册表明文或浏览器存储回退。
 
+界面语言是非敏感本地偏好。WebView 只可在命名空间键 `meetinglens.uiLocale` 保存允许的 `zh-CN` 或 `en-US` 枚举；不得在该存储中写入会议、文档、转录、纪要、凭据或路径。未知、损坏或不可访问的值安全回退到系统语言规则和 `en-US`，不得用任意值构造语言包路径、远程请求或动态 import。清除 WebView 存储只重置界面语言，不影响 SQLite、私有文件或 SecretStore。
+
 当前边界不防御取得同等 Windows 用户权限、可读取进程内存或用户 Credential Manager 的恶意软件，也不防御管理员/内核级攻击者。DeepSeek 网络有效性测试、真实调用和 Provider 消费凭据均不属于本阶段。
 
 任何已经出现在聊天、日志或提交中的 key 都应视为已泄漏并立即撤销，而不是仅删除文件。
@@ -154,10 +156,10 @@ Rust 是文件选择、校验、复制和私有存储的信任边界。React/Web
 - 原始文件名只作显示元数据；内部使用 document UUID，拒绝 `..`、绝对路径、盘符、UNC、Alternate Data Streams 和路径逃逸。
 - 文件在应用私有 staging 随机临时文件中流式复制并计算 SHA-256，验证最终大小/类型/配额后同卷原子 rename；失败清理临时文件。SHA-256 只用于完整性和同会议去重，不是恶意软件检测。
 - 不执行、不记录文件内容，不长期保存到 Temp/Git/工作目录，也不为文件设置可执行权限。
-- 文档内容解析只允许隔离的 Docling Worker 执行；PR #14 已建立独立锁定环境、Rust 注册且带哈希的受控引用、单请求进程、取消、超时、Windows Job Object 内存限制、页数/输出限制和畸形协议测试。PR #20 才把该 Worker 接入文档状态与持久化。
+- 文档内容解析只允许隔离的 Docling Worker 执行；PR #14 已建立独立锁定环境、Rust 注册且带哈希的受控引用、单请求进程、取消、超时、Windows Job Object 内存限制、页数/输出限制和畸形协议测试。`feat/document-parsing-orchestration` 才把该 Worker 接入文档状态与持久化。
 - Worker 不监听端口、不继承凭据/proxy/session token、不访问 SQLite；Docling 的远程服务、插件、VLM 和隐式模型下载均关闭。模型只通过显式脚本下载到仓库外目录，并用固定 revision 和逐文件 SHA-256 manifest 验证。
 - Worker 输出只能位于 Rust 批准的 parser staging 根并使用固定相对文件名；Rust 在持久化前重新验证路径、文件类型、大小、总量与 SHA-256。稳定错误不得包含原文、文件名、绝对路径、环境值或原生异常。
-- Docling Worker Foundation 已完成，但产品接线顺延到 PR #20。Docling 只增强参考文档证据，不是粘贴/TXT/SRT/VTT 或 transcript-only Summary 的前置依赖。
+- Docling Worker Foundation 已完成，但产品接线顺延到 `feat/document-parsing-orchestration`。Docling 只增强参考文档证据，不是粘贴/TXT/SRT/VTT 或 transcript-only Summary 的前置依赖。
 
 ## 11. 本地存储与删除
 
@@ -208,31 +210,32 @@ SecretStore command 不记录请求 DTO、凭据值、长度、首尾字符、Cr
 
 ## 15. 分阶段安全交付
 
-| 阶段        | 必须完成的安全控制                                                                     |
-| ----------- | -------------------------------------------------------------------------------------- |
-| MVP 1A-1    | SQLite 事务/迁移、路径规范化、删除语义、数据库与 WAL/SHM Git 忽略测试                  |
-| MVP 1A-2-1  | DTO/UUID/状态校验、后端时间戳、最小 Tauri commands、稳定脱敏错误以及禁止前端路径或 SQL |
-| MVP 1A-2-2  | 只用合成数据、集中调用 command、UI 错误不泄漏内部路径或正文                            |
-| MVP 1A-3A   | Provider 稳定状态/错误、Mock 无设备/文件/网络访问、Registry 生命周期与清理测试         |
-| MVP 1A-3B-1 | Sidecar 会话 token、Loopback、全路由认证、稳定错误、最小日志脱敏和 fail-closed 测试    |
-| MVP 1A-3B-2 | SecretStore、Windows Credential Manager、安全配置与跨层日志 allowlist                  |
-| MVP 1B-0    | 文件威胁边界、格式/配额、状态机、存储布局和可恢复删除规范                              |
-| MVP 1B-1A   | Rust 安全导入、私有 staging、签名/配额、去重、删除 tombstone 与恢复测试                |
-| MVP 1B-1B   | 最小 Document commands、原生选择器、无路径 DTO、UI 安全错误和删除/重试交互             |
-| PR #14      | 隔离 Docling Worker、锁定供应链、离线模型门槛、资源上限、取消和产物完整性校验（完成）  |
-| PR #15      | 转录输入、纪要快照、外部发送、证据和新开发顺序的安全规格                               |
-| PR #16      | 严格 UTF-8、大小/片段上限、同步 parser、source/segment 修正删除与 schema v3            |
-| PR #17      | Rust 原生转录选择器、无路径 DTO、粘贴/导入预览和安全错误                               |
-| PR #18      | transcript-only 外发预览/同意、SecretStore key、快照、证据验证和无输入 fail closed     |
-| PR #19      | 用户编辑保护、revision/stale、章节重生成隔离和 DOCX 导出                               |
-| PR #20      | Rust-only Docling 编排、解析状态/持久化、恢复/删除竞态和 WebView 无路径/正文边界       |
-| PR #21      | 文档 chunks/页码/章节证据接入，保持 transcript 与 document 语义隔离                    |
-| MVP 1C      | 录音同意、sidecar supervisor、崩溃恢复、孤儿进程回收、临时文件清理和生命周期安全日志   |
-| MVP 2       | voice sample 明示同意/删除、匿名标签、模型 worker 隔离                                 |
-| MVP 3       | 目标窗口约束、敏感内容遮蔽、截图 TTL/删除、可选 Provider 权限边界                      |
-| MVP 4       | 签名、升级/回滚、SBOM、诊断导出脱敏和卸载残留检查                                      |
+| 阶段         | 必须完成的安全控制                                                                     |
+| ------------ | -------------------------------------------------------------------------------------- |
+| MVP 1A-1     | SQLite 事务/迁移、路径规范化、删除语义、数据库与 WAL/SHM Git 忽略测试                  |
+| MVP 1A-2-1   | DTO/UUID/状态校验、后端时间戳、最小 Tauri commands、稳定脱敏错误以及禁止前端路径或 SQL |
+| MVP 1A-2-2   | 只用合成数据、集中调用 command、UI 错误不泄漏内部路径或正文                            |
+| MVP 1A-3A    | Provider 稳定状态/错误、Mock 无设备/文件/网络访问、Registry 生命周期与清理测试         |
+| MVP 1A-3B-1  | Sidecar 会话 token、Loopback、全路由认证、稳定错误、最小日志脱敏和 fail-closed 测试    |
+| MVP 1A-3B-2  | SecretStore、Windows Credential Manager、安全配置与跨层日志 allowlist                  |
+| MVP 1B-0     | 文件威胁边界、格式/配额、状态机、存储布局和可恢复删除规范                              |
+| MVP 1B-1A    | Rust 安全导入、私有 staging、签名/配额、去重、删除 tombstone 与恢复测试                |
+| MVP 1B-1B    | 最小 Document commands、原生选择器、无路径 DTO、UI 安全错误和删除/重试交互             |
+| PR #14       | 隔离 Docling Worker、锁定供应链、离线模型门槛、资源上限、取消和产物完整性校验（完成）  |
+| PR #15       | 转录输入、纪要快照、外部发送、证据和新开发顺序的安全规格                               |
+| 国际化基础   | 仅保存允许的 UI locale 枚举、打包语言资源、无动态 HTML、稳定状态/错误本地化            |
+| 转录数据核心 | 严格 UTF-8、大小/片段上限、同步 parser、source/segment 修正删除与 schema v3            |
+| 转录导入 UI  | Rust 原生转录选择器、无路径 DTO、粘贴/导入预览和安全错误                               |
+| 首版真实纪要 | transcript-only 外发预览/同意、SecretStore key、快照、证据验证和无输入 fail closed     |
+| 纪要编辑导出 | 用户编辑保护、revision/stale、章节重生成隔离和 DOCX 导出                               |
+| 文档解析编排 | Rust-only Docling 编排、解析状态/持久化、恢复/删除竞态和 WebView 无路径/正文边界       |
+| 文档证据索引 | 文档 chunks/页码/章节证据接入，保持 transcript 与 document 语义隔离                    |
+| MVP 1C       | 录音同意、sidecar supervisor、崩溃恢复、孤儿进程回收、临时文件清理和生命周期安全日志   |
+| MVP 2        | voice sample 明示同意/删除、匿名标签、模型 worker 隔离                                 |
+| MVP 3        | 目标窗口约束、敏感内容遮蔽、截图 TTL/删除、可选 Provider 权限边界                      |
+| MVP 4        | 签名、升级/回滚、SBOM、诊断导出脱敏和卸载残留检查                                      |
 
-Docling 的进程/依赖攻击面已由 PR #14 隔离；数据库/状态/UI 编排只能在 PR #20 引入。DeepSeek 的 transcript-only 外部数据流只能在 PR #18 引入，文档 evidence 只能在 PR #21 接入。不得在同一 PR 同时扩大转录持久化、外部 AI、文件解析和证据索引信任边界。
+Docling 的进程/依赖攻击面已由 PR #14 隔离；数据库/状态/UI 编排只能在 `feat/document-parsing-orchestration` 引入。DeepSeek 的 transcript-only 外部数据流只能在 `feat/deepseek-summary-mvp` 引入，文档 evidence 只能在 `feat/document-evidence-index` 接入。不得在同一 PR 同时扩大转录持久化、外部 AI、文件解析和证据索引信任边界。
 
 ## 16. 安全验收门槛
 

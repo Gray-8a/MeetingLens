@@ -83,7 +83,7 @@
 - MeetingLens 的第一核心价值是让用户以最少步骤把已有会议转录、粘贴文本、实时转写和相关材料转化为详实、可编辑、可追溯的会议纪要。
 - 转录是纪要的第一类来源；参考文档是可选增强。`transcripts` 与 `documents` 是不同语义和信任边界，转录导入不得强制经过 DocumentService 或 Docling。
 - Docling Worker Foundation 已完成并保留，但数据库/UI 编排顺延到 `feat/document-parsing-orchestration`；不得把它恢复为 transcript-only 纪要的前置依赖。
-- 当前固定顺序为：`docs/transcript-and-summary-spec` → `feat/transcript-data-core` → `feat/transcript-import-ui` → `feat/deepseek-summary-mvp` → `feat/summary-editing-export` → `feat/document-parsing-orchestration` → `feat/document-evidence-index`。
+- 当前固定顺序为：`docs/transcript-and-summary-spec`（已合并）→ `feat/i18n-user-guide-foundation`（当前横向基础）→ `feat/transcript-data-core`（下一核心阶段）→ `feat/transcript-import-ui` → `feat/deepseek-summary-mvp` → `feat/summary-editing-export` → `feat/document-parsing-orchestration` → `feat/document-evidence-index`。阶段名和分支名是权威标识；未来 GitHub PR 编号不是计划契约。
 - 第一版转录只承诺粘贴 UTF-8 文本以及 TXT/SRT/VTT。平台专用 adapter 必须取得脱敏真实样例后单独增加；视频/音频文件转录不属于近期范围。
 - 纪要资格取决于是否存在可冻结的用户确认输入，不得以 `meeting.status == ready` 作为唯一门槛。纪要运行使用不可变输入快照，重新生成创建 revision，不得静默覆盖用户编辑。
 

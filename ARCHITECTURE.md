@@ -29,6 +29,8 @@ flowchart LR
 - 不直接读取 `.env`、SQLite、任意文件路径或操作系统凭据。
 - 不直接启动 sidecar，也不持有长期 API key。
 
+界面国际化集中在 `src/i18n`：`i18next` 与 `react-i18next` 在应用入口初始化，`zh-CN`/`en-US` JSON 资源随 Vite bundle 打包，`en-US` 是可靠 fallback，不加载远程语言包。React 页面只使用稳定 translation key；集中 formatters 按当前 UI locale 和用户本地时区显示日期、数字与文件大小。设置页只把允许的 locale 枚举写入 `meetinglens.uiLocale`，不使用 SecretStore 或 SQLite，也不将 UI locale 复用为未来 Summary 输出语言。
+
 ### 3.2 Tauri / Rust Core
 
 - 作为 WebView 与本机资源之间的权限边界。
@@ -188,7 +190,7 @@ MVP 1B-1A 提供受信任 Rust 调用栈复用的 `DocumentService`；MVP 1B-1B 
 
 `select_and_import_documents` 使用有类型的 Tauri `Channel` 返回每个文件的安全阶段、已处理字节与总字节；终态 response DTO 只包含 document ID、清理后的显示名、检测类型、大小、状态、UTC 时间和稳定错误码。其他 commands 提供 list/get/delete/retry 和固定导入策略。Command 层不包含 SQL、复制或路径拼接，所有最终状态、类型、配额、去重和删除规则仍由 `DocumentService` 执行。
 
-现有 TypeScript `DocumentParserProvider`/`DocumentReference` 和 `MockDocumentParserProvider` 只是 MVP 1A-3A 的纯内存契约，不是文件导入 API，也不授权 WebView 读取 `artifactId` 对应的文件。Mock 中 10,000,000 bytes、255 characters 和少量 MIME 的合成校验不是生产 allowlist/配额；生产边界以 `PRODUCT_SPEC.md` 的 100 MiB、UTF-8 byte 限制和完整 allowlist 为准。PR #14 的 Rust Worker client 只接受受控 staging 根目录内且 size/SHA-256 已注册的私有输入；PR #20 再由 document ID 编排该边界。
+现有 TypeScript `DocumentParserProvider`/`DocumentReference` 和 `MockDocumentParserProvider` 只是 MVP 1A-3A 的纯内存契约，不是文件导入 API，也不授权 WebView 读取 `artifactId` 对应的文件。Mock 中 10,000,000 bytes、255 characters 和少量 MIME 的合成校验不是生产 allowlist/配额；生产边界以 `PRODUCT_SPEC.md` 的 100 MiB、UTF-8 byte 限制和完整 allowlist 为准。PR #14 的 Rust Worker client 只接受受控 staging 根目录内且 size/SHA-256 已注册的私有输入；`feat/document-parsing-orchestration` 再由 document ID 编排该边界。
 
 ### 6.6 隔离 Docling Worker 基础
 
@@ -196,7 +198,7 @@ PR #14 将文档解析器放在 `workers/docling` 的独立 Python 3.12/uv lock 
 
 Windows 上子进程在写入请求前加入启用 `KILL_ON_JOB_CLOSE` 与内存上限的 Job Object；成功、失败、取消、150 秒超时或协议异常都会回收完整进程树。Worker 校验输入处于批准 staging 根、是普通文件且匹配已注册 size/SHA-256；固定输出 `document.json`、`content.md`、`content.txt` 和 `manifest.json` 到批准输出根，再由 Rust 重新校验相对路径、大小、总量与 SHA-256。任何绝对路径、UNC、ADS、遍历、未知产物或不匹配都 fail closed。
 
-Docling 运行模式固定为 CPU-only、无远程服务、无插件、无隐式模型下载。模型只能通过显式脚本写入仓库外的版本化应用目录，manifest 固定 layout、TableFormer 和 RapidOCR 来源 revision 并列出每个文件的哈希。缺少、版本不兼容或被修改的模型会返回稳定错误；无模型时 TXT/Markdown/CSV/Office 仍可解析，PDF/图片/OCR fail closed。Worker Foundation 已由 PR #14 合并，但只是后续参考文档增强；PR #20 才负责顺序递增的 schema、解析任务、document 状态、产物持久化和 UI 接线，不阻塞 transcript-only Summary。
+Docling 运行模式固定为 CPU-only、无远程服务、无插件、无隐式模型下载。模型只能通过显式脚本写入仓库外的版本化应用目录，manifest 固定 layout、TableFormer 和 RapidOCR 来源 revision 并列出每个文件的哈希。缺少、版本不兼容或被修改的模型会返回稳定错误；无模型时 TXT/Markdown/CSV/Office 仍可解析，PDF/图片/OCR fail closed。Worker Foundation 已由 PR #14 合并，但只是后续参考文档增强；`feat/document-parsing-orchestration` 才负责顺序递增的 schema、解析任务、document 状态、产物持久化和 UI 接线，不阻塞 transcript-only Summary。
 
 ### 6.7 转录输入与纪要快照边界
 
@@ -313,29 +315,30 @@ Phase 0 不提前写入 `externalBin`，因为仓库尚无可验证的平台二�
 
 ### 10.1 实施顺序与模块所有权
 
-| 阶段        | 架构交付                                                       | 明确不包含                                  |
-| ----------- | -------------------------------------------------------------- | ------------------------------------------- |
-| MVP 1A-1    | SQLite、迁移、meeting repository/service、删除语义和持久化     | UI、Provider、worker                        |
-| MVP 1A-2-1  | Meeting Tauri commands、DTO、状态机和 TypeScript `meetingApi`  | 完整页面、模拟字幕、Provider                |
-| MVP 1A-2-2  | React 页面、模拟转写和完整合成会议数据流                       | 真实音频、外部 API                          |
-| MVP 1A-3A   | TypeScript Provider 契约、Registry、纯内存 Mock 与模拟会议迁移 | 凭据、令牌、真实 Provider                   |
-| MVP 1A-3B-1 | Sidecar 会话认证、Loopback、稳定错误与基础日志脱敏             | SecretStore、真实 Provider                  |
-| MVP 1A-3B-2 | SecretStore、WinCred、最小 Tauri permissions 与安全配置        | DeepSeek 调用、Python 传密钥、Docling、音频 |
-| MVP 1B-0    | 文档导入、存储、状态、删除和后续 PR 的规范门槛                 | 任何功能代码                                |
-| MVP 1B-1A   | 文档存储核心、安全导入、去重和删除协调                         | 正式 UI、解析、外部 AI                      |
-| MVP 1B-1B   | Document commands、documentApi、原生选择器和导入/删除 UI       | 文档解析                                    |
-| PR #14      | 隔离 Docling worker、锁定环境、受限协议和进程/资源边界（完成） | DB、状态、commands、UI、总结模型            |
-| PR #15      | 转录、纪要、首页入口、输入快照和新路线规格                     | 任何产品代码                                |
-| PR #16      | schema v3、转录来源/片段、同步 parser、修正/删除               | UI、DeepSeek                                |
-| PR #17      | Transcript commands/API、粘贴/导入/预览和首页快速入口          | DeepSeek                                    |
-| PR #18      | transcript-only DeepSeek 纪要、输入快照、模板和 evidence       | Docling、DOCX、章节重生成                   |
-| PR #19      | 用户编辑、revision/stale、章节重生成和 DOCX                    | 文档解析                                    |
-| PR #20      | Docling 解析任务、顺序递增 migration、产物持久化和产品接线     | DeepSeek 改造                               |
-| PR #21      | 文档 chunks/页码/章节/表格证据接入既有 Summary pipeline        | 重复 transcript pipeline                    |
-| 后续        | Sidecar supervisor、WASAPI、实时 ASR 写入 transcript segments  | 屏幕、翻译、说话人                          |
-| 后续        | Window context、accessibility/OCR 和可选 Capture Provider      | 核心强绑定 Screenpipe                       |
-| 后续        | 隔离的说话人增强、翻译、Diart 和 WhisperX worker               | 跨会议默认身份识别                          |
-| MVP 4       | Windows 打包、签名、升级、诊断和产品加固                       | 新核心业务范围                              |
+| 阶段         | 架构交付                                                       | 明确不包含                                  |
+| ------------ | -------------------------------------------------------------- | ------------------------------------------- |
+| MVP 1A-1     | SQLite、迁移、meeting repository/service、删除语义和持久化     | UI、Provider、worker                        |
+| MVP 1A-2-1   | Meeting Tauri commands、DTO、状态机和 TypeScript `meetingApi`  | 完整页面、模拟字幕、Provider                |
+| MVP 1A-2-2   | React 页面、模拟转写和完整合成会议数据流                       | 真实音频、外部 API                          |
+| MVP 1A-3A    | TypeScript Provider 契约、Registry、纯内存 Mock 与模拟会议迁移 | 凭据、令牌、真实 Provider                   |
+| MVP 1A-3B-1  | Sidecar 会话认证、Loopback、稳定错误与基础日志脱敏             | SecretStore、真实 Provider                  |
+| MVP 1A-3B-2  | SecretStore、WinCred、最小 Tauri permissions 与安全配置        | DeepSeek 调用、Python 传密钥、Docling、音频 |
+| MVP 1B-0     | 文档导入、存储、状态、删除和后续 PR 的规范门槛                 | 任何功能代码                                |
+| MVP 1B-1A    | 文档存储核心、安全导入、去重和删除协调                         | 正式 UI、解析、外部 AI                      |
+| MVP 1B-1B    | Document commands、documentApi、原生选择器和导入/删除 UI       | 文档解析                                    |
+| PR #14       | 隔离 Docling worker、锁定环境、受限协议和进程/资源边界（完成） | DB、状态、commands、UI、总结模型            |
+| 转录规格     | 转录、纪要、首页入口、输入快照和新路线规格（PR #15 已完成）    | 任何产品代码                                |
+| 国际化基础   | 打包 zh-CN/en-US、非敏感 locale 偏好、Help 和预览手册          | schema、transcript、DeepSeek                |
+| 转录数据核心 | schema v3、转录来源/片段、同步 parser、修正/删除               | UI、DeepSeek                                |
+| 转录导入 UI  | Transcript commands/API、粘贴/导入/预览和首页快速入口          | DeepSeek                                    |
+| 首版真实纪要 | transcript-only DeepSeek 纪要、输入快照、模板和 evidence       | Docling、DOCX、章节重生成                   |
+| 纪要编辑导出 | 用户编辑、revision/stale、章节重生成和 DOCX                    | 文档解析                                    |
+| 文档解析编排 | Docling 解析任务、顺序递增 migration、产物持久化和产品接线     | DeepSeek 改造                               |
+| 文档证据索引 | 文档 chunks/页码/章节/表格证据接入既有 Summary pipeline        | 重复 transcript pipeline                    |
+| 后续         | Sidecar supervisor、WASAPI、实时 ASR 写入 transcript segments  | 屏幕、翻译、说话人                          |
+| 后续         | Window context、accessibility/OCR 和可选 Capture Provider      | 核心强绑定 Screenpipe                       |
+| 后续         | 隔离的说话人增强、翻译、Diart 和 WhisperX worker               | 跨会议默认身份识别                          |
+| MVP 4        | Windows 打包、签名、升级、诊断和产品加固                       | 新核心业务范围                              |
 
 每一行仍须按 `DEVELOPMENT_PLAN.md` 拆成指定的小型 PR。上游阶段只能通过版本化接口为下游提供能力，不得把下游实现提前塞入当前 PR。
 
@@ -369,7 +372,7 @@ Tauri/Rust supervisor
 └── orchestration sidecar (Python 3.12, lightweight API/database coordination)
     ├── realtime-diarization worker (Diart-compatible locked environment)
     ├── post-meeting-alignment worker (WhisperX-compatible locked environment)
-    └── document worker (Docling locked environment, PR #14 complete; product wiring PR #20)
+    └── document worker (Docling locked environment, PR #14 complete; product wiring in feat/document-parsing-orchestration)
 ```
 
 worker 之间只交换受控文件引用和版本化 JSON，不共享 site-packages。每个 worker 必须有独立 lockfile、许可清单、资源上限和合成数据测试。
@@ -378,7 +381,7 @@ worker 之间只交换受控文件引用和版本化 JSON，不共享 site-packa
 
 - Screenpipe 在 MVP 3 也只能作为可替换的 Capture Provider；核心窗口选择、权限、事件模型和删除语义不得依赖它。采用前需用户决定商业授权、采集范围和 Windows 资源预算。
 - WhisperX 的 diarization 模型可能需要 Hugging Face token 和模型条款同意；不得把该 token 写入配置或仓库。
-- Docling 进程基础已由 PR #14 引入，解析持久化/产品接线顺延到 PR #20；transcript-only DeepSeek 纪要在 PR #18 独立实现，不依赖 Docling。不得在同一 PR 同时改变转录持久化、外部 AI、文档解析编排等信任边界。模型准备必须显式执行，外部 AI 调用仍需对应阶段授权。
+- Docling 进程基础已由 PR #14 引入，解析持久化/产品接线顺延到 `feat/document-parsing-orchestration`；transcript-only DeepSeek 纪要在 `feat/deepseek-summary-mvp` 独立实现，不依赖 Docling。不得在同一 PR 同时改变转录持久化、外部 AI、文档解析编排等信任边界。模型准备必须显式执行，外部 AI 调用仍需对应阶段授权。
 
 ### 11.3 Windows 本地验收门槛
 
