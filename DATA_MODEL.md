@@ -8,6 +8,8 @@
 - 外键级联只处理结构化引用，不能替代物理文件的可恢复删除协调。
 - AI 输出始终带模型、模板版本和来源范围，允许重建与审计。
 - API key、access token 和密码不属于业务数据模型，禁止写入数据库。
+- 总结、翻译和会议模式只是界面/能力预设，不建立三套实体或状态机；来源、能力开关和同意事件才是数据处理事实。
+- 原始音频、规范化逐字稿和会议纪要是三个不同的数据类别，分别拥有同意、保留、导出和删除语义。
 
 ## 2. 实体关系
 
@@ -17,7 +19,9 @@ erDiagram
     MEETING ||--o{ PARTICIPANT : has
     MEETING ||--o{ TRANSCRIPT_SOURCE : contains
     TRANSCRIPT_SOURCE ||--o{ TRANSCRIPT_SEGMENT : contains
+    TRANSCRIPT_SOURCE ||--o{ SPEAKER_ALIAS : maps
     TRANSCRIPT_SEGMENT ||--o{ TRANSLATION : has
+    MEETING ||--o{ MANUAL_NOTE : records
     MEETING ||--o{ SCREEN_EVENT : captures
     MEETING ||--o{ DOCUMENT : uploads
     DOCUMENT ||--o{ DOCUMENT_CHUNK : contains
@@ -28,6 +32,8 @@ erDiagram
     TRANSCRIPT_SEGMENT }o--o{ SUMMARY_SOURCE : supports
     TRANSCRIPT_SOURCE ||--o{ SUMMARY_SOURCE : selected
     SUMMARY ||--o{ SUMMARY_SOURCE : cites
+    SUMMARY ||--o{ SUMMARY_MANUAL_NOTE : includes
+    MANUAL_NOTE ||--o{ SUMMARY_MANUAL_NOTE : snapshots
     MEETING ||--o{ PROCESSING_JOB : runs
     MEETING ||--o{ CONSENT_EVENT : records
 ```
@@ -61,28 +67,35 @@ erDiagram
 | `end_meeting`（模拟） | `recording` | `ready`     | Rust 后端写入当前 UTC ISO 8601 `ended_at`   |
 
 - MVP 1A-2 的合成会议没有异步处理步骤，因此结束后直接进入 `ready`。
-- `processing` 保留给 MVP 1C 及后续真实异步处理，只能由受信任后端在创建相应 job 后进入，WebView 不得自行设置。
+- `processing` 保留给共享实时底座及后续真实异步处理，只能由受信任后端在创建相应 job 后进入，WebView 不得自行设置。
 - `failed` 与 `archived` 同样只能通过后续定义的专用 service 操作进入，不属于通用会议更新字段。
 - `deleting` 和 `delete_failed` 只由删除协调 service 进入；普通更新、开始、结束、导入和处理接口均不得写入或绕过。
 - 重复开始、重复结束、`draft → ready`、`ready → recording` 等非法转换必须原子拒绝，并返回稳定错误码 `meeting_invalid_state`。
 - 时间戳由后端生成；前端传入的开始/结束时间不得作为状态转换依据。
 - 生命周期相关的非法操作统一使用对外错误码 `meeting_invalid_state`；不得再引入含义重复的 `invalid_state_transition`。
 
+#### 模式提示
+
+当前 schema v2 不持久化模式，总结模式入口只是导航到共享 meeting/transcript 工作区。实时模式落地前，`feat/live-session-data-core` 可增加可空的 `workflow_mode = summary/translation/meeting` 作为历史列表和恢复布局的提示；旧会议保持 NULL。该字段不得决定权限、同意、数据保留或会议状态，实际已启用能力仍以来源、任务和 `consent_events` 为准。
+
 ### `artifacts`
 
-| 字段            | 类型    | 说明                                 |
-| --------------- | ------- | ------------------------------------ |
-| `id`            | TEXT PK | UUID                                 |
-| `meeting_id`    | TEXT FK | 所属会议                             |
-| `kind`          | TEXT    | `audio/upload/extracted_text/export` |
-| `relative_path` | TEXT    | 应用私有目录内的受控相对路径         |
-| `media_type`    | TEXT    | 经检测的 MIME 类型                   |
-| `byte_size`     | INTEGER | 文件大小                             |
-| `sha256`        | TEXT    | 内容完整性哈希                       |
-| `retention`     | TEXT    | `session/default/pinned`             |
-| `created_at`    | TEXT    | 创建时间                             |
+| 字段            | 类型      | 说明                                 |
+| --------------- | --------- | ------------------------------------ |
+| `id`            | TEXT PK   | UUID                                 |
+| `meeting_id`    | TEXT FK   | 所属会议                             |
+| `kind`          | TEXT      | `audio/upload/extracted_text/export` |
+| `relative_path` | TEXT      | 应用私有目录内的受控相对路径         |
+| `media_type`    | TEXT      | 经检测的 MIME 类型                   |
+| `byte_size`     | INTEGER   | 文件大小                             |
+| `sha256`        | TEXT      | 内容完整性哈希                       |
+| `retention`     | TEXT      | `ephemeral/user_managed/pinned`      |
+| `expires_at`    | TEXT NULL | 仅自动到期策略使用的 UTC 时间        |
+| `created_at`    | TEXT      | 创建时间                             |
 
 `relative_path` 不接受 `..`、盘符、UNC 或绝对路径。原始文件名只用于用户界面显示，并经过长度与控制字符清理。
+
+音频 artifact 只有在当前应用会话存在独立 `store_audio` grant 时才能进入长期目录；默认不创建。`ephemeral` 在转录安全提交或会话结束后清理，`user_managed` 保留到用户明确删除或其主动设置的 `expires_at`，`pinned` 跳过普通到期清理但不能阻止用户明确删除整场会议；取消 pinned 后回到用户选择的策略。保留策略必须随 artifact 持久化，变更或删除通过统一协调器执行，不能由采集线程自行遗留文件。
 
 ### `participants`
 
@@ -92,7 +105,7 @@ erDiagram
 | `meeting_id`              | TEXT FK   | 所属会议                      |
 | `diarization_label`       | TEXT      | 例如 `speaker_01`，会议内唯一 |
 | `display_name`            | TEXT NULL | 用户主动设置或修正的名称      |
-| `voice_sample_path`       | TEXT NULL | Phase 2 可选的受控相对路径    |
+| `voice_sample_path`       | TEXT NULL | 后续说话人增强的受控相对路径  |
 | `voice_sample_consent_at` | TEXT NULL | 语音样本授权时间              |
 | `created_at`              | TEXT      | 创建时间                      |
 
@@ -133,7 +146,6 @@ erDiagram
 | `start_offset_ms` | INTEGER NULL | 相对 source/会议基准的开始毫秒 |
 | `end_offset_ms`   | INTEGER NULL | 相对 source/会议基准的结束毫秒 |
 | `original_text`   | TEXT         | 原始语言的规范化转录正文       |
-| `translated_text` | TEXT NULL    | 可选译文；首版导入不自动翻译   |
 | `language`        | TEXT NULL    | BCP 47 标签                    |
 | `confidence`      | REAL NULL    | 0–1，若来源提供                |
 | `is_final`        | INTEGER      | 0/1；导入来源默认为 1          |
@@ -141,7 +153,7 @@ erDiagram
 | `created_at`      | TEXT         | 创建时间                       |
 | `corrected_at`    | TEXT NULL    | 最近人工修正时间               |
 
-约束：同一 source 的 `(source_id, ordinal)` 唯一；offset 可空，有值时满足 `start_offset_ms >= 0` 且 `end_offset_ms > start_offset_ms`。无时间戳来源使用 ordinal 作为证据位置，不推断时间。第一版不创建 `speakers`/`speaker_aliases`，也不强制连接 `participants`；`speaker_label` 保留来源事实，`speaker_name` 保存用户确认。segment 不是 document chunk。
+约束：同一 source 的 `(source_id, ordinal)` 唯一；offset 可空，有值时满足 `start_offset_ms >= 0` 且 `end_offset_ms > start_offset_ms`。无时间戳来源使用 ordinal 作为证据位置，不推断时间。总结模式导入阶段不创建 `speakers`/`speaker_aliases`，也不强制连接 `participants`；`speaker_label` 保留来源事实，`speaker_name` 保存用户确认。segment 不是 document chunk。译文不写回 segment，`translations` 是唯一权威译文来源。
 
 第一版输入固定为：粘贴最多 2 MiB、TXT/SRT/VTT 文件最多 10 MiB、每 source 最多 20,000 个 segments、单 segment 正文最多 64 KiB；严格 UTF-8，拒绝 NUL 和除 TAB/LF/CR 外的危险 C0 控制字符。普通文本只识别明确的 `姓名: 内容`，格式不清时 speaker 为空；SRT/VTT 保留 cue 时间和顺序。解析器不调用 Docling/网络，不执行文本中的 URL、代码或指令。
 
@@ -194,15 +206,15 @@ erDiagram
 | --------------------------------------- | ---------------- | --------------------------------------------------- |
 | `importing → staged`                    | MVP 1B-1A        | 文件完成校验并原子进入正式目录                      |
 | `importing → import_failed`             | MVP 1B-1A        | 复制、类型、配额、完整性或存储失败                  |
-| `staged → parsing`                      | PR #20           | Rust 编排器持久化任务后调用隔离 Worker              |
-| `parsing → parsed/parse_failed`         | PR #20           | Rust 复验产物后持久化受控结果或稳定错误             |
+| `staged → parsing`                      | 参考材料增强     | Rust 编排器持久化任务后调用隔离 Worker              |
+| `parsing → parsed/parse_failed`         | 参考材料增强     | Rust 复验产物后持久化受控结果或稳定错误             |
 | `staged/parsed → deleting`              | MVP 1B-1A 及后续 | 接受删除请求                                        |
 | `import_failed/parse_failed → deleting` | MVP 1B-1A 及后续 | 清理失败输入或解析产物                              |
 | `deleting → 记录消失`                   | MVP 1B-1A        | 物理文件和关联 artifacts 全部清理成功后才删除元数据 |
 | `deleting → delete_failed`              | MVP 1B-1A        | 清理失败，保留安全错误和可恢复状态                  |
 | `delete_failed → deleting`              | MVP 1B-1A        | 幂等重试                                            |
 
-页面和通用 update 不得直接修改状态。安全导入阶段只实现 `importing/staged/import_failed/deleting/delete_failed`；PR #14 只建立无数据库访问的 Worker 基础，`parsing/parsed/parse_failed` 由 PR #20 引入。未知状态 fail closed。
+页面和通用 update 不得直接修改状态。安全导入阶段只实现 `importing/staged/import_failed/deleting/delete_failed`；PR #14 只建立无数据库访问的 Worker 基础，`parsing/parsed/parse_failed` 由 `feat/document-parsing-orchestration` 引入。未知状态 fail closed。
 
 同一会议使用 `(meeting_id, sha256)` 唯一约束识别相同内容。重复时不创建第二条记录或物理副本，返回 `document_already_imported` 和已有 document ID。不同会议首版不做物理去重；文件名不参与重复判断，同名不同内容允许导入，不同名相同内容视为重复。
 
@@ -249,15 +261,51 @@ schema v2 使用统一删除任务表协调 meeting/document 的文件清理：`
 
 ### `translations`
 
-| 字段              | 类型      | 说明                    |
-| ----------------- | --------- | ----------------------- |
-| `id`              | TEXT PK   | UUID                    |
-| `segment_id`      | TEXT FK   | 原始转录片段            |
-| `target_language` | TEXT      | 目标语言                |
-| `text`            | TEXT      | 译文                    |
-| `provider`        | TEXT      | 本地/外部 provider 标识 |
-| `model`           | TEXT NULL | 模型标识，不含凭据      |
-| `created_at`      | TEXT      | 创建时间                |
+| 字段               | 类型      | 说明                             |
+| ------------------ | --------- | -------------------------------- |
+| `id`               | TEXT PK   | UUID                             |
+| `segment_id`       | TEXT FK   | 原始转录片段                     |
+| `segment_revision` | INTEGER   | 翻译所依据的片段修订             |
+| `target_language`  | TEXT      | 目标语言                         |
+| `text`             | TEXT      | 译文                             |
+| `provider`         | TEXT      | 本地/外部 provider 标识          |
+| `model`            | TEXT NULL | 模型标识，不含凭据               |
+| `status`           | TEXT      | `queued/completed/failed`        |
+| `error_code`       | TEXT NULL | 稳定错误分类，不含原文或请求正文 |
+| `created_at`       | TEXT      | 创建时间                         |
+| `updated_at`       | TEXT      | 最近更新时间                     |
+
+同一 segment revision 与目标语言只保留一个结果；原文被用户修正后必须为新的 segment revision 创建新译文，读取时只选择与当前 revision 精确匹配的记录，旧记录仅作历史且不得继续显示为当前译文。翻译模式只消费已经确定的转录片段，partial ASR 结果不得进入最终纪要快照。
+
+### `speaker_aliases`（实时语言数据阶段计划）
+
+| 字段           | 类型      | 说明                       |
+| -------------- | --------- | -------------------------- |
+| `id`           | TEXT PK   | UUID                       |
+| `meeting_id`   | TEXT FK   | 所属会议                   |
+| `source_id`    | TEXT FK   | 标签所属转录来源           |
+| `source_label` | TEXT      | ASR/导入来源的原始匿名标签 |
+| `display_name` | TEXT NULL | 用户在本场会议设置的显示名 |
+| `revision`     | INTEGER   | 从 1 开始，改名时递增      |
+| `created_at`   | TEXT      | 创建时间                   |
+| `updated_at`   | TEXT      | 最近更新时间               |
+
+`(source_id, source_label)` 唯一。实时工作区通过该映射统一显示改名，不能批量覆写历史 segment 的原始 `speaker_label`；默认不跨会议复用名称或身份。该表由独立的实时语言数据 PR 引入，不属于 schema v3。
+
+### `manual_notes`（会议模式数据阶段计划）
+
+| 字段               | 类型         | 说明                             |
+| ------------------ | ------------ | -------------------------------- |
+| `id`               | TEXT PK      | UUID                             |
+| `meeting_id`       | TEXT FK      | 所属会议                         |
+| `kind`             | TEXT         | `bookmark/text`                  |
+| `start_segment_id` | TEXT FK NULL | 书签引用的起始最终片段           |
+| `end_segment_id`   | TEXT FK NULL | 书签引用的结束最终片段           |
+| `body`             | TEXT NULL    | 用户主动输入的文字，不由模型伪造 |
+| `created_at`       | TEXT         | 创建时间                         |
+| `updated_at`       | TEXT         | 最近更新时间                     |
+
+`bookmark` 至少引用一个当前会议的最终 segment；`text` 必须包含通过长度/控制字符校验的正文。两者都可进入最终快照并生成 `manual_note` evidence，但必须保留来源类型，不能伪装成会议已确认的原始发言。
 
 ### `summaries`
 
@@ -267,6 +315,8 @@ schema v2 使用统一删除任务表协调 meeting/document 的文件清理：`
 | ----------------- | ------- | ----------------------------------------- |
 | `id`              | TEXT PK | UUID                                      |
 | `meeting_id`      | TEXT FK | 所属会议                                  |
+| `run_purpose`     | TEXT    | `checkpoint/final`                        |
+| `trigger_kind`    | TEXT    | `manual/interval/topic/final`             |
 | `kind`            | TEXT    | `overview/decisions/actions/risks/custom` |
 | `content_json`    | TEXT    | 版本化结构化结果                          |
 | `provider`        | TEXT    | 例如 `deepseek` 或 `local`                |
@@ -280,6 +330,8 @@ schema v2 使用统一删除任务表协调 meeting/document 的文件清理：`
 | `is_user_edited`  | INTEGER | 0/1                                       |
 | `created_at`      | TEXT    | 创建时间                                  |
 
+简约版 checkpoint 首先只允许 `manual` 和 `interval`。`topic` 是后续可修正建议，不得仅由屏幕变化触发。checkpoint 只帮助会议中导航；`final` run 必须重新冻结原始转录片段，不能把 checkpoint 摘要当作唯一事实来源。固定时间触发在没有新增最终片段时必须去重。
+
 ### `summary_sources`
 
 | 字段               | 类型    | 说明                           |
@@ -292,6 +344,18 @@ schema v2 使用统一删除任务表协调 meeting/document 的文件清理：`
 | `relation`         | TEXT    | `supports/contradicts/context` |
 
 联合唯一键必须包含 summary、segment 和 revision。创建 Summary run 时冻结 source IDs、segment IDs/revisions/order、speaker、offsets、language、模板、输出语言和创建时间；模型运行期间后续编辑不影响当前 run。重新生成创建新的 summary revision，不能覆盖用户编辑。完整 transcript 不重复复制到每个 evidence item，仅保存稳定引用和必要摘录。
+
+### `summary_manual_notes`（会议重点阶段计划）
+
+| 字段             | 类型    | 说明                           |
+| ---------------- | ------- | ------------------------------ |
+| `summary_id`     | TEXT FK | Summary run/revision           |
+| `manual_note_id` | TEXT FK | 被冻结的用户书签或文字笔记     |
+| `note_revision`  | INTEGER | 快照使用的笔记修订             |
+| `ordinal`        | INTEGER | 当次输入顺序                   |
+| `relation`       | TEXT    | `supports/contradicts/context` |
+
+`summary_sources` 只冻结 transcript segments；不得把 manual note ID 塞入 transcript source/segment 字段。`feat/meeting-notes-core` 通过本专用关联把用户笔记纳入同一 Summary run，并生成 `manual_note` evidence。
 
 ### `decisions`
 
@@ -336,14 +400,18 @@ schema v2 使用统一删除任务表协调 meeting/document 的文件清理：`
 
 ### `consent_events`
 
-| 字段          | 类型    | 说明                                   |
-| ------------- | ------- | -------------------------------------- |
-| `id`          | TEXT PK | UUID                                   |
-| `meeting_id`  | TEXT FK | 所属会议                               |
-| `capability`  | TEXT    | `recording/screen_context/external_ai` |
-| `decision`    | TEXT    | `granted/revoked`                      |
-| `scope_json`  | TEXT    | 数据范围、用途和 provider              |
-| `recorded_at` | TEXT    | 记录时间                               |
+该通用表由 `feat/consent-data-core` 在任何真实外部 Provider 或设备采集前创建；后续阶段只通过受控 capability 扩展和 service 使用，不得各自建立不可审计的授权存储。
+
+| 字段          | 类型    | 说明                                                                                                             |
+| ------------- | ------- | ---------------------------------------------------------------------------------------------------------------- |
+| `id`          | TEXT PK | UUID                                                                                                             |
+| `meeting_id`  | TEXT FK | 所属会议                                                                                                         |
+| `capability`  | TEXT    | `microphone/system_audio/screen_context/store_audio/live_translation/checkpoint_external_ai/summary_external_ai` |
+| `decision`    | TEXT    | `granted/revoked`                                                                                                |
+| `scope_json`  | TEXT    | 数据范围、用途和 provider                                                                                        |
+| `recorded_at` | TEXT    | 记录时间                                                                                                         |
+
+不同 capability 不得捆绑授权。`scope_json` 至少记录本次应用会话、目标设备/窗口的安全标识、Provider、用途、数据类别、checkpoint 频率/发送窗口和是否持续外发；不得包含凭据、正文、绝对路径或原始屏幕内容。撤销事件不覆盖历史 granted 记录，运行中的对应采集或发送必须立即停止。采集与持续外发的 grant 在应用重启后失效，历史事件只作审计。
 
 ## 4. SQLite 约束与索引
 
@@ -363,6 +431,8 @@ app-data/
 └── meeting-data/
     ├── meetings/<meeting-id>/
     │   ├── documents/<document-id>.<safe-extension>
+    │   ├── audio/<artifact-id>.<safe-extension>   # 仅在用户单独选择保存时
+    │   ├── exports/<export-id>.<safe-extension>
     │   └── artifacts/
     ├── staging/<random-import-id>.tmp
     ├── deletion-trash/<deletion-id>/
@@ -399,7 +469,7 @@ MVP 1A-2-1 的当前无文件删除状态契约固定如下：
 | 未知状态        | fail closed                                     |
 
 1. 接受请求时在事务中将会议设为 `deleting`、写入 `deleted_at` tombstone，并禁止编辑、开始、导入或生成纪要。
-2. 持久化协调状态必须能枚举原始文档，以及未来解析、音频、截图、转写、纪要、缓存和导出产物。
+2. 持久化协调状态必须能枚举原始文档，以及未来解析、音频、转写、译文、speaker aliases、manual notes、checkpoint、屏幕临时数据、纪要、证据、缓存和导出产物。
 3. 取消或等待任务并关闭句柄后，将受控文件同卷移动至应用私有 `deletion-trash`，或采用具备同等恢复能力的设计。
 4. 只有文件和派生数据清理全部成功后，才最终删除数据库记录和 tombstone。
 5. 任何步骤失败时进入 `delete_failed`，保留稳定安全错误码，不伪装成功，也不把残留重新暴露为正常会议数据。

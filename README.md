@@ -1,12 +1,12 @@
 # MeetingLens
 
-MeetingLens is a privacy-first Windows desktop workspace whose first goal is to turn pasted or imported meeting transcripts into detailed, editable, evidence-linked minutes with as few steps as possible. Live capture, document context, screen evidence, speaker enhancement, and translation extend that core path.
+MeetingLens is a privacy-first Windows desktop assistant with three simple entry modes backed by one shared session engine: Summary, Translation, and Meeting. Its first real-value path turns pasted or imported meeting transcripts into detailed, editable, evidence-linked minutes; live audio, translation, and screen context extend the same transcript pipeline in later small releases.
 
-PR #1–#14 are merged. The meeting data/UI foundation, Provider mocks, authenticated Sidecar boundary, Windows SecretStore, secure document import, and isolated Docling Worker are complete. Docling is not connected to SQLite, Tauri commands, document state, or product UI and is retained for later reference-document enrichment. The current schema is v2; transcript persistence/import and real summary generation remain unimplemented.
+PR #1–#15 are merged. The meeting data/UI foundation, Provider mocks, authenticated Sidecar boundary, Windows SecretStore, secure document import, isolated Docling Worker, and transcript/summary specification are complete. Docling is not connected to SQLite, Tauri commands, document state, or product UI and is retained for later reference-document enrichment. The current schema is v2; transcript persistence/import and real summary generation remain unimplemented.
 
 The Provider runtime defines Capture, Transcription, Translation, Summary, and DocumentParser capability boundaries. Current implementations are explicit deterministic in-memory mocks: they do not access devices, files, or networks, and can be replaced through an application-owned Registry without changing page business logic.
 
-The near-term value path is transcript-first: PR #15 freezes the specification; PR #16 adds schema v3 transcript sources/segments and paste/TXT/SRT/VTT parsing; PR #17 adds paste/import/preview quick actions; PR #18 delivers transcript-only DeepSeek summaries. Docling product wiring follows later and is not a prerequisite for text summaries.
+The active product direction is defined in [the simplified three-mode specification](SIMPLIFIED_MODE_SPEC.md). The previous unimplemented roadmap is paused, while all merged foundations remain reusable. Delivery starts with a real Summary mode for paste/TXT/SRT/VTT, then adds a shared realtime transcription foundation, Translation mode, Meeting mode, and advanced screen intelligence in separate reviewable PRs.
 
 ## Prerequisites
 
@@ -70,7 +70,7 @@ An unauthenticated direct request must fail closed:
 try { Invoke-WebRequest http://127.0.0.1:8765/health } catch { $_.Exception.Response.StatusCode.value__ }
 ```
 
-The current fixed port remains a development contract, but the host is locked to `127.0.0.1` and every route requires the current ephemeral token. Random ports, packaged Sidecar binaries, restart monitoring, crash recovery, and orphan cleanup remain in the MVP 1C supervisor. The SecretStore is deliberately separate and is never used for the ephemeral Sidecar session token.
+The current fixed port remains a development contract, but the host is locked to `127.0.0.1` and every route requires the current ephemeral token. Random ports, packaged Sidecar binaries, restart monitoring, crash recovery, and orphan cleanup remain in `feat/sidecar-supervisor`. The SecretStore is deliberately separate and is never used for the ephemeral Sidecar session token.
 
 ## Secure API key storage
 
@@ -88,9 +88,9 @@ Files are streamed into private staging storage, hashed with SHA-256, validated,
 
 ## Isolated document parser
 
-PR #14 established a separate Python 3.12 environment under `workers/docling`; it is not installed into the authenticated HTTP Sidecar. Rust owns the parser process and launches one request per process with a cleared environment, no network listener, bounded standard I/O, a 150-second timeout, and a 4 GiB Windows Job Object memory cap. Inputs and outputs remain beneath Rust-approved staging roots and are revalidated by size and SHA-256. Model downloads are explicit and versioned outside the repository; see [the worker guide](workers/docling/README.md). Database-backed parsing orchestration remains deferred to PR #20 and is not a prerequisite for transcript import or summary generation.
+PR #14 established a separate Python 3.12 environment under `workers/docling`; it is not installed into the authenticated HTTP Sidecar. Rust owns the parser process and launches one request per process with a cleared environment, no network listener, bounded standard I/O, a 150-second timeout, and a 4 GiB Windows Job Object memory cap. Inputs and outputs remain beneath Rust-approved staging roots and are revalidated by size and SHA-256. Model downloads are explicit and versioned outside the repository; see [the worker guide](workers/docling/README.md). Database-backed parsing orchestration remains deferred to `feat/document-parsing-orchestration` and is not a prerequisite for transcript import or summary generation.
 
-The validated local model inventory is 564,981,412 bytes. Windows CPU smoke currently reports every allowlisted format available with RapidOCR/ONNX Runtime, a final acceptance peak process-tree RSS of about 1.67 GB, and no network listener or residual Worker process. These capabilities are independent acceptance results; the product does not expose parsing until PR #20.
+The validated local model inventory is 564,981,412 bytes. Windows CPU smoke currently reports every allowlisted format available with RapidOCR/ONNX Runtime, a final acceptance peak process-tree RSS of about 1.67 GB, and no network listener or residual Worker process. These capabilities are independent acceptance results; the product does not expose parsing until `feat/document-parsing-orchestration`.
 
 ## Transcript-first summary path
 
@@ -102,6 +102,7 @@ The initial templates are detailed meeting minutes, concise meeting summary, and
 
 ## Project documents
 
+- [Simplified three-mode specification](SIMPLIFIED_MODE_SPEC.md)
 - [Product specification](PRODUCT_SPEC.md)
 - [Architecture](ARCHITECTURE.md)
 - [Data model](DATA_MODEL.md)
@@ -122,15 +123,17 @@ The initial templates are detailed meeting minutes, concise meeting summary, and
 9. **MVP 1B-1A — complete:** document storage core, safe import, deduplication, and recoverable deletion (`feat/document-storage-core`, PR #12).
 10. **MVP 1B-1B — complete:** Document commands, native picker, typed progress, and import/delete UI (`feat/document-import-ui`, PR #13).
 11. **Complete:** isolated offline Docling Worker foundation (`feat/docling-worker`, PR #14); product wiring is intentionally deferred.
-12. **Current documentation:** transcript/summary product and architecture alignment (`docs/transcript-and-summary-spec`, PR #15).
-13. **Next:** schema v3 transcript data core and paste/TXT/SRT/VTT parsing (`feat/transcript-data-core`, PR #16).
-14. **Then:** transcript import/paste UI and human-centered home shortcuts (`feat/transcript-import-ui`, PR #17).
-15. **First real minutes:** transcript-only DeepSeek summary, immutable snapshot, templates, evidence, and Markdown (`feat/deepseek-summary-mvp`, PR #18).
-16. **Editing/export:** revisions, stale state, section regeneration, and DOCX (`feat/summary-editing-export`, PR #19).
-17. **Reference enrichment:** Docling orchestration (`feat/document-parsing-orchestration`, PR #20), then document evidence indexing (`feat/document-evidence-index`, PR #21).
-18. **Later:** Sidecar supervisor, Windows audio and realtime ASR into transcript segments; screen context; speaker enhancement; realtime translation; Windows packaging.
+12. **Complete documentation baseline:** transcript/summary product and architecture alignment (`docs/transcript-and-summary-spec`, PR #15).
+13. **Current direction alignment:** freeze the three simple modes and shared pipeline (`docs/simplified-three-mode-spec`).
+14. **Decision gate:** the paused `feat/i18n-user-guide-foundation` PR remains untouched until the owner chooses whether to retain it. If retained, it must be updated on the new `main` and stripped of obsolete roadmap changes before merge.
+15. **Summary mode foundation:** transcript data core (`feat/transcript-data-core`) and paste/TXT/SRT/VTT workspace (`feat/summary-mode-import`).
+16. **First real minutes:** separate summary data/snapshot core, consent data core, DeepSeek Provider, and result workspace PRs; then editing/export.
+17. **Shared live foundation:** live-session data, Sidecar supervisor, Windows audio capture, then realtime ASR into the same transcript segments.
+18. **Translation mode:** language/checkpoint data core, realtime Provider, checkpoint runtime, then the user workspace.
+19. **Meeting mode:** manual-note/bookmark data core, then the user workspace; screen context and advanced automation follow independently.
+20. **Reference enrichment:** Docling orchestration and document evidence indexing remain optional later enhancements.
 
-The authoritative branch mapping, exclusions, and acceptance criteria are in [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md). Storage, import UI, Docling, and DeepSeek are separate PRs. Screenpipe, if adopted, is an optional provider rather than a core dependency.
+The authoritative branch mapping, exclusions, and acceptance criteria are in [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md). Database, UI, external Provider, audio, screen, and heavy-worker trust boundaries remain separate PRs. Screenpipe, if adopted, is an optional provider rather than a core dependency.
 
 ## Pull request policy
 

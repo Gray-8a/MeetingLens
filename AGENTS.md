@@ -80,12 +80,16 @@
 
 ## 产品价值与近期顺序
 
-- MeetingLens 的第一核心价值是让用户以最少步骤把已有会议转录、粘贴文本、实时转写和相关材料转化为详实、可编辑、可追溯的会议纪要。
+- 当前产品采用 `SIMPLIFIED_MODE_SPEC.md` 定义的“一个共享引擎、三个简约入口”：总结模式、翻译模式、会议模式。旧版未开始的路线冻结但不删除已完成基础。
+- MeetingLens 的第一核心价值仍是让用户以最少步骤把已有会议转录或粘贴文本转化为详实、可编辑、可追溯的会议纪要；总结模式必须先形成真实闭环，翻译和会议模式复用同一数据管线逐步开放。
 - 转录是纪要的第一类来源；参考文档是可选增强。`transcripts` 与 `documents` 是不同语义和信任边界，转录导入不得强制经过 DocumentService 或 Docling。
 - Docling Worker Foundation 已完成并保留，但数据库/UI 编排顺延到 `feat/document-parsing-orchestration`；不得把它恢复为 transcript-only 纪要的前置依赖。
-- 当前固定顺序为：`docs/transcript-and-summary-spec` → `feat/transcript-data-core` → `feat/transcript-import-ui` → `feat/deepseek-summary-mvp` → `feat/summary-editing-export` → `feat/document-parsing-orchestration` → `feat/document-evidence-index`。
+- 当前固定顺序为：`docs/simplified-three-mode-spec` → 用户处理暂停中的 i18n PR → `feat/transcript-data-core` → `feat/summary-mode-import` → `feat/summary-run-core` → `feat/consent-data-core` → `feat/summary-provider-deepseek` → `feat/summary-mode-minutes` → `feat/summary-editing-export` → `feat/live-session-data-core` → `feat/sidecar-supervisor` → `feat/audio-capture` → `feat/realtime-transcription` → `feat/live-language-data-core` → `feat/realtime-translation-provider` → `feat/checkpoint-summary-runtime` → `feat/translation-mode-workspace` → `feat/meeting-notes-core` → `feat/meeting-mode-workspace`。之后才安排屏幕上下文、自动话题边界、说话人增强、透明浮窗和图表增强。分支名、停止线和更后续顺序以 `DEVELOPMENT_PLAN.md` 为准。
+- 未合并的旧路线 PR 不得擅自合并、关闭或作为新分支基线；必须先由用户决定其去留。若保留暂停中的 i18n PR，必须先基于包含本规格的最新 `main` 更新，并删除会恢复旧路线的文档改动，再重新验收；不得原样合并。新功能不得堆叠在暂停的 PR 上。
 - 第一版转录只承诺粘贴 UTF-8 文本以及 TXT/SRT/VTT。平台专用 adapter 必须取得脱敏真实样例后单独增加；视频/音频文件转录不属于近期范围。
 - 纪要资格取决于是否存在可冻结的用户确认输入，不得以 `meeting.status == ready` 作为唯一门槛。纪要运行使用不可变输入快照，重新生成创建 revision，不得静默覆盖用户编辑。
+- 三种模式只是界面和能力预设，不得建立三套会议、转录、摘要或删除模型。原始音频、逐字稿和会议纪要必须作为不同数据类型、同意范围和保留选项处理。
+- 应用启动时不得自动申请麦克风、系统音频或屏幕权限。每项采集、保存原始音频、持续翻译外发和纪要外发必须分别获得本次会话同意并持续显示状态。
 
 ## 文档导入与删除边界
 

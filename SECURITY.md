@@ -54,22 +54,27 @@ MVP 1A-3B-1 的本地会话认证防止局域网设备、普通网页和未持�
 
 ## 5. 录音与同意
 
-- 开始录音必须由明确点击触发，并持续显示不可忽略的录音指示。
+- 应用启动或仅选择模式时不得自动申请、打开或探测音频/屏幕内容。
+- 麦克风、系统音频和保存原始音频是三个独立选择；开始采集必须由明确点击触发，并持续显示不可忽略的来源指示。
 - UI 在首次录音前提示用户遵守所在地法律、组织政策和参会者同意要求。
-- 撤销录音权限后立即停止采集并完成文件句柄关闭。
+- 撤销任一采集同意后立即停止对应来源并完成文件句柄关闭；其他已同意来源可以继续。
 - 不实现隐藏录音、静默自启或远程触发录音。
 - 录音设备 ID 属于本地设置，不写入诊断日志。
+- “不保存原始音频”不等于“没有处理音频”；界面必须分别说明临时处理、规范化转录保留和文件导出。
+- 权限或设备不可用时安全降级：无屏幕可继续音频会议，无音频可进入总结模式，不得诱导用户扩大权限。
 
 MVP 1A-3A 的 `MockCaptureProvider` 不访问真实设备、不申请权限，也不生成媒体文件；“microphone/systemAudio/window/screen”只作为未来契约类型和显式 Mock 来源存在。真实权限与同意流程只能在对应后续阶段实现。
 
 ## 6. 屏幕上下文
 
 - 默认关闭，只采集用户选定窗口或区域。
-- 首选本地 OCR 后保存文字片段，不长期保存原始截图。
+- 单应用选择优先于全屏；全屏捕获属于后续高级选项。
+- 首选本地变化检测和 OCR 后保存用户确认的文字片段，不长期保存原始截图。
 - 保存前提供预览、编辑和取消；密码框、通知和常见敏感模式应自动遮蔽。
 - 不对屏幕数据执行后台连续上传。
-- 只允许捕获用户显式选定的窗口；窗口失效、标题/进程身份变化或权限撤销时立即暂停。
-- Screenpipe 只能作为 MVP 3 中可替换的可选 Capture Provider。采用前必须先复核商业授权、版本、默认采集行为、本地 API 暴露和资源占用；未经批准不得把它作为常驻全局采集器或核心依赖。
+- 只允许捕获用户显式选定的窗口；以稳定窗口句柄和进程身份复核目标，窗口关闭、句柄/进程身份失效或权限撤销时立即暂停。普通标题变化不能单独撤销捕获。
+- 屏幕变化本身不能直接证明话题变化、决定或行动项，也不能单独触发最终总结。
+- Screenpipe 只能作为可替换的可选 Capture Provider。采用前必须先复核商业授权、版本、默认采集行为、本地 API 暴露和资源占用；未经批准不得把它作为常驻全局采集器或核心依赖。
 
 ## 7. 外部 AI 数据流
 
@@ -82,6 +87,10 @@ MVP 1A-3A 的 `MockCaptureProvider` 不访问真实设备、不申请权限，�
 5. 执行可配置脱敏，并让用户查看最终文本预览。
 6. 设置连接/读取超时和最大重试，错误中不得包含请求正文或 key。
 7. 将 AI 输出标记为草稿，并保留来源链接供核验。
+
+持续实时翻译、定时 checkpoint 和一次性纪要生成是三个不同的外发目的，必须分别同意。checkpoint 同意必须显示频率、发送窗口和 Provider；每次只冻结上一个成功 checkpoint 后的新增最终片段，失败重试复用同一快照。实时界面需持续显示 Provider、目标语言、发送内容类型和停止入口；关闭对应能力后不得继续排队或发送新片段。阶段摘要和最终纪要都不能把原始音频、截图或用户文件直接发送给外部 Provider。
+
+采集和持续外发同意只对当前应用会话有效，重启后必须重新确认；历史 `granted` 事件仅用于审计，不能自动重新打开设备或恢复发送。
 
 提供商的保留政策和地区处理条款必须在启用生产集成前重新审查。
 
@@ -106,7 +115,7 @@ DeepSeek 生产适配器必须使用当前模型名 `deepseek-v4-flash` / `deeps
 - MVP 1A-3B-1 继续使用固定开发端口，但只允许 `127.0.0.1`，并由 Rust 每次启动生成至少 32 bytes 随机数据的临时 bearer token。
 - Token 只通过子进程环境传递，不写入命令行、URL、文件、SQLite、WebView、日志或凭据库；应用重启后旧会话失效。
 - Rust 是唯一授权业务调用方并集中注入 Authorization Header；React/WebView 不直接请求 Sidecar，也不持有 token。
-- 随机端口、打包二进制、崩溃重启、健康监控和孤儿进程回收由 MVP 1C 的 supervisor 完成。
+- 随机端口、打包二进制、崩溃重启、健康监控和孤儿进程回收由 `feat/sidecar-supervisor` 完成。
 - 限制请求体大小、并发任务数、单任务运行时间和临时磁盘使用量。
 - 任务只引用由 Rust 注册的 artifact ID，不接受任意绝对路径。
 - 进程退出时清理临时文件；启动时清理已过期 job 目录。
@@ -154,10 +163,10 @@ Rust 是文件选择、校验、复制和私有存储的信任边界。React/Web
 - 原始文件名只作显示元数据；内部使用 document UUID，拒绝 `..`、绝对路径、盘符、UNC、Alternate Data Streams 和路径逃逸。
 - 文件在应用私有 staging 随机临时文件中流式复制并计算 SHA-256，验证最终大小/类型/配额后同卷原子 rename；失败清理临时文件。SHA-256 只用于完整性和同会议去重，不是恶意软件检测。
 - 不执行、不记录文件内容，不长期保存到 Temp/Git/工作目录，也不为文件设置可执行权限。
-- 文档内容解析只允许隔离的 Docling Worker 执行；PR #14 已建立独立锁定环境、Rust 注册且带哈希的受控引用、单请求进程、取消、超时、Windows Job Object 内存限制、页数/输出限制和畸形协议测试。PR #20 才把该 Worker 接入文档状态与持久化。
+- 文档内容解析只允许隔离的 Docling Worker 执行；PR #14 已建立独立锁定环境、Rust 注册且带哈希的受控引用、单请求进程、取消、超时、Windows Job Object 内存限制、页数/输出限制和畸形协议测试。`feat/document-parsing-orchestration` 才把该 Worker 接入文档状态与持久化。
 - Worker 不监听端口、不继承凭据/proxy/session token、不访问 SQLite；Docling 的远程服务、插件、VLM 和隐式模型下载均关闭。模型只通过显式脚本下载到仓库外目录，并用固定 revision 和逐文件 SHA-256 manifest 验证。
 - Worker 输出只能位于 Rust 批准的 parser staging 根并使用固定相对文件名；Rust 在持久化前重新验证路径、文件类型、大小、总量与 SHA-256。稳定错误不得包含原文、文件名、绝对路径、环境值或原生异常。
-- Docling Worker Foundation 已完成，但产品接线顺延到 PR #20。Docling 只增强参考文档证据，不是粘贴/TXT/SRT/VTT 或 transcript-only Summary 的前置依赖。
+- Docling Worker Foundation 已完成，但产品接线顺延到 `feat/document-parsing-orchestration`。Docling 只增强参考文档证据，不是粘贴/TXT/SRT/VTT 或 transcript-only Summary 的前置依赖。
 
 ## 11. 本地存储与删除
 
@@ -220,19 +229,30 @@ SecretStore command 不记录请求 DTO、凭据值、长度、首尾字符、Cr
 | MVP 1B-1A   | Rust 安全导入、私有 staging、签名/配额、去重、删除 tombstone 与恢复测试                |
 | MVP 1B-1B   | 最小 Document commands、原生选择器、无路径 DTO、UI 安全错误和删除/重试交互             |
 | PR #14      | 隔离 Docling Worker、锁定供应链、离线模型门槛、资源上限、取消和产物完整性校验（完成）  |
-| PR #15      | 转录输入、纪要快照、外部发送、证据和新开发顺序的安全规格                               |
-| PR #16      | 严格 UTF-8、大小/片段上限、同步 parser、source/segment 修正删除与 schema v3            |
-| PR #17      | Rust 原生转录选择器、无路径 DTO、粘贴/导入预览和安全错误                               |
-| PR #18      | transcript-only 外发预览/同意、SecretStore key、快照、证据验证和无输入 fail closed     |
-| PR #19      | 用户编辑保护、revision/stale、章节重生成隔离和 DOCX 导出                               |
-| PR #20      | Rust-only Docling 编排、解析状态/持久化、恢复/删除竞态和 WebView 无路径/正文边界       |
-| PR #21      | 文档 chunks/页码/章节证据接入，保持 transcript 与 document 语义隔离                    |
-| MVP 1C      | 录音同意、sidecar supervisor、崩溃恢复、孤儿进程回收、临时文件清理和生命周期安全日志   |
-| MVP 2       | voice sample 明示同意/删除、匿名标签、模型 worker 隔离                                 |
-| MVP 3       | 目标窗口约束、敏感内容遮蔽、截图 TTL/删除、可选 Provider 权限边界                      |
-| MVP 4       | 签名、升级/回滚、SBOM、诊断导出脱敏和卸载残留检查                                      |
+| 转录规格    | 转录输入、纪要快照、外部发送和证据的安全规格（PR #15 已完成）                          |
+| 三模式对齐  | 独立 capability 同意、权限降级、屏幕最小化和三类输出保留规则                           |
+| 转录数据    | 严格 UTF-8、大小/片段上限、同步 parser、source/segment 修正删除与 schema v3            |
+| 总结入口    | Rust 原生转录选择器、无路径 DTO、粘贴/导入预览和安全错误                               |
+| 纪要数据    | 不可变快照、revision、evidence allowlist、无输入和未知引用 fail closed                 |
+| 同意数据    | capability allowlist、grant/revoke、重启失效、最小 scope、审计和无正文/凭据            |
+| 纪要服务    | SecretStore key、独立外发同意、HTTPS、超时/取消、响应 schema 和日志脱敏                |
+| 纪要工作区  | 外发预览、本次确认、安全状态/错误和 evidence 导航                                      |
+| 编辑导出    | 用户编辑保护、revision/stale、章节重生成隔离和 DOCX 导出                               |
+| 实时数据    | 复用同意服务、capture session、音频 artifact 保留、删除协调和 mode 提示不越权          |
+| 实时进程    | sidecar supervisor、崩溃恢复、孤儿进程回收、临时文件和生命周期安全日志                 |
+| 音频采集    | 麦克风/系统音频/保存分别同意、可见状态、句柄释放和权限拒绝降级                         |
+| 语言数据    | 译文单一真相、segment revision、匿名 speaker 映射、checkpoint 增量快照                 |
+| 翻译服务    | 持续外发独立同意、只发最终片段、关闭后停止发送、重试与日志脱敏                         |
+| 阶段摘要    | 独立同意、频率/窗口预览、新片段游标、失败重试复用快照和停止后取消                      |
+| 翻译工作区  | 主窗口安全展示、匿名 speaker 改名、状态和停止入口                                      |
+| 重点数据    | 书签引用同会议最终片段、用户文字校验、manual_note evidence 和删除                      |
+| 会议工作区  | 翻译开关、checkpoint 与原始转录快照分离、无屏幕安全降级                                |
+| 屏幕增强    | 单应用目标约束、身份复核、敏感内容遮蔽、临时帧 TTL/删除和可选 Provider 权限边界        |
+| 说话人增强  | voice sample 明示同意/删除、匿名标签、模型 worker 隔离                                 |
+| 参考增强    | Rust-only Docling 编排、解析恢复/删除竞态和 document evidence 语义隔离                 |
+| 产品化      | 签名、升级/回滚、SBOM、诊断导出脱敏和卸载残留检查                                      |
 
-Docling 的进程/依赖攻击面已由 PR #14 隔离；数据库/状态/UI 编排只能在 PR #20 引入。DeepSeek 的 transcript-only 外部数据流只能在 PR #18 引入，文档 evidence 只能在 PR #21 接入。不得在同一 PR 同时扩大转录持久化、外部 AI、文件解析和证据索引信任边界。
+Docling 的进程/依赖攻击面已由 PR #14 隔离；数据库/状态/UI 编排只能在后续 `feat/document-parsing-orchestration` 引入。transcript-only 外部数据流只能在 `feat/summary-provider-deepseek` 引入，正式纪要页面由后续 `feat/summary-mode-minutes` 集成；文档 evidence 只能在独立的 `feat/document-evidence-index` 接入。不得在同一 PR 同时扩大转录持久化、外部 AI、文件解析和证据索引信任边界。
 
 ## 16. 安全验收门槛
 
