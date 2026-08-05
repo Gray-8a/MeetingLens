@@ -4,6 +4,8 @@
 
 MeetingLens 处理录音、转录、文档、屏幕上下文和 API 凭据，这些都属于高敏感数据。安全目标是：未经同意不采集、未经确认不外发、最小化本地暴露、允许完整删除，并让每个权限边界可检查。
 
+三模式的用户体验和能力边界以 `SIMPLIFIED_MODE_SPEC.md` 为准；本文件继续统一约束总结、翻译和会议模式的同意、外发、保留、删除和安全降级，不允许各模式另建安全例外。
+
 ## 2. 保护资产
 
 - DeepSeek API key 和未来的 provider credentials
@@ -47,6 +49,8 @@ MVP 1A-3B-1 的本地会话认证防止局域网设备、普通网页和未持�
 - 撤销/更新 key 后清空输入和应用持有的临时缓冲区，并只提供配置状态而不是显示值。
 - Windows 11 发布版使用 Windows Credential Manager；不得把 key 放入 WebView 的 localStorage、前端 bundle 或 sidecar 命令行参数。
 - 非 Windows 平台 fail closed，不使用文件、SQLite、注册表明文或浏览器存储回退。
+
+界面语言是非敏感本地偏好。WebView 只可在命名空间键 `meetinglens.uiLocale` 保存允许的 `zh-CN` 或 `en-US` 枚举；不得在该存储中写入会议、文档、转录、纪要、凭据或路径。未知、损坏或不可访问的值安全回退到系统语言规则和 `en-US`，不得用任意值构造语言包路径、远程请求或动态 import。清除 WebView 存储只重置界面语言，不影响 SQLite、私有文件或 SecretStore。
 
 当前边界不防御取得同等 Windows 用户权限、可读取进程内存或用户 Credential Manager 的恶意软件，也不防御管理员/内核级攻击者。DeepSeek 网络有效性测试、真实调用和 Provider 消费凭据均不属于本阶段。
 
@@ -217,40 +221,41 @@ SecretStore command 不记录请求 DTO、凭据值、长度、首尾字符、Cr
 
 ## 15. 分阶段安全交付
 
-| 阶段        | 必须完成的安全控制                                                                     |
-| ----------- | -------------------------------------------------------------------------------------- |
-| MVP 1A-1    | SQLite 事务/迁移、路径规范化、删除语义、数据库与 WAL/SHM Git 忽略测试                  |
-| MVP 1A-2-1  | DTO/UUID/状态校验、后端时间戳、最小 Tauri commands、稳定脱敏错误以及禁止前端路径或 SQL |
-| MVP 1A-2-2  | 只用合成数据、集中调用 command、UI 错误不泄漏内部路径或正文                            |
-| MVP 1A-3A   | Provider 稳定状态/错误、Mock 无设备/文件/网络访问、Registry 生命周期与清理测试         |
-| MVP 1A-3B-1 | Sidecar 会话 token、Loopback、全路由认证、稳定错误、最小日志脱敏和 fail-closed 测试    |
-| MVP 1A-3B-2 | SecretStore、Windows Credential Manager、安全配置与跨层日志 allowlist                  |
-| MVP 1B-0    | 文件威胁边界、格式/配额、状态机、存储布局和可恢复删除规范                              |
-| MVP 1B-1A   | Rust 安全导入、私有 staging、签名/配额、去重、删除 tombstone 与恢复测试                |
-| MVP 1B-1B   | 最小 Document commands、原生选择器、无路径 DTO、UI 安全错误和删除/重试交互             |
-| PR #14      | 隔离 Docling Worker、锁定供应链、离线模型门槛、资源上限、取消和产物完整性校验（完成）  |
-| 转录规格    | 转录输入、纪要快照、外部发送和证据的安全规格（PR #15 已完成）                          |
-| 三模式对齐  | 独立 capability 同意、权限降级、屏幕最小化和三类输出保留规则                           |
-| 转录数据    | 严格 UTF-8、大小/片段上限、同步 parser、source/segment 修正删除与 schema v3            |
-| 总结入口    | Rust 原生转录选择器、无路径 DTO、粘贴/导入预览和安全错误                               |
-| 纪要数据    | 不可变快照、revision、evidence allowlist、无输入和未知引用 fail closed                 |
-| 同意数据    | capability allowlist、grant/revoke、重启失效、最小 scope、审计和无正文/凭据            |
-| 纪要服务    | SecretStore key、独立外发同意、HTTPS、超时/取消、响应 schema 和日志脱敏                |
-| 纪要工作区  | 外发预览、本次确认、安全状态/错误和 evidence 导航                                      |
-| 编辑导出    | 用户编辑保护、revision/stale、章节重生成隔离和 DOCX 导出                               |
-| 实时数据    | 复用同意服务、capture session、音频 artifact 保留、删除协调和 mode 提示不越权          |
-| 实时进程    | sidecar supervisor、崩溃恢复、孤儿进程回收、临时文件和生命周期安全日志                 |
-| 音频采集    | 麦克风/系统音频/保存分别同意、可见状态、句柄释放和权限拒绝降级                         |
-| 语言数据    | 译文单一真相、segment revision、匿名 speaker 映射、checkpoint 增量快照                 |
-| 翻译服务    | 持续外发独立同意、只发最终片段、关闭后停止发送、重试与日志脱敏                         |
-| 阶段摘要    | 独立同意、频率/窗口预览、新片段游标、失败重试复用快照和停止后取消                      |
-| 翻译工作区  | 主窗口安全展示、匿名 speaker 改名、状态和停止入口                                      |
-| 重点数据    | 书签引用同会议最终片段、用户文字校验、manual_note evidence 和删除                      |
-| 会议工作区  | 翻译开关、checkpoint 与原始转录快照分离、无屏幕安全降级                                |
-| 屏幕增强    | 单应用目标约束、身份复核、敏感内容遮蔽、临时帧 TTL/删除和可选 Provider 权限边界        |
-| 说话人增强  | voice sample 明示同意/删除、匿名标签、模型 worker 隔离                                 |
-| 参考增强    | Rust-only Docling 编排、解析恢复/删除竞态和 document evidence 语义隔离                 |
-| 产品化      | 签名、升级/回滚、SBOM、诊断导出脱敏和卸载残留检查                                      |
+| 阶段        | 必须完成的安全控制                                                                           |
+| ----------- | -------------------------------------------------------------------------------------------- |
+| MVP 1A-1    | SQLite 事务/迁移、路径规范化、删除语义、数据库与 WAL/SHM Git 忽略测试                        |
+| MVP 1A-2-1  | DTO/UUID/状态校验、后端时间戳、最小 Tauri commands、稳定脱敏错误以及禁止前端路径或 SQL       |
+| MVP 1A-2-2  | 只用合成数据、集中调用 command、UI 错误不泄漏内部路径或正文                                  |
+| MVP 1A-3A   | Provider 稳定状态/错误、Mock 无设备/文件/网络访问、Registry 生命周期与清理测试               |
+| MVP 1A-3B-1 | Sidecar 会话 token、Loopback、全路由认证、稳定错误、最小日志脱敏和 fail-closed 测试          |
+| MVP 1A-3B-2 | SecretStore、Windows Credential Manager、安全配置与跨层日志 allowlist                        |
+| MVP 1B-0    | 文件威胁边界、格式/配额、状态机、存储布局和可恢复删除规范                                    |
+| MVP 1B-1A   | Rust 安全导入、私有 staging、签名/配额、去重、删除 tombstone 与恢复测试                      |
+| MVP 1B-1B   | 最小 Document commands、原生选择器、无路径 DTO、UI 安全错误和删除/重试交互                   |
+| PR #14      | 隔离 Docling Worker、锁定供应链、离线模型门槛、资源上限、取消和产物完整性校验（完成）        |
+| 转录规格    | 转录输入、纪要快照、外部发送和证据的安全规格（PR #15 已完成）                                |
+| 国际化基础  | 仅保存允许的 UI locale 枚举、打包语言资源、无动态 HTML、稳定状态/错误本地化（PR #16 已完成） |
+| 三模式对齐  | 独立 capability 同意、权限降级、屏幕最小化和三类输出保留规则                                 |
+| 转录数据    | 严格 UTF-8、大小/片段上限、同步 parser、source/segment 修正删除与 schema v3                  |
+| 总结入口    | Rust 原生转录选择器、无路径 DTO、粘贴/导入预览和安全错误                                     |
+| 纪要数据    | 不可变快照、revision、evidence allowlist、无输入和未知引用 fail closed                       |
+| 同意数据    | capability allowlist、grant/revoke、重启失效、最小 scope、审计和无正文/凭据                  |
+| 纪要服务    | SecretStore key、独立外发同意、HTTPS、超时/取消、响应 schema 和日志脱敏                      |
+| 纪要工作区  | 外发预览、本次确认、安全状态/错误和 evidence 导航                                            |
+| 编辑导出    | 用户编辑保护、revision/stale、章节重生成隔离和 DOCX 导出                                     |
+| 实时数据    | 复用同意服务、capture session、音频 artifact 保留、删除协调和 mode 提示不越权                |
+| 实时进程    | sidecar supervisor、崩溃恢复、孤儿进程回收、临时文件和生命周期安全日志                       |
+| 音频采集    | 麦克风/系统音频/保存分别同意、可见状态、句柄释放和权限拒绝降级                               |
+| 语言数据    | 译文单一真相、segment revision、匿名 speaker 映射、checkpoint 增量快照                       |
+| 翻译服务    | 持续外发独立同意、只发最终片段、关闭后停止发送、重试与日志脱敏                               |
+| 阶段摘要    | 独立同意、频率/窗口预览、新片段游标、失败重试复用快照和停止后取消                            |
+| 翻译工作区  | 主窗口安全展示、匿名 speaker 改名、状态和停止入口                                            |
+| 重点数据    | 书签引用同会议最终片段、用户文字校验、manual_note evidence 和删除                            |
+| 会议工作区  | 翻译开关、checkpoint 与原始转录快照分离、无屏幕安全降级                                      |
+| 屏幕增强    | 单应用目标约束、身份复核、敏感内容遮蔽、临时帧 TTL/删除和可选 Provider 权限边界              |
+| 说话人增强  | voice sample 明示同意/删除、匿名标签、模型 worker 隔离                                       |
+| 参考增强    | Rust-only Docling 编排、解析恢复/删除竞态和 document evidence 语义隔离                       |
+| 产品化      | 签名、升级/回滚、SBOM、诊断导出脱敏和卸载残留检查                                            |
 
 Docling 的进程/依赖攻击面已由 PR #14 隔离；数据库/状态/UI 编排只能在后续 `feat/document-parsing-orchestration` 引入。transcript-only 外部数据流只能在 `feat/summary-provider-deepseek` 引入，正式纪要页面由后续 `feat/summary-mode-minutes` 集成；文档 evidence 只能在独立的 `feat/document-evidence-index` 接入。不得在同一 PR 同时扩大转录持久化、外部 AI、文件解析和证据索引信任边界。
 

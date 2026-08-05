@@ -14,9 +14,7 @@
 
 MVP 1A-2 实现前已使用 `docs/define-meeting-lifecycle` 固定会议状态转换、删除演进策略和 PR 边界。Provider 与安全基础随后通过 1A-3A、1A-3B-1 和 1A-3B-2 三个顺序 PR 完成，避免把能力契约、Sidecar 会话认证与操作系统凭据存储放入同一审查单元。MVP 1B 在任何文件实现前先使用纯文档 PR #11 固定不可信输入、私有存储和可恢复删除语义。
 
-PR #15 合并后，产品方向进一步收敛为 `SIMPLIFIED_MODE_SPEC.md` 定义的“一个共享引擎、三个简约入口”。旧版未开始的路线冻结但不删除已完成基础。新顺序先交付真实可用的总结模式，再建设共享实时转录底座、翻译模式和会议模式；Docling、屏幕智能、说话人增强和透明浮窗都不能成为首个纪要闭环的前置条件。
-
-仓库当前仍有一个未合并的 `feat/i18n-user-guide-foundation` PR。它保持暂停，不得擅自合并、关闭或作为新实现分支的基线；用户决定其去留后，后续分支才能从当时最新 `main` 开始。
+PR #16 合并后，产品方向继续以 `SIMPLIFIED_MODE_SPEC.md` 定义的“一个共享引擎、三个简约入口”收敛。旧版未开始的路线冻结但不删除已完成基础。新顺序先交付真实可用的总结模式，再建设共享实时转录底座、翻译模式和会议模式；Docling、屏幕智能、说话人增强和透明浮窗都不能成为首个纪要闭环的前置条件。PR #16 交付的 zh-CN/en-US、Help 和双语开发预览手册作为共享横向基础继续保留。
 
 ## 2. 统一路线图
 
@@ -25,8 +23,8 @@ PR #15 合并后，产品方向进一步收敛为 `SIMPLIFIED_MODE_SPEC.md` 定�
 | 工程基础   | Phase 0、会议 CRUD/API/UI、Provider、安全边界         | PR #1–#10                                   | 已完成并合并   |
 | 文件基础   | 安全文件导入、可恢复删除、隔离 Docling Worker         | PR #11–#14                                  | 已完成并合并   |
 | 转录规格   | 转录、输入快照和可追溯纪要规格                        | `docs/transcript-and-summary-spec` / PR #15 | 已完成并合并   |
+| 国际化基础 | zh-CN/en-US、locale 偏好、Help 和双语预览手册         | `feat/i18n-user-guide-foundation` / PR #16  | 已完成并合并   |
 | 简约版对齐 | 三种入口、共享管线、隐私边界和新顺序                  | `docs/simplified-three-mode-spec`           | 当前阶段       |
-| 决策门     | 处理暂停中的 i18n PR；只由用户决定合并或关闭          | `feat/i18n-user-guide-foundation`           | 暂停、未合并   |
 | 总结数据   | schema v3、转录来源/片段、TXT/SRT/VTT/粘贴解析        | `feat/transcript-data-core`                 | 待开始         |
 | 总结入口   | Commands/API、粘贴/导入/预览和说话人修正              | `feat/summary-mode-import`                  | 待开始         |
 | 纪要数据   | run/revision、不可变快照、evidence 和 Mock            | `feat/summary-run-core`                     | 待开始         |
@@ -241,7 +239,7 @@ MVP 1A-2 固定拆成以下两个顺序 PR。前一个 PR 合并后，后一个 
 
 完成证据：PR #14 已合并。Worker 具备独立 Python 3.12/uv lock、显式离线模型、JSONL stdio、Windows Job Object、4 GiB 限制、超时/取消/崩溃回收及 TXT/Markdown/CSV/Office/PDF/图片/OCR 本机 Smoke；尚未接数据库、Provider、Commands 或 UI。Docling 作为后续参考文档增强保留，不是 transcript-only 纪要的前置依赖。
 
-### 7.5 已完成：转录与纪要规格对齐
+### 7.5 转录与纪要规格对齐（已完成，PR #15）
 
 分支：`docs/transcript-and-summary-spec`
 
@@ -249,15 +247,21 @@ MVP 1A-2 固定拆成以下两个顺序 PR。前一个 PR 合并后，后一个 
 
 验收：PR #1–#14 状态正确；七份核心文档与 Worker README 不再保留旧路线、阶段、数据模型或时间语义冲突；格式、链接、全项目和敏感信息检查通过。PR #15 已完成并合并。
 
-### 7.6 当前：简约三模式规格对齐
+### 7.6 国际化与开发预览手册（已完成，PR #16）
+
+分支：`feat/i18n-user-guide-foundation`
+
+横向范围：一个安装包内提供 `zh-CN` 与 `en-US`，以 `en-US` 可靠回退；设置页即时切换并只将允许的 `meetinglens.uiLocale` 枚举保存为非敏感 WebView 偏好；当前 UI 状态、稳定错误码、日期、数字和文件大小集中本地化；提供安全静态 Help 页面和结构一致的中英文开发预览使用手册。
+
+该阶段没有创建 migration，没有改变会议、文档或 Provider 数据，也没有自动把 UI locale 当作未来纪要输出语言；它未实现 transcript、DeepSeek、Docling 编排、音频或屏幕能力。PR #16 已完成并合并。
+
+### 7.7 当前：简约三模式规格对齐
 
 分支：`docs/simplified-three-mode-spec`
 
 纯文档范围：冻结三种入口、共享数据流、“原始音频/逐字稿/会议纪要”术语、阶段摘要触发器、权限降级、首轮明确不做和新的小 PR 顺序。不得修改 React、Rust、Python、migration、依赖或 lockfile。
 
-验收：`SIMPLIFIED_MODE_SPEC.md` 与 `AGENTS.md`、`PRODUCT_SPEC.md`、`ARCHITECTURE.md`、`DATA_MODEL.md`、`SECURITY.md`、`README.md` 使用相同分支名和边界；旧版未实现路线被明确冻结；暂停中的 i18n PR 未被合并、关闭或修改。
-
-本 PR 合并后先停在决策门。用户若保留 `feat/i18n-user-guide-foundation`，必须将其更新到包含本规格的最新 `main`，移除会恢复旧路线的 AGENTS/计划改动，并重新跑完整验收；不得原样合并。用户若不保留，也必须由用户明确决定关闭，Codex 不得代替决定。
+验收：`SIMPLIFIED_MODE_SPEC.md` 与 `AGENTS.md`、`PRODUCT_SPEC.md`、`ARCHITECTURE.md`、`DATA_MODEL.md`、`SECURITY.md`、`README.md` 使用相同分支名和边界；旧版未实现路线被明确冻结；PR #16 的 i18n、Help 和双语手册继续保留且与三模式现状说明一致。
 
 ## 8. 总结模式
 
@@ -274,7 +278,7 @@ MVP 1A-2 固定拆成以下两个顺序 PR。前一个 PR 合并后，后一个 
 - 同会议来源 SHA-256 去重、revision、source/segment 删除语义
 - 相对 `start_offset_ms/end_offset_ms` 与可空 source `base_started_at`
 
-本 PR 不做 UI、Commands、DeepSeek、平台专用 adapters 或原始转录文件长期存储。实现时同步调整 Provider/API 的 `TranscriptionSegment` 时间字段，不能保留 ISO 与 offset 两套真相。
+本阶段不做 UI、Commands、DeepSeek、平台专用 adapters 或原始转录文件长期存储。实现时同步调整 Provider/API 的 `TranscriptionSegment` 时间字段，不能保留 ISO 与 offset 两套真相。
 
 ### 8.2 Summary Mode Import
 
@@ -432,6 +436,6 @@ Docling 提供可选背景和材料证据，不能成为 transcript-only 总结�
 
 ## 15. 当前下一步
 
-PR #1–#15 已合并；Docling Worker Foundation 已完成但未接入产品。当前只交付纯文档分支 `docs/simplified-three-mode-spec`，不得开始产品代码。暂停中的 `feat/i18n-user-guide-foundation` 保持未合并、未关闭且不作新分支基线，等待用户单独决定。
+PR #1–#16 已合并；i18n、Help、中英文开发预览手册和 Docling Worker Foundation 已完成，Docling 尚未接入产品。当前只交付纯文档分支 `docs/simplified-three-mode-spec`，不得开始产品代码。
 
-本规格 PR 合并且 i18n PR 去留明确后，才能从最新 `main` 创建 `feat/transcript-data-core`。此后按路线表逐项推进；不得同时启动总结模式 UI、外部 Provider、音频、翻译或屏幕功能。
+本规格 PR 合并后，才能从最新 `main` 创建 `feat/transcript-data-core`。此后按路线表逐项推进；不得同时启动总结模式 UI、外部 Provider、音频、翻译或屏幕功能。`feat/document-parsing-orchestration` 继续作为可选参考增强顺延；未来 PR 编号只在 GitHub 实际创建后记录。

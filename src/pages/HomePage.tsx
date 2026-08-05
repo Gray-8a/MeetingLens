@@ -1,10 +1,12 @@
 import { useEffect, useMemo, useState } from "react";
+import { useTranslation } from "react-i18next";
 import { AppLink } from "../app/navigation";
 import { useServices } from "../app/services";
 import type { MeetingResponse } from "../api/meeting";
 import { MeetingList } from "../components/MeetingList";
 import { EmptyState, ErrorNotice, LoadingState } from "../components/UiState";
-import { uiError } from "../lib/presentation";
+import { meetingErrorMessage, uiError } from "../lib/presentation";
+import { formatNumber } from "../i18n/formatters";
 
 export type DatabaseStatus = "checking" | "ready" | "unavailable";
 
@@ -13,6 +15,7 @@ export function HomePage({
 }: {
   onDatabaseStatus: (status: DatabaseStatus) => void;
 }) {
+  const { t } = useTranslation();
   const { meetingApi } = useServices();
   const [meetings, setMeetings] = useState<MeetingResponse[]>([]);
   const [loading, setLoading] = useState(true);
@@ -54,56 +57,56 @@ export function HomePage({
     <div className="page-stack">
       <section className="welcome-panel">
         <div>
-          <p className="eyebrow">Local meeting workspace</p>
-          <h1>Turn the next conversation into clear action.</h1>
-          <p>
-            Start with a synthetic meeting flow. Nothing is recorded, uploaded,
-            or sent to an external model in this milestone.
-          </p>
+          <p className="eyebrow">{t("home.eyebrow")}</p>
+          <h1>{t("home.title")}</h1>
+          <p>{t("home.description")}</p>
         </div>
         <AppLink className="button button--primary button--large" to="/new">
-          New meeting
+          {t("home.newMeeting")}
         </AppLink>
       </section>
 
-      <section className="metric-grid" aria-label="Meeting status summary">
+      <section className="metric-grid" aria-label={t("home.statusSummary")}>
         <article className="metric-card">
-          <span>Draft</span>
-          <strong>{counts.draft}</strong>
-          <p>Ready to start</p>
+          <span>{t("home.metrics.draftLabel")}</span>
+          <strong>{formatNumber(counts.draft)}</strong>
+          <p>{t("home.metrics.draftBody")}</p>
         </article>
         <article className="metric-card">
-          <span>Recording</span>
-          <strong>{counts.recording}</strong>
-          <p>Synthetic flow active</p>
+          <span>{t("home.metrics.recordingLabel")}</span>
+          <strong>{formatNumber(counts.recording)}</strong>
+          <p>{t("home.metrics.recordingBody")}</p>
         </article>
         <article className="metric-card">
-          <span>Ready</span>
-          <strong>{counts.ready}</strong>
-          <p>Completed locally</p>
+          <span>{t("home.metrics.readyLabel")}</span>
+          <strong>{formatNumber(counts.ready)}</strong>
+          <p>{t("home.metrics.readyBody")}</p>
         </article>
       </section>
 
       <section className="content-panel" aria-labelledby="recent-title">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">Recent activity</p>
-            <h2 id="recent-title">Recent meetings</h2>
+            <p className="eyebrow">{t("home.recentEyebrow")}</p>
+            <h2 id="recent-title">{t("home.recentTitle")}</h2>
           </div>
           <AppLink className="text-link" to="/history">
-            View all meetings
+            {t("home.viewAll")}
           </AppLink>
         </div>
 
-        {loading ? <LoadingState label="Loading local meetings…" /> : null}
+        {loading ? <LoadingState label={t("home.loading")} /> : null}
         {!loading && error ? (
-          <ErrorNotice code={error.code} message={error.message} />
+          <ErrorNotice
+            code={error.code}
+            message={meetingErrorMessage(error.code)}
+          />
         ) : null}
         {!loading && !error && meetings.length === 0 ? (
-          <EmptyState title="No meetings yet">
-            <p>Create a draft meeting to test the local desktop workflow.</p>
+          <EmptyState title={t("home.emptyTitle")}>
+            <p>{t("home.emptyBody")}</p>
             <AppLink className="button button--primary" to="/new">
-              Create the first meeting
+              {t("home.createFirst")}
             </AppLink>
           </EmptyState>
         ) : null}

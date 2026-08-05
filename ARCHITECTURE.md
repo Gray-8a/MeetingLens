@@ -6,6 +6,8 @@ MeetingLens 采用“轻量桌面壳 + 本地结构化输入 + 本地处理 side
 
 核心目标是明确权限边界、允许处理模块独立替换，并让原始会议数据默认不离开本机。
 
+三模式产品体验与首轮范围以 `SIMPLIFIED_MODE_SPEC.md` 为准；本文件继续作为共享引擎、信任边界和组件职责的架构权威，两者不得形成第二套实现路线。
+
 总结、翻译和会议模式是同一系统的三个界面预设，不是三个应用或三套后端。模式决定默认来源、开关和布局；统一的 meeting、transcript source/segment、translation、checkpoint、summary snapshot、evidence、consent 和 deletion pipeline 才是持久化真相。
 
 ## 2. 系统上下文
@@ -47,6 +49,8 @@ flowchart LR
 - 只通过定义明确的 Tauri commands 访问系统能力。
 - 不直接读取 `.env`、SQLite、任意文件路径或操作系统凭据。
 - 不直接启动 sidecar，也不持有长期 API key。
+
+界面国际化集中在 `src/i18n`：`i18next` 与 `react-i18next` 在应用入口初始化，`zh-CN`/`en-US` JSON 资源随 Vite bundle 打包，`en-US` 是可靠 fallback，不加载远程语言包。React 页面只使用稳定 translation key；集中 formatters 按当前 UI locale 和用户本地时区显示日期、数字与文件大小。设置页只把允许的 locale 枚举写入 `meetinglens.uiLocale`，不使用 SecretStore 或 SQLite，也不将 UI locale 复用为未来 Summary 输出语言。
 
 ### 3.2 Tauri / Rust Core
 
@@ -338,6 +342,7 @@ Phase 0 不提前写入 `externalBin`，因为仓库尚无可验证的平台二�
 | 阶段                                 | 架构交付                                                                                         | 明确不包含                       |
 | ------------------------------------ | ------------------------------------------------------------------------------------------------ | -------------------------------- |
 | 已完成基础                           | meeting CRUD/API/UI、Provider Mock、Sidecar auth、SecretStore、安全文件导入、隔离 Docling Worker | 真实采集、转录、翻译、总结       |
+| 国际化基础（PR #16，已完成）         | 打包 zh-CN/en-US、受限 locale 偏好、Help 和双语预览手册                                          | schema、transcript、Provider     |
 | `docs/simplified-three-mode-spec`    | 三模式预设、共享管线、权限和小 PR 边界                                                           | 产品代码                         |
 | `feat/transcript-data-core`          | schema v3、转录来源/片段、同步 parser、修正/删除                                                 | UI、外部 Provider                |
 | `feat/summary-mode-import`           | Transcript commands/API、总结模式粘贴/导入/预览                                                  | Summary schema、DeepSeek         |
@@ -392,7 +397,7 @@ Tauri/Rust supervisor
 └── orchestration sidecar (Python 3.12, lightweight API/database coordination)
     ├── realtime-diarization worker (Diart-compatible locked environment)
     ├── post-meeting-alignment worker (WhisperX-compatible locked environment)
-    └── document worker (Docling locked environment, PR #14 complete; later product wiring)
+    └── document worker (Docling locked environment, PR #14 complete; product wiring in feat/document-parsing-orchestration)
 ```
 
 worker 之间只交换受控文件引用和版本化 JSON，不共享 site-packages。每个 worker 必须有独立 lockfile、许可清单、资源上限和合成数据测试。

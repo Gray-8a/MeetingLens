@@ -2,6 +2,8 @@
 
 ## 1. 设计原则
 
+三模式的产品语义以 `SIMPLIFIED_MODE_SPEC.md` 为准；本文件只定义三种入口共同复用的数据真相、状态和删除语义，不为任何模式建立平行模型。
+
 - SQLite 保存结构化状态；大文件保存在应用私有目录。
 - 所有主键使用应用生成的 UUID，避免暴露自增规模。
 - 事件/实体时间保存为 UTC ISO 8601；转录位置统一保存相对 source/会议基准的毫秒 offset，展示时格式化，不保存两套竞争的时间真相。
@@ -202,17 +204,17 @@ erDiagram
 
 #### 文档生命周期
 
-| 转换                                    | 所属阶段         | 规则                                                |
-| --------------------------------------- | ---------------- | --------------------------------------------------- |
-| `importing → staged`                    | MVP 1B-1A        | 文件完成校验并原子进入正式目录                      |
-| `importing → import_failed`             | MVP 1B-1A        | 复制、类型、配额、完整性或存储失败                  |
-| `staged → parsing`                      | 参考材料增强     | Rust 编排器持久化任务后调用隔离 Worker              |
-| `parsing → parsed/parse_failed`         | 参考材料增强     | Rust 复验产物后持久化受控结果或稳定错误             |
-| `staged/parsed → deleting`              | MVP 1B-1A 及后续 | 接受删除请求                                        |
-| `import_failed/parse_failed → deleting` | MVP 1B-1A 及后续 | 清理失败输入或解析产物                              |
-| `deleting → 记录消失`                   | MVP 1B-1A        | 物理文件和关联 artifacts 全部清理成功后才删除元数据 |
-| `deleting → delete_failed`              | MVP 1B-1A        | 清理失败，保留安全错误和可恢复状态                  |
-| `delete_failed → deleting`              | MVP 1B-1A        | 幂等重试                                            |
+| 转换                                    | 所属阶段                              | 规则                                                |
+| --------------------------------------- | ------------------------------------- | --------------------------------------------------- |
+| `importing → staged`                    | MVP 1B-1A                             | 文件完成校验并原子进入正式目录                      |
+| `importing → import_failed`             | MVP 1B-1A                             | 复制、类型、配额、完整性或存储失败                  |
+| `staged → parsing`                      | `feat/document-parsing-orchestration` | Rust 编排器持久化任务后调用隔离 Worker              |
+| `parsing → parsed/parse_failed`         | `feat/document-parsing-orchestration` | Rust 复验产物后持久化受控结果或稳定错误             |
+| `staged/parsed → deleting`              | MVP 1B-1A 及后续                      | 接受删除请求                                        |
+| `import_failed/parse_failed → deleting` | MVP 1B-1A 及后续                      | 清理失败输入或解析产物                              |
+| `deleting → 记录消失`                   | MVP 1B-1A                             | 物理文件和关联 artifacts 全部清理成功后才删除元数据 |
+| `deleting → delete_failed`              | MVP 1B-1A                             | 清理失败，保留安全错误和可恢复状态                  |
+| `delete_failed → deleting`              | MVP 1B-1A                             | 幂等重试                                            |
 
 页面和通用 update 不得直接修改状态。安全导入阶段只实现 `importing/staged/import_failed/deleting/delete_failed`；PR #14 只建立无数据库访问的 Worker 基础，`parsing/parsed/parse_failed` 由 `feat/document-parsing-orchestration` 引入。未知状态 fail closed。
 

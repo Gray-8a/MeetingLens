@@ -1,16 +1,16 @@
 import { useState, type FormEvent } from "react";
+import { useTranslation } from "react-i18next";
 import { AppLink, meetingPath, useNavigation } from "../app/navigation";
 import { useServices } from "../app/services";
 import { ErrorNotice } from "../components/UiState";
-import { uiError } from "../lib/presentation";
+import { meetingErrorMessage, uiError } from "../lib/presentation";
 
 export function NewMeetingPage() {
+  const { t } = useTranslation();
   const { meetingApi } = useServices();
   const { navigate } = useNavigation();
   const [title, setTitle] = useState("");
-  const [validationMessage, setValidationMessage] = useState<string | null>(
-    null,
-  );
+  const [titleMissing, setTitleMissing] = useState(false);
   const [error, setError] = useState<ReturnType<typeof uiError> | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
@@ -20,11 +20,11 @@ export function NewMeetingPage() {
 
     const normalizedTitle = title.trim();
     if (normalizedTitle.length === 0) {
-      setValidationMessage("Enter a meeting title.");
+      setTitleMissing(true);
       return;
     }
 
-    setValidationMessage(null);
+    setTitleMissing(false);
     setError(null);
     setSubmitting(true);
     try {
@@ -42,39 +42,43 @@ export function NewMeetingPage() {
   return (
     <section className="form-panel" aria-labelledby="new-meeting-title">
       <div className="section-heading section-heading--stacked">
-        <p className="eyebrow">Create a local draft</p>
-        <h1 id="new-meeting-title">New meeting</h1>
-        <p>
-          This creates metadata only. No microphone, screen, file, or external
-          AI access is enabled.
-        </p>
+        <p className="eyebrow">{t("newMeeting.eyebrow")}</p>
+        <h1 id="new-meeting-title">{t("newMeeting.title")}</h1>
+        <p>{t("newMeeting.description")}</p>
       </div>
 
-      {error ? <ErrorNotice code={error.code} message={error.message} /> : null}
+      {error ? (
+        <ErrorNotice
+          code={error.code}
+          message={meetingErrorMessage(error.code)}
+        />
+      ) : null}
 
       <form onSubmit={handleSubmit}>
         <div className="field-group">
-          <label htmlFor="meeting-title">Meeting title</label>
+          <label htmlFor="meeting-title">{t("newMeeting.meetingTitle")}</label>
           <input
             data-acceptance="new-title"
             aria-describedby="meeting-title-help"
-            aria-invalid={validationMessage !== null}
+            aria-invalid={titleMissing}
             autoComplete="off"
             disabled={submitting}
             id="meeting-title"
             maxLength={200}
             onChange={(event) => {
               setTitle(event.target.value);
-              if (validationMessage) setValidationMessage(null);
+              if (titleMissing) setTitleMissing(false);
             }}
-            placeholder="e.g. Synthetic project review"
+            placeholder={t("newMeeting.placeholder")}
             value={title}
           />
           <p
-            className={validationMessage ? "field-error" : "field-help"}
+            className={titleMissing ? "field-error" : "field-help"}
             id="meeting-title-help"
           >
-            {validationMessage ?? "Use a short title you can recognize later."}
+            {titleMissing
+              ? t("newMeeting.titleRequired")
+              : t("newMeeting.titleHelp")}
           </p>
         </div>
         <div className="form-actions">
@@ -84,14 +88,14 @@ export function NewMeetingPage() {
             disabled={submitting}
             type="submit"
           >
-            {submitting ? "Creating…" : "Create meeting"}
+            {submitting ? t("common.creating") : t("newMeeting.create")}
           </button>
           <AppLink
             aria-disabled={submitting}
             className="button button--ghost"
             to="/"
           >
-            Cancel
+            {t("common.cancel")}
           </AppLink>
         </div>
       </form>

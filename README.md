@@ -2,11 +2,13 @@
 
 MeetingLens is a privacy-first Windows desktop assistant with three simple entry modes backed by one shared session engine: Summary, Translation, and Meeting. Its first real-value path turns pasted or imported meeting transcripts into detailed, editable, evidence-linked minutes; live audio, translation, and screen context extend the same transcript pipeline in later small releases.
 
-PR #1–#15 are merged. The meeting data/UI foundation, Provider mocks, authenticated Sidecar boundary, Windows SecretStore, secure document import, isolated Docling Worker, and transcript/summary specification are complete. Docling is not connected to SQLite, Tauri commands, document state, or product UI and is retained for later reference-document enrichment. The current schema is v2; transcript persistence/import and real summary generation remain unimplemented.
+PR #1–#16 are merged. The meeting data/UI foundation, Provider mocks, authenticated Sidecar boundary, Windows SecretStore, secure document import, isolated Docling Worker, transcript/summary specification, packaged zh-CN/en-US UI, Help page, and bilingual preview guides are complete. Docling is not connected to SQLite, Tauri commands, document state, or product UI and is retained for later reference-document enrichment. The current schema is v2; transcript persistence/import and real summary generation remain unimplemented.
 
 The Provider runtime defines Capture, Transcription, Translation, Summary, and DocumentParser capability boundaries. Current implementations are explicit deterministic in-memory mocks: they do not access devices, files, or networks, and can be replaced through an application-owned Registry without changing page business logic.
 
 The active product direction is defined in [the simplified three-mode specification](SIMPLIFIED_MODE_SPEC.md). The previous unimplemented roadmap is paused, while all merged foundations remain reusable. Delivery starts with a real Summary mode for paste/TXT/SRT/VTT, then adds a shared realtime transcription foundation, Translation mode, Meeting mode, and advanced screen intelligence in separate reviewable PRs.
+
+Development-preview user guides are available in [简体中文](docs/USER_GUIDE.zh-CN.md) and [English](docs/USER_GUIDE.en-US.md).
 
 ## Prerequisites
 
@@ -94,7 +96,7 @@ The validated local model inventory is 564,981,412 bytes. Windows CPU smoke curr
 
 ## Transcript-first summary path
 
-The first implementation supports pasted UTF-8 text and native TXT/SRT/VTT import. Transcripts are distinct from reference documents: they use a lightweight local parser, do not require Docling, and persist normalized sources and ordered segments rather than copying the original transcript file indefinitely. Platform-specific export adapters require sanitized real samples before support is claimed; video and audio-file transcription are future enhancements.
+The first transcript implementation will support pasted UTF-8 text and native TXT/SRT/VTT import. Transcripts are distinct from reference documents: they will use a lightweight local parser, will not require Docling, and will persist normalized sources and ordered segments rather than copying the original transcript file indefinitely. Platform-specific export adapters require sanitized real samples before support is claimed; video and audio-file transcription are future enhancements.
 
 Transcript positions use optional relative millisecond offsets plus an optional source base time. Inputs without timestamps use a stable segment ordinal. Summary generation is eligible whenever the user has at least one valid input that can be frozen, including draft or in-progress meetings; it is not restricted to `ready`. Every run uses an immutable input snapshot so edits, source deletion, and regeneration cannot silently rewrite an existing or user-edited summary.
 
@@ -124,9 +126,9 @@ The initial templates are detailed meeting minutes, concise meeting summary, and
 10. **MVP 1B-1B — complete:** Document commands, native picker, typed progress, and import/delete UI (`feat/document-import-ui`, PR #13).
 11. **Complete:** isolated offline Docling Worker foundation (`feat/docling-worker`, PR #14); product wiring is intentionally deferred.
 12. **Complete documentation baseline:** transcript/summary product and architecture alignment (`docs/transcript-and-summary-spec`, PR #15).
-13. **Current direction alignment:** freeze the three simple modes and shared pipeline (`docs/simplified-three-mode-spec`).
-14. **Decision gate:** the paused `feat/i18n-user-guide-foundation` PR remains untouched until the owner chooses whether to retain it. If retained, it must be updated on the new `main` and stripped of obsolete roadmap changes before merge.
-15. **Summary mode foundation:** transcript data core (`feat/transcript-data-core`) and paste/TXT/SRT/VTT workspace (`feat/summary-mode-import`).
+13. **Internationalization foundation — complete:** packaged zh-CN/en-US UI, locale preference, Help, and bilingual preview guides (`feat/i18n-user-guide-foundation`, PR #16).
+14. **Current direction alignment:** freeze the three simple modes and shared pipeline (`docs/simplified-three-mode-spec`).
+15. **Next summary foundation:** transcript data core (`feat/transcript-data-core`) followed by the paste/TXT/SRT/VTT workspace (`feat/summary-mode-import`).
 16. **First real minutes:** separate summary data/snapshot core, consent data core, DeepSeek Provider, and result workspace PRs; then editing/export.
 17. **Shared live foundation:** live-session data, Sidecar supervisor, Windows audio capture, then realtime ASR into the same transcript segments.
 18. **Translation mode:** language/checkpoint data core, realtime Provider, checkpoint runtime, then the user workspace.

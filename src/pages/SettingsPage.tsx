@@ -5,9 +5,18 @@ import {
   useState,
   type FormEvent,
 } from "react";
-import { SecretApiError, toSecretError } from "../api/secret";
+import { useTranslation } from "react-i18next";
+import {
+  SecretApiError,
+  toSecretError,
+  type SecretErrorCode,
+} from "../api/secret";
+import { AppLink } from "../app/navigation";
 import { useServices } from "../app/services";
-import { providerStatusLabel, type ProviderKind } from "../providers/types";
+import { APP_VERSION } from "../app/version";
+import { changeUiLocale, currentUiLocale, type UiLocale } from "../i18n";
+import { secretErrorMessage } from "../i18n/errors";
+import { safeProviderStatus, type ProviderKind } from "../providers/types";
 import type { DatabaseStatus } from "./HomePage";
 
 export type LocalServiceStatus =
@@ -24,27 +33,7 @@ type SecretUiStatus =
   | "unavailable"
   | "error";
 
-const serviceLabels: Record<LocalServiceStatus, string> = {
-  checking: "Checking local service…",
-  authenticated: "Local Sidecar authenticated",
-  unavailable: "Local service unavailable",
-  error: "Local Sidecar error",
-  "desktop-only": "Available in the desktop runtime",
-};
-
-const databaseLabels: Record<DatabaseStatus, string> = {
-  checking: "Checking local database…",
-  ready: "Local database ready",
-  unavailable: "Local database unavailable",
-};
-
-const secretLabels: Record<SecretUiStatus, string> = {
-  checking: "Checking secure storage…",
-  unconfigured: "Not configured",
-  configured: "Configured",
-  unavailable: "SecretStore unavailable",
-  error: "Secure storage error",
-};
+type SecretFeedback = "saved" | "deleted" | { error: SecretErrorCode } | null;
 
 export function SettingsPage({
   databaseStatus,
@@ -53,6 +42,7 @@ export function SettingsPage({
   databaseStatus: DatabaseStatus;
   localServiceStatus: LocalServiceStatus;
 }) {
+  const { t } = useTranslation();
   const { providers, secretApi } = useServices();
   const [providerSnapshots, setProviderSnapshots] = useState(() =>
     providers.snapshots(),
@@ -63,7 +53,7 @@ export function SettingsPage({
   const [secretAction, setSecretAction] = useState<"save" | "delete" | null>(
     null,
   );
-  const [secretFeedback, setSecretFeedback] = useState<string | null>(null);
+  const [secretFeedback, setSecretFeedback] = useState<SecretFeedback>(null);
   const [confirmSecretDelete, setConfirmSecretDelete] = useState(false);
 
   useEffect(() => {
@@ -109,7 +99,7 @@ export function SettingsPage({
     if (secretAction !== null) return;
     const value = secretInput.current?.value ?? "";
     if (trimAscii(value).length === 0) {
-      setSecretFeedback("Enter a non-empty API key.");
+      setSecretFeedback({ error: "secret_invalid_input" });
       return;
     }
 
@@ -120,11 +110,11 @@ export function SettingsPage({
       if (secretInput.current !== null) secretInput.current.value = "";
       setHasSecretInput(false);
       setSecretStatus(status.configured ? "configured" : "unconfigured");
-      setSecretFeedback("API key saved to secure local storage.");
+      setSecretFeedback("saved");
     } catch (reason: unknown) {
       const error = toSecretError(reason);
       setSecretStatus(secretErrorStatus(error));
-      setSecretFeedback(error.message);
+      setSecretFeedback({ error: error.code });
     } finally {
       setSecretAction(null);
     }
@@ -139,23 +129,32 @@ export function SettingsPage({
       if (secretInput.current !== null) secretInput.current.value = "";
       setHasSecretInput(false);
       setSecretStatus("unconfigured");
-      setSecretFeedback("Stored API key deleted.");
+      setSecretFeedback("deleted");
     } catch (reason: unknown) {
       const error = toSecretError(reason);
       setSecretStatus(secretErrorStatus(error));
-      setSecretFeedback(error.message);
+      setSecretFeedback({ error: error.code });
     } finally {
       setConfirmSecretDelete(false);
       setSecretAction(null);
     }
   }
 
+  function feedbackMessage(): string {
+    if (secretFeedback === "saved") return t("settings.deepseek.saved");
+    if (secretFeedback === "deleted") return t("settings.deepseek.deleted");
+    if (secretFeedback !== null) {
+      return secretErrorMessage(secretFeedback.error);
+    }
+    return t("settings.deepseek.defaultHelp");
+  }
+
   return (
     <section className="content-panel" aria-labelledby="settings-title">
       <div className="section-heading section-heading--stacked">
-        <p className="eyebrow">Local configuration</p>
-        <h1 id="settings-title">Settings</h1>
-        <p>Manage local runtime status and approved secure settings.</p>
+        <p className="eyebrow">{t("settings.eyebrow")}</p>
+        <h1 id="settings-title">{t("settings.title")}</h1>
+        <p>{t("settings.description")}</p>
       </div>
 
       <div className="settings-grid">
@@ -163,76 +162,107 @@ export function SettingsPage({
           <span className="settings-icon" aria-hidden="true">
             ML
           </span>
-          <h2>Application</h2>
+          <h2>{t("settings.application")}</h2>
           <dl className="detail-list">
             <div>
-              <dt>Version</dt>
-              <dd>0.1.0</dd>
+              <dt>{t("settings.version")}</dt>
+              <dd>{APP_VERSION}</dd>
             </div>
             <div>
-              <dt>Data location</dt>
-              <dd>Private MeetingLens application storage on this device</dd>
+              <dt>{t("settings.dataLocation")}</dt>
+              <dd>{t("settings.dataLocationValue")}</dd>
             </div>
           </dl>
         </article>
+
+        <article data-acceptance="language-settings">
+          <span className="settings-icon" aria-hidden="true">
+            LG
+          </span>
+          <h2>{t("settings.interfaceLanguage")}</h2>
+          <p className="field-help">{t("settings.languageDescription")}</p>
+          <select
+            aria-label={t("settings.languageAria")}
+            data-acceptance="ui-language"
+            onChange={(event) =>
+              void changeUiLocale(event.currentTarget.value as UiLocale)
+            }
+            value={currentUiLocale()}
+          >
+            <option value="zh-CN">{t("settings.languageZh")}</option>
+            <option value="en-US">{t("settings.languageEn")}</option>
+          </select>
+          <p>
+            <AppLink className="text-link" to="/help">
+              {t("settings.openHelp")}
+            </AppLink>
+          </p>
+        </article>
+
         <article data-acceptance="sidecar-security-status">
           <span className="settings-icon" aria-hidden="true">
             RT
           </span>
-          <h2>Local runtime</h2>
+          <h2>{t("settings.localRuntime")}</h2>
           <dl className="detail-list">
             <div>
-              <dt>Service</dt>
-              <dd>{serviceLabels[localServiceStatus]}</dd>
+              <dt>{t("settings.service")}</dt>
+              <dd>{t(`settings.serviceStatus.${localServiceStatus}`)}</dd>
             </div>
             <div>
-              <dt>Database</dt>
-              <dd>{databaseLabels[databaseStatus]}</dd>
+              <dt>{t("settings.database")}</dt>
+              <dd>{t(`settings.databaseStatus.${databaseStatus}`)}</dd>
             </div>
             <div>
-              <dt>Binding</dt>
-              <dd>This device only</dd>
+              <dt>{t("settings.binding")}</dt>
+              <dd>{t("settings.bindingValue")}</dd>
             </div>
             <div>
-              <dt>Session</dt>
-              <dd>Current application session</dd>
+              <dt>{t("settings.session")}</dt>
+              <dd>{t("settings.sessionValue")}</dd>
             </div>
             <div>
-              <dt>Sidecar credential access</dt>
-              <dd>Disabled</dd>
+              <dt>{t("settings.sidecarCredentialAccess")}</dt>
+              <dd>{t("settings.disabled")}</dd>
             </div>
           </dl>
         </article>
+
         <article data-acceptance="provider-statuses">
           <span className="settings-icon" aria-hidden="true">
             PR
           </span>
-          <h2>Provider runtime</h2>
+          <h2>{t("settings.providerRuntime")}</h2>
           <ul className="settings-list">
             {providerSnapshots.map((provider) => (
               <li key={provider.kind}>
-                <strong>{providerLabel(provider.kind)}</strong>
+                <strong>{t(`settings.providerKind.${provider.kind}`)}</strong>
                 <span>
-                  Mock · {providerStatusLabel(provider.status)} · Not enabled
+                  {t("settings.providerModeMock")} ·{" "}
+                  {t(
+                    `settings.providerStatus.${safeProviderStatus(provider.status)}`,
+                  )}{" "}
+                  · {t("settings.providerNotEnabled")}
                 </span>
               </li>
             ))}
           </ul>
-          <p className="field-help">
-            Mock providers use synthetic memory-only data. No device, file, or
-            external AI access is enabled.
-          </p>
+          <p className="field-help">{t("settings.providerHelp")}</p>
         </article>
+
         <article data-acceptance="deepseek-secret-settings">
           <span className="settings-icon" aria-hidden="true">
             DS
           </span>
-          <h2>DeepSeek API</h2>
+          <h2>{t("settings.deepseek.title")}</h2>
           <p className="secret-status" data-status={secretStatus}>
-            <strong>Configuration:</strong> {secretLabels[secretStatus]}
+            <strong>{t("settings.deepseek.configuration")}</strong>{" "}
+            {t(`settings.deepseek.status.${secretStatus}`)}
           </p>
           <form className="secret-form" onSubmit={saveSecret}>
-            <label htmlFor="deepseek-api-key">API key</label>
+            <label htmlFor="deepseek-api-key">
+              {t("settings.deepseek.apiKey")}
+            </label>
             <input
               ref={secretInput}
               autoCapitalize="none"
@@ -258,7 +288,9 @@ export function SettingsPage({
                 }
                 type="submit"
               >
-                {secretAction === "save" ? "Saving…" : "Save API key"}
+                {secretAction === "save"
+                  ? t("common.saving")
+                  : t("settings.deepseek.save")}
               </button>
               <button
                 className="button button--danger-outline"
@@ -269,7 +301,7 @@ export function SettingsPage({
                 onClick={() => setConfirmSecretDelete(true)}
                 type="button"
               >
-                Delete stored key
+                {t("settings.deepseek.delete")}
               </button>
             </div>
           </form>
@@ -278,7 +310,7 @@ export function SettingsPage({
               className="confirm-panel"
               data-acceptance="secret-delete-confirmation"
             >
-              <p>Delete the stored API key from this Windows account?</p>
+              <p>{t("settings.deepseek.deleteQuestion")}</p>
               <div className="form-actions">
                 <button
                   className="button button--danger"
@@ -287,7 +319,9 @@ export function SettingsPage({
                   onClick={() => void deleteSecret()}
                   type="button"
                 >
-                  {secretAction === "delete" ? "Deleting…" : "Confirm delete"}
+                  {secretAction === "delete"
+                    ? t("common.deleting")
+                    : t("common.confirmDelete")}
                 </button>
                 <button
                   className="button button--secondary"
@@ -295,14 +329,13 @@ export function SettingsPage({
                   onClick={() => setConfirmSecretDelete(false)}
                   type="button"
                 >
-                  Cancel
+                  {t("common.cancel")}
                 </button>
               </div>
             </div>
           ) : null}
           <p aria-live="polite" className="field-help" role="status">
-            {secretFeedback ??
-              "Saved locally in Windows Credential Manager. AI features are not enabled yet."}
+            {feedbackMessage()}
           </p>
         </article>
       </div>
@@ -328,14 +361,3 @@ const providerKinds: readonly ProviderKind[] = [
   "summary",
   "document-parser",
 ];
-
-function providerLabel(kind: ProviderKind): string {
-  const labels: Record<ProviderKind, string> = {
-    capture: "Capture",
-    transcription: "Transcription",
-    translation: "Translation",
-    summary: "Summary",
-    "document-parser": "Document parser",
-  };
-  return labels[kind];
-}
