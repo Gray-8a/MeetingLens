@@ -165,6 +165,8 @@ erDiagram
 
 ### `screen_events`
 
+该计划实体只能在实时 ASR 已复用既有 transcript 模型后，由 `feat/window-context` 和 `feat/screen-ocr` 顺序引入；不属于 schema v3，也不得在会议模式工作区中临时复制一套屏幕数据模型。
+
 | 字段                     | 类型         | 说明                                           |
 | ------------------------ | ------------ | ---------------------------------------------- |
 | `id`                     | TEXT PK      | UUID                                           |
@@ -227,6 +229,8 @@ MVP 1B-1B 的 WebView DTO 只公开 `id`、`meeting_id`、清理后的 `original
 schema v2 使用统一删除任务表协调 meeting/document 的文件清理：`id` 为 UUID，`entity_kind` 只能是 `meeting/document`，并保存受控 `meeting_id`、可选 `document_id`、`pending/failed` 状态、可选 trash 相对路径、0–3 的自动重试计数、安全错误码和 UTC 时间戳。partial unique indexes 保证每个 meeting 或 document 同时最多一个删除任务；实体最终删除时由外键级联移除任务。启动恢复最多自动尝试三次，显式用户重试仍可重新进入 `deleting`。
 
 ### `document_chunks`
+
+该计划实体由 `feat/document-evidence-index` 在 `feat/document-parsing-orchestration` 之后创建，并先于真实音频阶段接入既有 Summary evidence。它不属于 schema v3，也不能替代 `transcript_segments`。
 
 | 字段           | 类型         | 说明                         |
 | -------------- | ------------ | ---------------------------- |
@@ -292,7 +296,7 @@ schema v2 使用统一删除任务表协调 meeting/document 的文件清理：`
 | `created_at`   | TEXT      | 创建时间                   |
 | `updated_at`   | TEXT      | 最近更新时间               |
 
-`(source_id, source_label)` 唯一。实时工作区通过该映射统一显示改名，不能批量覆写历史 segment 的原始 `speaker_label`；默认不跨会议复用名称或身份。该表由独立的实时语言数据 PR 引入，不属于 schema v3。
+`(source_id, source_label)` 唯一。实时工作区通过该映射统一显示改名，不能批量覆写历史 segment 的原始 `speaker_label`；默认不跨会议复用名称或身份。该表在屏幕/窗口上下文之后由 `feat/live-language-data-core` 引入，再供 `feat/speaker-diarization` 和后续实时翻译使用；不属于 schema v3。
 
 ### `manual_notes`（会议模式数据阶段计划）
 

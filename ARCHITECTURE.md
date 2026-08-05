@@ -339,31 +339,37 @@ Phase 0 不提前写入 `externalBin`，因为仓库尚无可验证的平台二�
 
 ### 10.1 实施顺序与模块所有权
 
-| 阶段                                 | 架构交付                                                                                         | 明确不包含                       |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------ | -------------------------------- |
-| 已完成基础                           | meeting CRUD/API/UI、Provider Mock、Sidecar auth、SecretStore、安全文件导入、隔离 Docling Worker | 真实采集、转录、翻译、总结       |
-| 国际化基础（PR #16，已完成）         | 打包 zh-CN/en-US、受限 locale 偏好、Help 和双语预览手册                                          | schema、transcript、Provider     |
-| `docs/simplified-three-mode-spec`    | 三模式预设、共享管线、权限和小 PR 边界                                                           | 产品代码                         |
-| `feat/transcript-data-core`          | schema v3、转录来源/片段、同步 parser、修正/删除                                                 | UI、外部 Provider                |
-| `feat/summary-mode-import`           | Transcript commands/API、总结模式粘贴/导入/预览                                                  | Summary schema、DeepSeek         |
-| `feat/summary-run-core`              | Summary run/revision、不可变快照、evidence 与 Mock                                               | SecretStore 消费、网络、正式 UI  |
-| `feat/consent-data-core`             | 通用 consent events、会话失效、grant/revoke 与审计 API                                           | 设备、Provider、正式 UI          |
-| `feat/summary-provider-deepseek`     | SecretStore、外发同意、受限 adapter、超时/取消                                                   | schema、正式 UI、Docling         |
-| `feat/summary-mode-minutes`          | 输入/模板选择、外发预览、结果、evidence 导航和 Markdown                                          | schema、Provider、持久编辑       |
-| `feat/summary-editing-export`        | 用户编辑、revision/stale、章节重生成和 DOCX                                                      | 文档解析、实时能力               |
-| `feat/live-session-data-core`        | mode 提示、capture session、音频 artifact/保留与删除协调                                         | 设备、进程、ASR                  |
-| `feat/sidecar-supervisor`            | 随机端口、打包、监控、崩溃恢复与孤儿回收                                                         | 音频、ASR                        |
-| `feat/audio-capture`                 | 麦克风/系统音频、独立同意、可见状态和资源回收                                                    | schema、ASR、翻译、屏幕          |
-| `feat/realtime-transcription`        | 实时 ASR 写入既有 transcript segments                                                            | 翻译 UI、屏幕                    |
-| `feat/live-language-data-core`       | translations、speaker aliases、checkpoint 快照                                                   | 外部 Provider、调度、UI          |
-| `feat/realtime-translation-provider` | 最终片段翻译、持续外发同意、取消和脱敏                                                           | schema、checkpoint、正式 UI      |
-| `feat/checkpoint-summary-runtime`    | 手动/固定时间增量快照、调度、去重与重试                                                          | 自动话题、正式 UI                |
-| `feat/translation-mode-workspace`    | 主窗口原文/译文、speaker 修正和 checkpoint UI                                                    | schema、Provider、透明浮窗       |
-| `feat/meeting-notes-core`            | 转录范围书签、用户文字笔记和 evidence                                                            | 页面、屏幕、模型调用             |
-| `feat/meeting-mode-workspace`        | 重点记录、阶段摘要、最终纪要和翻译开关                                                           | schema、Provider、OCR、自由图表  |
-| 后续独立增强                         | window context、OCR、topic、diarization、overlay、固定图表                                       | 组合成单一大型 PR                |
-| 后续参考增强                         | Docling 编排与 document evidence                                                                 | 重复 transcript/Summary pipeline |
-| 产品化                               | Windows 打包、签名、升级、诊断和加固                                                             | 新核心业务范围                   |
+| 阶段                                  | 架构交付                                                                                         | 明确不包含                       |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------ | -------------------------------- |
+| 已完成基础                            | meeting CRUD/API/UI、Provider Mock、Sidecar auth、SecretStore、安全文件导入、隔离 Docling Worker | 真实采集、转录、翻译、总结       |
+| 国际化基础（PR #16，已完成）          | 打包 zh-CN/en-US、受限 locale 偏好、Help 和双语预览手册                                          | schema、transcript、Provider     |
+| `docs/simplified-three-mode-spec`     | 三模式预设、共享管线、权限和小 PR 边界                                                           | 产品代码                         |
+| `feat/transcript-data-core`           | schema v3、转录来源/片段、同步 parser、修正/删除                                                 | UI、外部 Provider                |
+| `feat/summary-mode-import`            | Transcript commands/API、总结模式粘贴/导入/预览                                                  | Summary schema、DeepSeek         |
+| `feat/summary-run-core`               | Summary run/revision、不可变快照、evidence 与 Mock                                               | SecretStore 消费、网络、正式 UI  |
+| `feat/consent-data-core`              | 通用 consent events、会话失效、grant/revoke 与审计 API                                           | 设备、Provider、正式 UI          |
+| `feat/summary-provider-deepseek`      | SecretStore、外发同意、受限 adapter、超时/取消                                                   | schema、正式 UI、Docling         |
+| `feat/summary-mode-minutes`           | 输入/模板选择、外发预览、结果、evidence 导航和 Markdown                                          | schema、Provider、持久编辑       |
+| `feat/summary-editing-export`         | 用户编辑、revision/stale、章节重生成和 DOCX                                                      | 文档解析、实时能力               |
+| `feat/document-parsing-orchestration` | Docling parse jobs、状态转换、artifact 原子提交、取消/恢复                                       | Summary 重写、音频               |
+| `feat/document-evidence-index`        | document chunks、页码/章节/表格定位和既有 Summary evidence 接线                                  | 重复 transcript/Summary pipeline |
+| `feat/live-session-data-core`         | mode 提示、capture session、音频 artifact/保留与删除协调                                         | 设备、进程、ASR                  |
+| `feat/sidecar-supervisor`             | 随机端口、打包、监控、崩溃恢复与孤儿回收                                                         | 音频、ASR                        |
+| `feat/audio-capture`                  | 麦克风/系统音频、独立同意、可见状态和资源回收                                                    | schema、ASR、翻译、屏幕          |
+| `feat/realtime-transcription`         | 实时 ASR 写入既有 transcript segments                                                            | 翻译 UI、屏幕                    |
+| `feat/window-context`                 | 用户确认的窗口身份、accessibility text、暂停与撤销                                               | OCR、说话人、翻译                |
+| `feat/screen-ocr`                     | 变化触发 OCR、screen evidence、临时帧清理                                                        | 说话人、翻译、模式工作区         |
+| `feat/live-language-data-core`        | translations、speaker aliases、checkpoint 快照                                                   | 外部 Provider、调度、UI          |
+| `feat/speaker-diarization`            | 会话级聚类、姓名校准、人工修改/合并和隔离 worker                                                 | 跨会议默认身份复用               |
+| `feat/realtime-translation-provider`  | 最终片段翻译、持续外发同意、取消和脱敏                                                           | schema、checkpoint、正式 UI      |
+| `feat/checkpoint-summary-runtime`     | 手动/固定时间增量快照、调度、去重与重试                                                          | 自动话题、正式 UI                |
+| `feat/topic-checkpoints`              | 可确认、忽略或修正的话题边界建议                                                                 | 自动确认决定、正式 UI            |
+| `feat/translation-overlay`            | 透明度、收起/展开、滚动、置顶和多显示器交互                                                      | 数据模型、Provider               |
+| `feat/translation-mode-workspace`     | 主窗口原文/译文、speaker 修正和 checkpoint UI                                                    | schema、Provider、透明浮窗       |
+| `feat/meeting-notes-core`             | 转录范围书签、用户文字笔记和 evidence                                                            | 页面、屏幕、模型调用             |
+| `feat/meeting-mode-workspace`         | 重点记录、阶段摘要、最终纪要和翻译开关                                                           | schema、Provider、OCR、自由图表  |
+| 后续独立增强                          | 只基于可追溯数据的固定图表与产品体验加固                                                         | 组合成单一大型 PR                |
+| 产品化                                | Windows 打包、签名、升级、诊断和加固                                                             | 新核心业务范围                   |
 
 每一行仍须按 `DEVELOPMENT_PLAN.md` 拆成指定的小型 PR。上游阶段只能通过版本化接口为下游提供能力，不得把下游实现提前塞入当前 PR。
 
@@ -406,7 +412,7 @@ worker 之间只交换受控文件引用和版本化 JSON，不共享 site-packa
 
 - Screenpipe 只能作为可替换的 Capture Provider；核心窗口选择、权限、事件模型和删除语义不得依赖它。采用前需用户决定商业授权、采集范围和 Windows 资源预算。
 - WhisperX 的 diarization 模型可能需要 Hugging Face token 和模型条款同意；不得把该 token 写入配置或仓库。
-- Docling 进程基础已由 PR #14 引入，解析持久化/产品接线顺延为参考增强；transcript-only Summary 的数据、通用同意、外部 Provider 和 UI 分别由 `feat/summary-run-core`、`feat/consent-data-core`、`feat/summary-provider-deepseek` 和 `feat/summary-mode-minutes` 实现，不依赖 Docling。不得在同一 PR 同时改变转录持久化、外部 AI、文档解析编排等信任边界。模型准备必须显式执行，外部 AI 调用仍需对应阶段授权。
+- Docling 进程基础已由 PR #14 引入；解析持久化和文档 evidence 在 transcript-only Summary、纪要工作区与编辑导出完成后接入，并先于真实音频。第一份 transcript-only 纪要仍分别由 `feat/summary-run-core`、`feat/consent-data-core`、`feat/summary-provider-deepseek` 和 `feat/summary-mode-minutes` 实现，不依赖 Docling。不得在同一 PR 同时改变转录持久化、外部 AI、文档解析编排等信任边界。模型准备必须显式执行，外部 AI 调用仍需对应阶段授权。
 
 ### 11.3 Windows 本地验收门槛
 

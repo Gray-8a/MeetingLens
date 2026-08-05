@@ -191,6 +191,6 @@ The next core delivery path is:
 5. `feat/summary-provider-deepseek`: the bounded DeepSeek adapter, SecretStore use, and outbound consent;
 6. `feat/summary-mode-minutes`: templates, run state, evidence navigation, and Markdown view, copy, and download;
 7. `feat/summary-editing-export`: editing, revisions, stale state, section regeneration, and DOCX;
-8. `feat/document-parsing-orchestration` and `feat/document-evidence-index`: later optional reference-document enrichment.
+8. `feat/document-parsing-orchestration` and `feat/document-evidence-index`: connect reference-document parsing and evidence after editing/export, before realtime capture, ASR, screen, speaker, translation, and mode integration.
 
-MeetingLens reaches the minimum threshold for generating real minutes from existing transcripts only after the first six stages. A real external Provider still requires user approval of cost, terms, and outbound data scope before implementation. [DEVELOPMENT_PLAN.md](../DEVELOPMENT_PLAN.md) is authoritative for future stages and branches; PR numbers are historical only after creation.
+MeetingLens reaches the minimum threshold for generating real minutes from existing transcripts after the first six stages; stage seven completes the first transcript-only daily-use loop with editing and export. The two Docling stages then complete Summary-mode reference enrichment without blocking the first minutes. A real external Provider still requires user approval of cost, terms, and outbound data scope before implementation. [DEVELOPMENT_PLAN.md](../DEVELOPMENT_PLAN.md) is authoritative for future stages and branches; PR numbers are historical only after creation.

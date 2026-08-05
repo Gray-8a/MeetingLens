@@ -170,7 +170,7 @@ Rust 是文件选择、校验、复制和私有存储的信任边界。React/Web
 - 文档内容解析只允许隔离的 Docling Worker 执行；PR #14 已建立独立锁定环境、Rust 注册且带哈希的受控引用、单请求进程、取消、超时、Windows Job Object 内存限制、页数/输出限制和畸形协议测试。`feat/document-parsing-orchestration` 才把该 Worker 接入文档状态与持久化。
 - Worker 不监听端口、不继承凭据/proxy/session token、不访问 SQLite；Docling 的远程服务、插件、VLM 和隐式模型下载均关闭。模型只通过显式脚本下载到仓库外目录，并用固定 revision 和逐文件 SHA-256 manifest 验证。
 - Worker 输出只能位于 Rust 批准的 parser staging 根并使用固定相对文件名；Rust 在持久化前重新验证路径、文件类型、大小、总量与 SHA-256。稳定错误不得包含原文、文件名、绝对路径、环境值或原生异常。
-- Docling Worker Foundation 已完成，但产品接线顺延到 `feat/document-parsing-orchestration`。Docling 只增强参考文档证据，不是粘贴/TXT/SRT/VTT 或 transcript-only Summary 的前置依赖。
+- Docling Worker Foundation 已完成；产品接线在 transcript-only 纪要和编辑导出闭环后由 `feat/document-parsing-orchestration` 开始，并在真实音频前由 `feat/document-evidence-index` 完成文档证据接入。Docling 只增强参考文档证据，不是粘贴/TXT/SRT/VTT 或第一份 transcript-only Summary 的前置依赖。
 
 ## 11. 本地存储与删除
 
@@ -243,21 +243,26 @@ SecretStore command 不记录请求 DTO、凭据值、长度、首尾字符、Cr
 | 纪要服务    | SecretStore key、独立外发同意、HTTPS、超时/取消、响应 schema 和日志脱敏                      |
 | 纪要工作区  | 外发预览、本次确认、安全状态/错误和 evidence 导航                                            |
 | 编辑导出    | 用户编辑保护、revision/stale、章节重生成隔离和 DOCX 导出                                     |
+| 文档编排    | Rust-only Docling 调用、状态恢复、artifact 原子提交、解析/删除竞态和无网络 Worker            |
+| 文档证据    | page/section/table 位置验证、document evidence allowlist 和 transcript 语义隔离              |
 | 实时数据    | 复用同意服务、capture session、音频 artifact 保留、删除协调和 mode 提示不越权                |
 | 实时进程    | sidecar supervisor、崩溃恢复、孤儿进程回收、临时文件和生命周期安全日志                       |
 | 音频采集    | 麦克风/系统音频/保存分别同意、可见状态、句柄释放和权限拒绝降级                               |
+| 实时转录    | 只写统一 transcript segments、来源/顺序校验、取消、CPU 回退和正文日志禁止                    |
+| 窗口上下文  | 单应用目标约束、窗口身份复核、暂停/撤销和 accessibility 内容最小化                           |
+| 屏幕 OCR    | 敏感内容遮蔽、临时帧 TTL/删除、screen evidence 验证和可选 Provider 权限边界                  |
 | 语言数据    | 译文单一真相、segment revision、匿名 speaker 映射、checkpoint 增量快照                       |
+| 说话人增强  | voice sample 明示同意/删除、会话级匿名标签、人工修正和模型 worker 隔离                       |
 | 翻译服务    | 持续外发独立同意、只发最终片段、关闭后停止发送、重试与日志脱敏                               |
 | 阶段摘要    | 独立同意、频率/窗口预览、新片段游标、失败重试复用快照和停止后取消                            |
+| 话题建议    | 只建议不确认、可忽略/修正、不得自动写入最终决定                                              |
+| 翻译浮窗    | 透明度/收起/滚动不扩大采集范围；关闭只停止展示，不得隐式改变独立的翻译外发开关               |
 | 翻译工作区  | 主窗口安全展示、匿名 speaker 改名、状态和停止入口                                            |
 | 重点数据    | 书签引用同会议最终片段、用户文字校验、manual_note evidence 和删除                            |
 | 会议工作区  | 翻译开关、checkpoint 与原始转录快照分离、无屏幕安全降级                                      |
-| 屏幕增强    | 单应用目标约束、身份复核、敏感内容遮蔽、临时帧 TTL/删除和可选 Provider 权限边界              |
-| 说话人增强  | voice sample 明示同意/删除、匿名标签、模型 worker 隔离                                       |
-| 参考增强    | Rust-only Docling 编排、解析恢复/删除竞态和 document evidence 语义隔离                       |
 | 产品化      | 签名、升级/回滚、SBOM、诊断导出脱敏和卸载残留检查                                            |
 
-Docling 的进程/依赖攻击面已由 PR #14 隔离；数据库/状态/UI 编排只能在后续 `feat/document-parsing-orchestration` 引入。transcript-only 外部数据流只能在 `feat/summary-provider-deepseek` 引入，正式纪要页面由后续 `feat/summary-mode-minutes` 集成；文档 evidence 只能在独立的 `feat/document-evidence-index` 接入。不得在同一 PR 同时扩大转录持久化、外部 AI、文件解析和证据索引信任边界。
+Docling 的进程/依赖攻击面已由 PR #14 隔离；数据库/状态/UI 编排在首个 transcript-only 总结与编辑导出闭环后由 `feat/document-parsing-orchestration` 引入，并在真实音频前由独立的 `feat/document-evidence-index` 接入文档 evidence。transcript-only 外部数据流仍只能在 `feat/summary-provider-deepseek` 引入，正式纪要页面由 `feat/summary-mode-minutes` 集成；Docling 不得成为第一份纪要的前置条件。不得在同一 PR 同时扩大转录持久化、外部 AI、文件解析和证据索引信任边界。
 
 ## 16. 安全验收门槛
 

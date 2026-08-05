@@ -2,11 +2,11 @@
 
 MeetingLens is a privacy-first Windows desktop assistant with three simple entry modes backed by one shared session engine: Summary, Translation, and Meeting. Its first real-value path turns pasted or imported meeting transcripts into detailed, editable, evidence-linked minutes; live audio, translation, and screen context extend the same transcript pipeline in later small releases.
 
-PR #1–#16 are merged. The meeting data/UI foundation, Provider mocks, authenticated Sidecar boundary, Windows SecretStore, secure document import, isolated Docling Worker, transcript/summary specification, packaged zh-CN/en-US UI, Help page, and bilingual preview guides are complete. Docling is not connected to SQLite, Tauri commands, document state, or product UI and is retained for later reference-document enrichment. The current schema is v2; transcript persistence/import and real summary generation remain unimplemented.
+PR #1–#16 are merged. The meeting data/UI foundation, Provider mocks, authenticated Sidecar boundary, Windows SecretStore, secure document import, isolated Docling Worker, transcript/summary specification, packaged zh-CN/en-US UI, Help page, and bilingual preview guides are complete. Docling is not connected to SQLite, Tauri commands, document state, or product UI; its product wiring is scheduled after the transcript-only editing/export loop and before realtime capture, without blocking the first minutes. The current schema is v2; transcript persistence/import and real summary generation remain unimplemented.
 
 The Provider runtime defines Capture, Transcription, Translation, Summary, and DocumentParser capability boundaries. Current implementations are explicit deterministic in-memory mocks: they do not access devices, files, or networks, and can be replaced through an application-owned Registry without changing page business logic.
 
-The active product direction is defined in [the simplified three-mode specification](SIMPLIFIED_MODE_SPEC.md). The previous unimplemented roadmap is paused, while all merged foundations remain reusable. Delivery starts with a real Summary mode for paste/TXT/SRT/VTT, then adds a shared realtime transcription foundation, Translation mode, Meeting mode, and advanced screen intelligence in separate reviewable PRs.
+The three-mode user experience is authoritative in [the simplified three-mode specification](SIMPLIFIED_MODE_SPEC.md), product behavior in [the product specification](PRODUCT_SPEC.md), and implementation order in [the development plan](DEVELOPMENT_PLAN.md). Delivery first completes transcript-only Summary through editing/export, then connects Docling and document evidence without blocking the first minutes, and only then adds realtime capture/ASR, screen and window context, speaker enhancement, realtime translation, and final Translation/Meeting mode integration in separate reviewable PRs.
 
 Development-preview user guides are available in [简体中文](docs/USER_GUIDE.zh-CN.md) and [English](docs/USER_GUIDE.en-US.md).
 
@@ -129,11 +129,13 @@ The initial templates are detailed meeting minutes, concise meeting summary, and
 13. **Internationalization foundation — complete:** packaged zh-CN/en-US UI, locale preference, Help, and bilingual preview guides (`feat/i18n-user-guide-foundation`, PR #16).
 14. **Current direction alignment:** freeze the three simple modes and shared pipeline (`docs/simplified-three-mode-spec`).
 15. **Next summary foundation:** transcript data core (`feat/transcript-data-core`) followed by the paste/TXT/SRT/VTT workspace (`feat/summary-mode-import`).
-16. **First real minutes:** separate summary data/snapshot core, consent data core, DeepSeek Provider, and result workspace PRs; then editing/export.
-17. **Shared live foundation:** live-session data, Sidecar supervisor, Windows audio capture, then realtime ASR into the same transcript segments.
-18. **Translation mode:** language/checkpoint data core, realtime Provider, checkpoint runtime, then the user workspace.
-19. **Meeting mode:** manual-note/bookmark data core, then the user workspace; screen context and advanced automation follow independently.
-20. **Reference enrichment:** Docling orchestration and document evidence indexing remain optional later enhancements.
+16. **First real minutes:** separate summary data/snapshot core, consent data core, DeepSeek Provider, and result workspace PRs.
+17. **Complete the transcript-only loop:** editing, revision/stale handling, section regeneration, DOCX, and history (`feat/summary-editing-export`).
+18. **Reference enrichment:** connect the completed Docling Worker, then add document evidence indexing; neither stage blocks the first transcript-only minutes.
+19. **Realtime foundation:** live-session data, Sidecar supervisor, Windows audio capture, then realtime ASR into the same transcript segments.
+20. **Screen and speaker context:** user-confirmed window/accessibility/OCR stages, followed by speaker data, diarization, and naming.
+21. **Realtime translation:** translation Provider, checkpoint summaries, topic suggestions, and the optional overlay.
+22. **Mode integration:** Translation and Meeting workspaces reuse the shared transcript, screen, evidence, minutes, history, and export pipelines.
 
 The authoritative branch mapping, exclusions, and acceptance criteria are in [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md). Database, UI, external Provider, audio, screen, and heavy-worker trust boundaries remain separate PRs. Screenpipe, if adopted, is an optional provider rather than a core dependency.
 
