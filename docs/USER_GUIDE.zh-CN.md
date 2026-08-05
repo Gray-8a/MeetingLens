@@ -185,9 +185,12 @@ Key 保存在当前 Windows 用户的 Credential Manager 中，而不是 SQLite�
 下一条核心交付路径是：
 
 1. `feat/transcript-data-core`：schema v3、转录来源和片段、粘贴/TXT/SRT/VTT 本地解析；
-2. `feat/transcript-import-ui`：粘贴、原生导入、预览和首页入口；
-3. `feat/deepseek-summary-mvp`：transcript-only 纪要、不可变快照、模板、证据和 Markdown；
-4. `feat/summary-editing-export`：编辑、revision、stale、章节重生成和 DOCX；
-5. `feat/document-parsing-orchestration` 与 `feat/document-evidence-index`：后续参考文档增强。
+2. `feat/summary-mode-import`：总结模式入口、粘贴、原生导入、预览和基础说话人修正；
+3. `feat/summary-run-core`：不可变快照、run/revision、evidence 和 Mock；
+4. `feat/consent-data-core`：通用同意记录、会话失效与审计；
+5. `feat/summary-provider-deepseek`：受限 DeepSeek adapter、SecretStore 和外发同意；
+6. `feat/summary-mode-minutes`：模板、生成状态、证据导航、Markdown 查看、复制和下载；
+7. `feat/summary-editing-export`：编辑、revision、stale、章节重生成和 DOCX；
+8. `feat/document-parsing-orchestration` 与 `feat/document-evidence-index`：在编辑导出后接入参考文档解析和证据，再进入实时采集、ASR、屏幕、说话人、翻译与模式集成。
 
-完成前三项后，MeetingLens 才达到从已有转录生成真实会议纪要的最低日常使用门槛。未来阶段和分支以 [DEVELOPMENT_PLAN.md](../DEVELOPMENT_PLAN.md) 为准，PR 编号只记录实际创建后的历史。
+完成前六项后，MeetingLens 达到从已有转录生成真实会议纪要的最低门槛；完成第七项编辑导出后，形成首个 transcript-only 日常使用闭环。Docling 两阶段随后完善总结模式，但不阻塞第一份纪要。真实外部 Provider 在实现前仍需用户确认费用、条款和发送范围。未来阶段和分支以 [DEVELOPMENT_PLAN.md](../DEVELOPMENT_PLAN.md) 为准，PR 编号只记录实际创建后的历史。

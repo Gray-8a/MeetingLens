@@ -6,6 +6,10 @@ MeetingLens 采用“轻量桌面壳 + 本地结构化输入 + 本地处理 side
 
 核心目标是明确权限边界、允许处理模块独立替换，并让原始会议数据默认不离开本机。
 
+三模式产品体验与首轮范围以 `SIMPLIFIED_MODE_SPEC.md` 为准；本文件继续作为共享引擎、信任边界和组件职责的架构权威，两者不得形成第二套实现路线。
+
+总结、翻译和会议模式是同一系统的三个界面预设，不是三个应用或三套后端。模式决定默认来源、开关和布局；统一的 meeting、transcript source/segment、translation、checkpoint、summary snapshot、evidence、consent 和 deletion pipeline 才是持久化真相。
+
 ## 2. 系统上下文
 
 ```mermaid
@@ -19,6 +23,23 @@ flowchart LR
     SIDE <--> FS
     SIDE -. "用户确认后的最小文本" .-> DS["DeepSeek API"]
 ```
+
+### 2.1 三模式共享处理流
+
+```mermaid
+flowchart LR
+    HOME["三个模式入口"] --> CONSENT["本次来源、权限与外发确认"]
+    CONSENT --> SOURCE["导入文本或实时采集"]
+    SOURCE --> SEGMENTS["统一 Transcript Segments"]
+    SEGMENTS --> TRANS["可选翻译"]
+    SEGMENTS --> CHECKPOINT["手动/固定时间 Checkpoint"]
+    SEGMENTS --> SNAPSHOT["不可变最终输入快照"]
+    TRANS --> DISPLAY["派生字幕显示"]
+    CHECKPOINT --> DISPLAY
+    SNAPSHOT --> MINUTES["纪要、证据、编辑与导出"]
+```
+
+翻译是派生显示数据，不作为独立事实或 evidence；最终纪要以原始 segment revision 为准。阶段摘要不得成为最终纪要的唯一输入。模式切换、权限拒绝或可选 Provider 失败时，已有本地转录和人工记录仍可沿共享管线继续处理。
 
 ## 3. 组件职责
 
@@ -36,17 +57,18 @@ flowchart LR
 - 作为 WebView 与本机资源之间的权限边界。
 - 管理窗口、文件选择、音频设备权限和应用生命周期。
 - 生成每次应用启动的会话令牌，并作为唯一授权调用方管理 Sidecar 通信。
-- MVP 1A-3B-1 取得安全传递令牌所需的最小开发 Sidecar 启停所有权；完整打包、监控、崩溃恢复和孤儿进程回收仍属于 MVP 1C。
+- MVP 1A-3B-1 取得安全传递令牌所需的最小开发 Sidecar 启停所有权；完整打包、监控、崩溃恢复和孤儿进程回收仍属于 `feat/sidecar-supervisor`。
 - 通过 Tauri App State 管理 `SecretStore`，并在 Windows 使用当前用户的 Credential Manager；WebView 只能写入、查询配置状态和删除，不能读回值。
 - 对 IPC 输入做类型、路径和大小校验。
 - 负责数据库迁移、原子写入和删除协调。
+- 对麦克风、系统音频、单应用屏幕、保存原始音频和外部数据发送分别维护会话级同意；应用启动不自动申请这些权限。
 
 ### 3.3 Python Sidecar
 
 - 提供版本化 loopback API。
 - 未来编排转录、隔离文档提取、翻译、说话人分离和摘要预处理；当前只提供认证健康契约，不接收用户文件。
 - 任务处理器按接口解耦，单个模型失败不影响其他模块。
-- Sidecar 保持无运行时第三方依赖的窄 HTTP 服务；MVP 1A-3B-1 为所有路由增加会话认证，MVP 1C 才实现 supervisor、崩溃恢复、孤儿进程回收和 Windows sidecar 打包生命周期。
+- Sidecar 保持无运行时第三方依赖的窄 HTTP 服务；MVP 1A-3B-1 为所有路由增加会话认证，`feat/sidecar-supervisor` 才实现 supervisor、崩溃恢复、孤儿进程回收和 Windows sidecar 打包生命周期。
 - Diart、WhisperX 等不兼容模型不得装入同一个 Python 环境，由独立 worker 进程和版本化消息协议隔离。
 
 ### 3.4 SQLite 与本地文件
@@ -76,7 +98,7 @@ MVP 1A-3A 在 React/TypeScript 应用边界定义五类能力契约：Capture、
 
 本阶段契约只位于 TypeScript，因为尚无真实 Provider RPC。Rust 继续负责系统权限、Tauri command、数据库和未来进程/凭据边界；Python 继续只提供现有 sidecar 健康契约。真实实现出现时再在所属层增加版本化 adapter，不为形式对称提前复制无调用方的 Rust/Python 接口。
 
-未来替换关系保持可选：Screenpipe 只能是 Capture Provider；Whisper/Diart 属于 Transcription Provider；DeepSeek 只能实现 Translation/Summary Provider；Docling 只能实现 DocumentParser Provider。会话认证由 MVP 1A-3B-1 建立；MVP 1A-3B-2 在 Rust 信任边界建立 SecretStore，但不启用真实 DeepSeek Provider；随机端口和完整 supervisor 留在 MVP 1C。
+未来替换关系保持可选：Screenpipe 只能是 Capture Provider；Whisper/Diart 属于 Transcription Provider；DeepSeek 只能实现 Translation/Summary Provider；Docling 只能实现 DocumentParser Provider。会话认证由 MVP 1A-3B-1 建立；MVP 1A-3B-2 在 Rust 信任边界建立 SecretStore，但不启用真实 DeepSeek Provider；随机端口和完整 supervisor 留在 `feat/sidecar-supervisor`。
 
 ## 4. 信任边界
 
@@ -88,6 +110,8 @@ MVP 1A-3A 在 React/TypeScript 应用边界定义五类能力契约：Capture、
 | Transcript input → Rust | Rust core          | 粘贴/TXT/SRT/VTT | 严格 UTF-8、大小/片段上限、控制字符拒绝、同步解析、无执行/网络 |
 | Rust → Sidecar          | Rust session owner | 本地 HTTP 进程   | loopback、临时 bearer token、集中 Header、超时                 |
 | Rust → Document Worker  | Rust coordinator   | 不可信文档       | 隔离进程、受控相对引用、取消、资源和输出限制                   |
+| Audio device → Rust     | Rust core          | 麦克风/系统音频  | 用户手动启停、来源指示、句柄回收、可选保存                     |
+| Window/screen → Rust    | Rust core          | 屏幕像素/结构树  | 单应用优先、目标身份复核、本地变化检测、临时帧删除             |
 | 本地 → DeepSeek         | 本地数据           | 外部服务         | 明示同意、最小文本、脱敏、TLS、超时                            |
 
 ## 5. Sidecar API
@@ -127,7 +151,7 @@ sequenceDiagram
     Rust-->>UI: typed health or stable error code
 ```
 
-Rust 使用 1 秒连接超时、2 秒总超时、禁止重定向，并且不把底层网络错误、路径、Header 或响应正文回显给 WebView。MVP 1A-3B-1 保留固定开发端口，但锁死 `127.0.0.1` 并启用每次启动轮换的高熵 token；随机端口、打包二进制和完整 supervisor 由 MVP 1C 接线。
+Rust 使用 1 秒连接超时、2 秒总超时、禁止重定向，并且不把底层网络错误、路径、Header 或响应正文回显给 WebView。MVP 1A-3B-1 保留固定开发端口，但锁死 `127.0.0.1` 并启用每次启动轮换的高熵 token；随机端口、打包二进制和完整 supervisor 由 `feat/sidecar-supervisor` 接线。
 
 ### 5.2 规划端点
 
@@ -294,9 +318,9 @@ MeetingLens/
 3. 发布阶段使用锁定版本并经 Windows 11 验证的打包工具构建 sidecar 二进制。
 4. 二进制按 Tauri target triple 命名，并配置到 `bundle.externalBin`。
 5. Rust 使用固定程序/module allowlist 启动进程，不允许 WebView 获得任意 shell 执行能力。
-6. 当前只在正常窗口/应用退出时终止所拥有的子进程；崩溃恢复、健康监控、重启和孤儿进程回收属于 MVP 1C。
+6. 当前只在正常窗口/应用退出时终止所拥有的子进程；崩溃恢复、健康监控、重启和孤儿进程回收属于 `feat/sidecar-supervisor`。
 
-Phase 0 不提前写入 `externalBin`，因为仓库尚无可验证的平台二进制；MVP 1C 的 `feat/sidecar-supervisor` 必须在产生可验证 Windows 二进制后再接入。
+Phase 0 不提前写入 `externalBin`，因为仓库尚无可验证的平台二进制；`feat/sidecar-supervisor` 必须在产生可验证 Windows 二进制后再接入。
 
 ## 9. 可观测性
 
@@ -315,30 +339,37 @@ Phase 0 不提前写入 `externalBin`，因为仓库尚无可验证的平台二�
 
 ### 10.1 实施顺序与模块所有权
 
-| 阶段         | 架构交付                                                       | 明确不包含                                  |
-| ------------ | -------------------------------------------------------------- | ------------------------------------------- |
-| MVP 1A-1     | SQLite、迁移、meeting repository/service、删除语义和持久化     | UI、Provider、worker                        |
-| MVP 1A-2-1   | Meeting Tauri commands、DTO、状态机和 TypeScript `meetingApi`  | 完整页面、模拟字幕、Provider                |
-| MVP 1A-2-2   | React 页面、模拟转写和完整合成会议数据流                       | 真实音频、外部 API                          |
-| MVP 1A-3A    | TypeScript Provider 契约、Registry、纯内存 Mock 与模拟会议迁移 | 凭据、令牌、真实 Provider                   |
-| MVP 1A-3B-1  | Sidecar 会话认证、Loopback、稳定错误与基础日志脱敏             | SecretStore、真实 Provider                  |
-| MVP 1A-3B-2  | SecretStore、WinCred、最小 Tauri permissions 与安全配置        | DeepSeek 调用、Python 传密钥、Docling、音频 |
-| MVP 1B-0     | 文档导入、存储、状态、删除和后续 PR 的规范门槛                 | 任何功能代码                                |
-| MVP 1B-1A    | 文档存储核心、安全导入、去重和删除协调                         | 正式 UI、解析、外部 AI                      |
-| MVP 1B-1B    | Document commands、documentApi、原生选择器和导入/删除 UI       | 文档解析                                    |
-| PR #14       | 隔离 Docling worker、锁定环境、受限协议和进程/资源边界（完成） | DB、状态、commands、UI、总结模型            |
-| 转录规格     | 转录、纪要、首页入口、输入快照和新路线规格（PR #15 已完成）    | 任何产品代码                                |
-| 国际化基础   | 打包 zh-CN/en-US、非敏感 locale 偏好、Help 和预览手册          | schema、transcript、DeepSeek                |
-| 转录数据核心 | schema v3、转录来源/片段、同步 parser、修正/删除               | UI、DeepSeek                                |
-| 转录导入 UI  | Transcript commands/API、粘贴/导入/预览和首页快速入口          | DeepSeek                                    |
-| 首版真实纪要 | transcript-only DeepSeek 纪要、输入快照、模板和 evidence       | Docling、DOCX、章节重生成                   |
-| 纪要编辑导出 | 用户编辑、revision/stale、章节重生成和 DOCX                    | 文档解析                                    |
-| 文档解析编排 | Docling 解析任务、顺序递增 migration、产物持久化和产品接线     | DeepSeek 改造                               |
-| 文档证据索引 | 文档 chunks/页码/章节/表格证据接入既有 Summary pipeline        | 重复 transcript pipeline                    |
-| 后续         | Sidecar supervisor、WASAPI、实时 ASR 写入 transcript segments  | 屏幕、翻译、说话人                          |
-| 后续         | Window context、accessibility/OCR 和可选 Capture Provider      | 核心强绑定 Screenpipe                       |
-| 后续         | 隔离的说话人增强、翻译、Diart 和 WhisperX worker               | 跨会议默认身份识别                          |
-| MVP 4        | Windows 打包、签名、升级、诊断和产品加固                       | 新核心业务范围                              |
+| 阶段                                  | 架构交付                                                                                         | 明确不包含                       |
+| ------------------------------------- | ------------------------------------------------------------------------------------------------ | -------------------------------- |
+| 已完成基础                            | meeting CRUD/API/UI、Provider Mock、Sidecar auth、SecretStore、安全文件导入、隔离 Docling Worker | 真实采集、转录、翻译、总结       |
+| 国际化基础（PR #16，已完成）          | 打包 zh-CN/en-US、受限 locale 偏好、Help 和双语预览手册                                          | schema、transcript、Provider     |
+| `docs/simplified-three-mode-spec`     | 三模式预设、共享管线、权限和小 PR 边界                                                           | 产品代码                         |
+| `feat/transcript-data-core`           | schema v3、转录来源/片段、同步 parser、修正/删除                                                 | UI、外部 Provider                |
+| `feat/summary-mode-import`            | Transcript commands/API、总结模式粘贴/导入/预览                                                  | Summary schema、DeepSeek         |
+| `feat/summary-run-core`               | Summary run/revision、不可变快照、evidence 与 Mock                                               | SecretStore 消费、网络、正式 UI  |
+| `feat/consent-data-core`              | 通用 consent events、会话失效、grant/revoke 与审计 API                                           | 设备、Provider、正式 UI          |
+| `feat/summary-provider-deepseek`      | SecretStore、外发同意、受限 adapter、超时/取消                                                   | schema、正式 UI、Docling         |
+| `feat/summary-mode-minutes`           | 输入/模板选择、外发预览、结果、evidence 导航和 Markdown                                          | schema、Provider、持久编辑       |
+| `feat/summary-editing-export`         | 用户编辑、revision/stale、章节重生成和 DOCX                                                      | 文档解析、实时能力               |
+| `feat/document-parsing-orchestration` | Docling parse jobs、状态转换、artifact 原子提交、取消/恢复                                       | Summary 重写、音频               |
+| `feat/document-evidence-index`        | document chunks、页码/章节/表格定位和既有 Summary evidence 接线                                  | 重复 transcript/Summary pipeline |
+| `feat/live-session-data-core`         | mode 提示、capture session、音频 artifact/保留与删除协调                                         | 设备、进程、ASR                  |
+| `feat/sidecar-supervisor`             | 随机端口、打包、监控、崩溃恢复与孤儿回收                                                         | 音频、ASR                        |
+| `feat/audio-capture`                  | 麦克风/系统音频、独立同意、可见状态和资源回收                                                    | schema、ASR、翻译、屏幕          |
+| `feat/realtime-transcription`         | 实时 ASR 写入既有 transcript segments                                                            | 翻译 UI、屏幕                    |
+| `feat/window-context`                 | 用户确认的窗口身份、accessibility text、暂停与撤销                                               | OCR、说话人、翻译                |
+| `feat/screen-ocr`                     | 变化触发 OCR、screen evidence、临时帧清理                                                        | 说话人、翻译、模式工作区         |
+| `feat/live-language-data-core`        | translations、speaker aliases、checkpoint 快照                                                   | 外部 Provider、调度、UI          |
+| `feat/speaker-diarization`            | 会话级聚类、姓名校准、人工修改/合并和隔离 worker                                                 | 跨会议默认身份复用               |
+| `feat/realtime-translation-provider`  | 最终片段翻译、持续外发同意、取消和脱敏                                                           | schema、checkpoint、正式 UI      |
+| `feat/checkpoint-summary-runtime`     | 手动/固定时间增量快照、调度、去重与重试                                                          | 自动话题、正式 UI                |
+| `feat/topic-checkpoints`              | 可确认、忽略或修正的话题边界建议                                                                 | 自动确认决定、正式 UI            |
+| `feat/translation-overlay`            | 透明度、收起/展开、滚动、置顶和多显示器交互                                                      | 数据模型、Provider               |
+| `feat/translation-mode-workspace`     | 主窗口原文/译文、speaker 修正和 checkpoint UI                                                    | schema、Provider、透明浮窗       |
+| `feat/meeting-notes-core`             | 转录范围书签、用户文字笔记和 evidence                                                            | 页面、屏幕、模型调用             |
+| `feat/meeting-mode-workspace`         | 重点记录、阶段摘要、最终纪要和翻译开关                                                           | schema、Provider、OCR、自由图表  |
+| 后续独立增强                          | 只基于可追溯数据的固定图表与产品体验加固                                                         | 组合成单一大型 PR                |
+| 产品化                                | Windows 打包、签名、升级、诊断和加固                                                             | 新核心业务范围                   |
 
 每一行仍须按 `DEVELOPMENT_PLAN.md` 拆成指定的小型 PR。上游阶段只能通过版本化接口为下游提供能力，不得把下游实现提前塞入当前 PR。
 
@@ -379,9 +410,9 @@ worker 之间只交换受控文件引用和版本化 JSON，不共享 site-packa
 
 ### 11.2 延后决策
 
-- Screenpipe 在 MVP 3 也只能作为可替换的 Capture Provider；核心窗口选择、权限、事件模型和删除语义不得依赖它。采用前需用户决定商业授权、采集范围和 Windows 资源预算。
+- Screenpipe 只能作为可替换的 Capture Provider；核心窗口选择、权限、事件模型和删除语义不得依赖它。采用前需用户决定商业授权、采集范围和 Windows 资源预算。
 - WhisperX 的 diarization 模型可能需要 Hugging Face token 和模型条款同意；不得把该 token 写入配置或仓库。
-- Docling 进程基础已由 PR #14 引入，解析持久化/产品接线顺延到 `feat/document-parsing-orchestration`；transcript-only DeepSeek 纪要在 `feat/deepseek-summary-mvp` 独立实现，不依赖 Docling。不得在同一 PR 同时改变转录持久化、外部 AI、文档解析编排等信任边界。模型准备必须显式执行，外部 AI 调用仍需对应阶段授权。
+- Docling 进程基础已由 PR #14 引入；解析持久化和文档 evidence 在 transcript-only Summary、纪要工作区与编辑导出完成后接入，并先于真实音频。第一份 transcript-only 纪要仍分别由 `feat/summary-run-core`、`feat/consent-data-core`、`feat/summary-provider-deepseek` 和 `feat/summary-mode-minutes` 实现，不依赖 Docling。不得在同一 PR 同时改变转录持久化、外部 AI、文档解析编排等信任边界。模型准备必须显式执行，外部 AI 调用仍需对应阶段授权。
 
 ### 11.3 Windows 本地验收门槛
 

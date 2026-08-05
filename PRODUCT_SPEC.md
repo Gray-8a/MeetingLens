@@ -6,6 +6,8 @@ MeetingLens 是一款面向 Windows 11 的本地优先 AI 会议助手。第一�
 
 产品优先把“会上说了什么”转化成可核验的决定、行动项、风险和未决问题。转录是最重要的第一类来源；文档提供背景和证据增强，真实音频、屏幕上下文、说话人增强与实时翻译按价值顺序逐步接入，同时尽量减少会议数据离开本机。
 
+当前三模式入口与用户体验以 `SIMPLIFIED_MODE_SPEC.md` 为准；本文件是产品能力、行为规则和验收边界的权威规格；实际实施顺序以 `DEVELOPMENT_PLAN.md` 为准。同一套会话引擎提供总结、翻译和会议三种模式，此前已经合并的工程与安全基础继续复用，旧版尚未开始的路线暂停。
+
 ## 2. 目标用户与边界
 
 - 需要整理高频会议的个人、学生和小型团队
@@ -29,14 +31,14 @@ MeetingLens 是一款面向 Windows 11 的本地优先 AI 会议助手。第一�
 
 ### 4.1 首页快速入口
 
-首页同时保留高级“新建会议”向导，并提供五个面向任务的入口：开始实时会议、粘贴会议记录、导入会议转录、导入会议材料和查看历史会议。用户不需要先理解 Provider、Docling 或内部状态机。
+首页只提供三个主要模式入口和历史记录。用户不需要先理解 Provider、Docling、设备协议或内部状态机。
 
-- **粘贴会议记录**：填写可选标题和默认当天、可编辑的会议日期，粘贴 UTF-8 文本，预览规范化片段后进入纪要生成。
-- **导入会议转录**：通过 Rust 原生选择器导入 TXT/SRT/VTT，可自动创建会议或选择已有会议，确认片段数、说话人和时间范围后进入纪要生成。
-- **导入会议材料**：继续使用独立 Document UI，不与转录来源混淆。
-- **开始实时会议**：保留既有创建/开始流程；真实音频、ASR 和窗口上下文按后续阶段接入。
+- **总结模式**：粘贴 UTF-8 文本或通过 Rust 原生选择器导入 TXT/SRT/VTT，预览规范化片段后生成纪要。
+- **翻译模式**：明确开启音频后显示原文/译文字幕、匿名说话人标签和阶段摘要；真实能力在共享实时转录底座完成后开放。
+- **会议模式**：在已经完成的实时转录、用户确认的屏幕/窗口上下文和可选翻译能力上，集成阶段记录与最终纪要；不重新实现这些共享底座。
+- **历史记录**：统一查看三种模式产生的会议、逐字稿、摘要和导出结果。
 
-“导入会议录制视频”只作为未来增强，当前不显示为可用入口。
+“导入会议录制视频”和原始音频文件离线转写只作为未来增强，当前不显示为可用入口。参考材料仍通过独立 Document UI 管理，不与转录来源混淆。
 
 ### 4.2 生成会议纪要
 
@@ -49,7 +51,9 @@ MeetingLens 是一款面向 Windows 11 的本地优先 AI 会议助手。第一�
 
 ### 4.3 实时会议与后续增强
 
-真实音频阶段由用户明确开始录音，界面持续显示状态；实时 ASR 将片段写入与导入转录相同的数据模型。屏幕、说话人和翻译均为可选增强，失败不得阻塞已导入转录的浏览或纪要生成。
+真实音频阶段由用户明确开始采集，界面持续显示麦克风、系统音频、保存原始音频和外部翻译的独立状态；实时 ASR 将片段写入与导入转录相同的数据模型。保留设置必须把“保存完整听录文本”（默认开启）、“保存原始会议音频”（默认关闭）和“保存屏幕关键帧”（默认关闭、仅在屏幕增强可用时显示）作为三个独立选项。屏幕、说话人和翻译均为可选增强，失败不得阻塞本地转录、人工记录或会后纪要。
+
+阶段摘要首版只允许用户手动触发，或每 5 分钟在存在新最终片段时触发。最终纪要必须读取原始转录片段的不可变快照，不能只对阶段摘要再次总结。后续自动话题边界只能给出需要用户确认的建议，不得静默切段或写成最终决定；透明桌面浮窗和屏幕变化判断同样属于后续独立增强。
 
 ## 5. 功能范围
 
@@ -77,20 +81,32 @@ Phase 0 已通过 PR #1 合并，并在 Windows 本机实际启动 Tauri 窗口�
 
 当前阶段只允许删除尚未开始的 `draft` 或已正常结束的 `ready` 会议。`recording` 必须先结束再删除；其他保留状态在后续阶段定义清理语义前同样不可删除。
 
-### 5.3 MVP 1B：转录优先的会议纪要与文档增强
+### 5.3 简约版近期主线：先完成总结模式
 
-PR #1–#15 已合并。文档安全存储、原生导入 UI 和 Docling Worker Foundation 已完成；Docling 具备独立锁定环境、显式离线模型、stdio 协议、Windows Job Object、超时/取消和多格式本机 Smoke，但尚未接入 SQLite、Provider、Commands 或 UI。当前 SQLite schema 为 v2，模拟字幕仍只在前端内存中，DeepSeek key 可以安全保存但没有真实 Provider 消费，产品当前不能生成真实会议纪要。阶段名和分支名是未来计划的权威标识；PR 编号只记录实际历史。
+PR #1–#16 已合并。文档安全存储、原生导入 UI、Docling Worker Foundation、转录/纪要规格、zh-CN/en-US 界面、Help 页面和双语开发预览手册已完成；Docling 具备独立锁定环境、显式离线模型、stdio 协议、Windows Job Object、超时/取消和多格式本机 Smoke，但尚未接入 SQLite、Provider、Commands 或 UI。当前 SQLite schema 为 v2，模拟字幕仍只在前端内存中，DeepSeek key 可以安全保存但没有真实 Provider 消费，产品当前不能生成真实会议纪要。阶段名和分支名是未来计划的权威标识；PR 编号只记录实际历史。
 
-新的近期顺序为：
+当前顺序不再使用未来 PR 编号作为计划契约：
 
-1. **`docs/transcript-and-summary-spec`（已完成，PR #15）**：冻结转录模型、快速入口、纪要行为和路线，不实现功能。
-2. **`feat/i18n-user-guide-foundation`**：横向补齐 zh-CN/en-US、界面语言偏好、开发预览帮助与使用手册；不改变核心价值路线。
-3. **`feat/transcript-data-core`（下一核心阶段）**：schema v3、`transcript_sources`/`transcript_segments`、粘贴/TXT/SRT/VTT 同步解析、去重、修正和删除语义；不做 UI 或 DeepSeek。
-4. **`feat/transcript-import-ui`**：Transcript Commands/API、粘贴与原生导入、首页快速入口、片段预览和基础说话人修正；不做 DeepSeek。
-5. **`feat/deepseek-summary-mvp`**：transcript-only SummaryProvider、输入快照、外部发送预览和同意、三个模板、证据验证、Markdown 与复制；不接 Docling。
-6. **`feat/summary-editing-export`**：用户编辑、summary revision、stale、章节重生成和 DOCX。
-7. **`feat/document-parsing-orchestration`**：接入已有 Docling Worker、持久化解析任务和产物、取消/重试/恢复；不调用 DeepSeek，数据库版本必须在 v3 之后顺序递增。
-8. **`feat/document-evidence-index`**：document chunks、页码/章节/表格定位，并将文档证据接入已有 Summary pipeline。
+1. **`docs/transcript-and-summary-spec`（已完成，PR #15）**：冻结转录、输入快照和可追溯纪要规格。
+2. **`feat/i18n-user-guide-foundation`（已完成，PR #16）**：打包 zh-CN/en-US、界面语言偏好、Help 与双语开发预览手册；后续产品文案必须同步维护。
+3. **`docs/simplified-three-mode-spec`（当前）**：冻结三个入口、共享管线、隐私边界和新顺序，不实现功能。
+4. **`feat/transcript-data-core`**：schema v3、`transcript_sources`/`transcript_segments`、粘贴/TXT/SRT/VTT 同步解析、去重、修正和删除语义；不做 UI 或外部 Provider。
+5. **`feat/summary-mode-import`**：Transcript Commands/API、总结模式入口、粘贴与原生导入、片段预览和基础说话人修正；不调用 DeepSeek。
+6. **`feat/summary-run-core`**：Summary run/revision、不可变输入快照、evidence 与稳定错误；只使用 Mock，不接外部 Provider 或结果 UI。
+7. **`feat/consent-data-core`**：通用 `consent_events`、会话失效和审计 API；不调用 Provider、不访问设备。
+8. **`feat/summary-provider-deepseek`**：Rust SecretStore 消费、外发同意和受限 DeepSeek adapter；不新增 schema 或正式页面。
+9. **`feat/summary-mode-minutes`**：选择输入/模板、外发预览、生成状态、结果、证据和 Markdown 复制/下载；不新增数据库或 Provider。
+10. **`feat/summary-editing-export`**：用户编辑、summary revision、stale、章节重生成、DOCX 和历史版本，完成首个 transcript-only 总结闭环。
+11. **`feat/document-parsing-orchestration`**：接入已完成的 Docling Worker、parse jobs、文档状态、artifact 原子提交、取消/重试/恢复；不实现音频。
+12. **`feat/document-evidence-index`**：建立 document chunks 与页码/章节/表格定位，并把参考材料 evidence 接入既有 Summary pipeline；不重写 transcript pipeline。
+13. **实时采集基础**：依次完成 `feat/live-session-data-core`、`feat/sidecar-supervisor` 和 `feat/audio-capture`；保存原始音频仍须独立同意且默认关闭。
+14. **实时 ASR**：`feat/realtime-transcription` 直接写入既有 `transcript_sources/transcript_segments`，不建立第二套转录模型。
+15. **屏幕与窗口上下文**：依次完成 `feat/window-context` 和 `feat/screen-ocr`；只读取用户确认的目标，屏幕关键帧默认不保存。
+16. **说话人分离与命名**：先由 `feat/live-language-data-core` 建立会话级别名等共享数据，再由 `feat/speaker-diarization` 提供聚类、校准和人工修正；不承诺跨会议声纹复用。
+17. **实时翻译**：依次完成 `feat/realtime-translation-provider`、`feat/checkpoint-summary-runtime`、`feat/topic-checkpoints` 和 `feat/translation-overlay`，覆盖可关闭翻译、阶段摘要建议和透明字幕交互。
+18. **翻译/会议模式集成**：依次完成 `feat/translation-mode-workspace`、`feat/meeting-notes-core` 和 `feat/meeting-mode-workspace`；三种模式共享纪要、证据、历史和导出流程。
+
+界面语言与纪要输出语言是两项独立设置：切换 zh-CN/en-US 只改变应用界面，不得自动改变当前或未来 Summary run 的中文、英文或双语输出选择。
 
 Docling 是参考文档解析增强，不是 transcript-only 纪要的强制前置。转录证明会上说了什么；文档提供材料与背景，文档中写着某项计划不等于会议已经确认该计划。
 
@@ -116,7 +132,7 @@ Docling 是参考文档解析增强，不是 transcript-only 纪要的强制前�
 
 第一版只接受用户通过 MeetingLens 原生文件选择器主动选择的本地文件。Teams、Zoom、Google Meet、邮件或聊天中的附件必须先由用户自行下载，再手动导入。首版不自动读取聊天/云盘附件，不监控 Downloads 或桌面，不读取剪贴板文件，不接受任意路径拖放、远程 URL 或网络共享自动导入。
 
-所有导入文件均视为不可信数据。MeetingLens 只复制和保存文件，不启动文件、不调用系统文件关联或 Microsoft Office 自动化、不执行宏/脚本/嵌入对象、不自动访问外部链接，也不在 WebView 中直接渲染未经处理的文件。解析只能由隔离、离线、受 Rust 限制的 Docling Worker 执行；当前 Python HTTP Sidecar 和 DeepSeek 均不接收文件内容。1B-2A 不持久化解析结果，1B-2B 才能接入文档生命周期。
+所有导入文件均视为不可信数据。MeetingLens 只复制和保存参考文档，不启动文件、不调用系统文件关联或 Microsoft Office 自动化、不执行宏/脚本/嵌入对象、不自动访问外部链接，也不在 WebView 中直接渲染未经处理的文件。参考文档内容解析只能由隔离、离线、受 Rust 限制的 Docling Worker 执行；粘贴文本与 TXT/SRT/VTT 转录由 Rust 的有界轻量 parser 处理，不经过 Docling。当前 Python HTTP Sidecar 和 DeepSeek 均不接收文件内容。已有 Worker Foundation 不持久化解析结果，只有后续 `feat/document-parsing-orchestration` 才能接入参考文档生命周期。
 
 React 只接收 document ID、原始显示名称、安全类型、大小、状态和导入时间。Rust 负责原生选择、最终校验、私有存储和路径边界，源文件绝对路径不得写入 SQLite 或返回前端。
 
@@ -132,29 +148,49 @@ React 只接收 document ID、原始显示名称、安全类型、大小、状�
 
 默认配额为：单文件最大 100 MiB、单次选择最多 10 个文件、单场会议最多 20 个文件、单场会议累计最大 500 MiB、原始文件名 UTF-8 表示最大 255 bytes。Rust 是最终执行者，必须防止通过多次调用绕过累计配额；前端校验只改善体验。全局磁盘配额管理器和 Docling 独立内存/处理时限属于后续实现。
 
-### 5.4 MVP 1C：Sidecar 生命周期、真实音频与转写
+### 5.4 总结模式参考材料增强
 
+- `feat/document-parsing-orchestration` 在 transcript-only 纪要与编辑导出闭环之后接入既有 Docling Worker，增加 parse jobs、状态转换、artifact 原子提交、取消、重试和恢复
+- `feat/document-evidence-index` 在下一独立 PR 建立 document chunks、页码/章节/表格定位，并把材料 evidence 接入既有 Summary pipeline
+- Docling 不参与粘贴/TXT/SRT/VTT 的轻量解析，也不阻塞第一份 transcript-only 纪要
+- 两个文档阶段完成后才进入真实音频，不得把文档解析与音频采集塞入同一个 PR
+
+### 5.5 共享实时采集与 ASR
+
+- live-session 数据基础：模式提示、capture session、可选音频 artifact 与删除协调，并复用已有 consent service，不访问真实设备
 - Sidecar supervisor、随机端口/打包二进制接线、崩溃恢复、孤儿进程回收和生命周期安全日志
 - Windows WASAPI 系统音频与麦克风、可见录音状态和异常恢复
 - 实时 ASR、完整时间戳转录、CPU 回退和会后校正入口
 
-以上内容必须继续拆成 sidecar supervisor、音频采集和实时转写三个小型 PR。
+以上内容必须继续拆成 live-session data core、sidecar supervisor、音频采集和实时转写四个小型 PR。音频采集 PR 不得顺带新增数据库/保留体系。
 
-### 5.5 MVP 2：会议窗口、OCR 与屏幕上下文
+### 5.6 屏幕与窗口上下文
 
-- 用户显式选择目标会议窗口
+- 用户显式选择目标会议窗口，界面持续显示正在读取的应用；窗口关闭或身份变化时暂停并重新确认
 - accessibility tree / OCR 提取与关键事件检测
 - 只保存与会议相关的结构化事件和证据，截图短期缓存后默认删除
 - Screenpipe 只能作为可替换的可选 Capture Provider，不得成为核心依赖
 
-### 5.6 MVP 3：说话人增强与实时翻译
+### 5.7 说话人分离与命名
 
-- 匿名实时说话人分离、人工重命名和会后 WhisperX 校正
-- 保存用户主动提供的短 voice sample，允许重录和删除
-- 使用 `deepseek-v4-flash` 做实时中英翻译，原文/译文并排显示
+- 使用会话级匿名标签和 speaker alias 作为数据真相，再增加实时/会后聚类、开场姓名校准及人工修改/合并
+- 不默认保存 voice sample，不承诺跨会议声纹自动复用
+- Diart、WhisperX 等重型模型继续使用隔离 worker、独立环境和明确模型条款
+
+### 5.8 实时翻译与模式集成
+
+- 实时翻译只消费已确定的转录片段，可独立开启、暂停和关闭；关闭后停止持续外发
+- 字幕浮窗的透明度、收起、展开、滚动、置顶、点击穿透和多显示器行为由独立 PR 和 Windows 本机验收覆盖
+- 阶段总结支持手动、固定时间和需用户确认的自动话题建议，不把阶段摘要直接视为最终会议决定
+- 翻译模式工作区复用实时转录、说话人和 checkpoint；会议模式工作区再复用屏幕上下文、重点笔记和同一最终纪要管线
+- 自动说话人身份识别不属于首版；默认只使用匿名标签，不跨会议复用身份
+
+### 5.9 后续结构化视觉
+
+- 图表默认不生成；仅在数据可追溯时提供固定类型的时间线、行动项表和决定表，输入不足时不生成
 - 决策和行动项反向链接到来源片段
 
-### 5.7 MVP 4：安装包与产品化
+### 5.10 产品化：安装包与加固
 
 - 托盘、自动更新、崩溃恢复、诊断与隐私设置
 - PDF 导出、性能优化、长期稳定性与安装包签名
@@ -175,18 +211,21 @@ React 只接收 document ID、原始显示名称、安全类型、大小、状�
 - 自动下载会议录制，或声称支持所有平台专有转录模板
 - 自动推断缺失的负责人、截止日期或会议共识
 - 近期路线中的视频/音频文件离线转录、视频关键帧和跨会议声纹复用
+- 自动判断话题结束、把屏幕变化直接当作会议结论，或默认持续捕获整个桌面
+- 执行模型生成的 HTML、JavaScript 或任意图表代码
 
 ## 7. 主要界面
 
-1. **首页**：开始实时会议、粘贴会议记录、导入会议转录、导入会议材料、历史会议；保留高级“新建会议”向导。
-2. **新建会议**：标题、会议窗口、音频设备、上传资料和可选语音样本。
-3. **会议中**：顶部状态栏；左侧转录，中间原文/译文，右侧当前说话人、会议上下文和证据。
-4. **会议结果**：完整记录、摘要、决策、行动项、未决问题、风险、文件与屏幕证据标签页。
-5. **设置**：DeepSeek 连接、模型、隐私、保留/删除和诊断设置。
+1. **首页**：会议模式、翻译模式、总结模式和历史记录四个清晰入口。
+2. **总结工作区**：粘贴/导入、片段预览、来源选择、纪要生成和 Markdown 结果；持久编辑在后续独立阶段开放。
+3. **实时设置**：在对应能力完成后选择麦克风/系统音频、翻译与逐字稿导出；会议窗口、屏幕上下文和 voice sample 均显示为后续可选能力，不能提前宣称可用。
+4. **会议中**：顶部持续状态；左侧原始转录，中间派生译文/阶段摘要，右侧说话人映射、重点书签和已确认上下文。
+5. **会议结果**：完整记录、摘要、决策、行动项、未决问题、风险和证据；文档/屏幕标签只在对应增强完成后显示。
+6. **设置**：DeepSeek 连接、模型、隐私、保留/删除和诊断设置。
 
 ## 8. 关键数据对象
 
-- Meeting、Participant、TranscriptSource、TranscriptSegment
+- Meeting、Participant、SpeakerAlias、TranscriptSource、TranscriptSegment、ManualNote
 - ScreenEvent、Document、DocumentChunk、EvidenceItem
 - Decision、ActionItem、Translation、Summary
 - ProcessingJob、ConsentEvent、Artifact
