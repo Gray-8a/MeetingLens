@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-add-pasted-transcript-to-meeting"
+description = "Enables the add_pasted_transcript_to_meeting command without any pre-configured scope."
+commands.allow = ["add_pasted_transcript_to_meeting"]
+
+[[permission]]
+identifier = "deny-add-pasted-transcript-to-meeting"
+description = "Denies the add_pasted_transcript_to_meeting command without any pre-configured scope."
+commands.deny = ["add_pasted_transcript_to_meeting"]

@@ -9,6 +9,7 @@
     "document-management-commands",
     "meeting-data-commands",
     "sidecar-status-command",
-    "secret-status-management"
+    "secret-status-management",
+    "transcript-management-commands"
   ]
 }

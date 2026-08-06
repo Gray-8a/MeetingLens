@@ -98,6 +98,29 @@ pub struct TranscriptSource {
     pub updated_at: String,
 }
 
+#[derive(Clone, PartialEq)]
+pub struct TranscriptSourceOverview {
+    pub source: TranscriptSource,
+    pub segment_count: u64,
+}
+
+impl fmt::Debug for TranscriptSourceOverview {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TranscriptSourceOverview")
+            .field("id", &self.source.id)
+            .field("meeting_id", &self.source.meeting_id)
+            .field("source_type", &self.source.source_type)
+            .field("display_name", &"[REDACTED]")
+            .field(
+                "original_filename",
+                &self.source.original_filename.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("segment_count", &self.segment_count)
+            .finish()
+    }
+}
+
 #[derive(Clone, Deserialize, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct TranscriptSegment {

@@ -243,6 +243,17 @@ describe("meetingApi response and error handling", () => {
     });
   });
 
+  it("rejects unexpected response fields instead of forwarding them", async () => {
+    const api = createMeetingApi(
+      adapterReturning({ ...meeting(), privatePath: "private" }),
+    );
+
+    await expect(api.get(meetingId)).rejects.toMatchObject({
+      code: "internal_error",
+      message: "An internal error occurred.",
+    });
+  });
+
   it("supports an injected adapter without accessing the Tauri runtime", async () => {
     const api = createMeetingApi(adapterReturning(meeting()));
 

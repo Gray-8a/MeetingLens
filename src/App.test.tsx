@@ -12,6 +12,7 @@ import App from "./App";
 import { DocumentApiError } from "./api/document";
 import { MeetingApiError } from "./api/meeting";
 import { SecretApiError } from "./api/secret";
+import { transcriptApi } from "./api/transcript";
 import type { AppServices } from "./app/services";
 import { formatLocalDate } from "./lib/presentation";
 import i18n, { changeUiLocale, UI_LOCALE_STORAGE_KEY } from "./i18n";
@@ -153,6 +154,7 @@ function appServices(
     documentApi,
     meetingApi: api,
     secretApi: new FakeSecretApi(),
+    transcriptApi,
     checkSidecarHealth: async () => ({
       status: "authenticated",
       binding: "loopback",

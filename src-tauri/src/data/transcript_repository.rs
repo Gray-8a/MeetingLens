@@ -5,7 +5,7 @@ use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 use super::transcript_error::{TranscriptError, TranscriptResult};
 use super::transcript_model::{
     NewTranscriptSegment, NewTranscriptSource, SummaryInputSegment, TranscriptSegment,
-    TranscriptSource, TranscriptSourceType,
+    TranscriptSource, TranscriptSourceOverview, TranscriptSourceType,
 };
 
 const SOURCE_COLUMNS: &str = "
@@ -18,6 +18,19 @@ const SEGMENT_COLUMNS: &str = "
     id, meeting_id, source_id, ordinal, speaker_label, speaker_name,
     start_offset_ms, end_offset_ms, original_text, translated_text,
     language, confidence, is_final, revision, created_at, corrected_at
+";
+
+const SOURCE_OVERVIEW_COLUMNS: &str = "
+    source.id, source.meeting_id, source.source_type, source.display_name,
+    source.original_filename, source.content_sha256, source.language,
+    source.base_started_at, source.parser_name, source.parser_version,
+    source.imported_at, source.created_at, source.updated_at,
+    (
+        SELECT COUNT(*)
+        FROM transcript_segments AS segment
+        WHERE segment.meeting_id = source.meeting_id
+          AND segment.source_id = source.id
+    ) AS segment_count
 ";
 
 pub(crate) fn find_source_by_hash(
@@ -146,6 +159,42 @@ pub(crate) fn list_sources(
     let mut statement = connection.prepare(&sql).map_err(TranscriptError::from)?;
     statement
         .query_map([meeting_id], source_from_row)
+        .map_err(TranscriptError::from)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(TranscriptError::from)
+}
+
+pub(crate) fn get_source_overview(
+    connection: &Connection,
+    meeting_id: &str,
+    source_id: &str,
+) -> TranscriptResult<TranscriptSourceOverview> {
+    let sql = format!(
+        "SELECT {SOURCE_OVERVIEW_COLUMNS} FROM transcript_sources AS source \
+         WHERE source.meeting_id = ?1 AND source.id = ?2"
+    );
+    connection
+        .query_row(
+            &sql,
+            params![meeting_id, source_id],
+            source_overview_from_row,
+        )
+        .optional()
+        .map_err(TranscriptError::from)?
+        .ok_or(TranscriptError::SourceNotFound)
+}
+
+pub(crate) fn list_source_overviews(
+    connection: &Connection,
+    meeting_id: &str,
+) -> TranscriptResult<Vec<TranscriptSourceOverview>> {
+    let sql = format!(
+        "SELECT {SOURCE_OVERVIEW_COLUMNS} FROM transcript_sources AS source \
+         WHERE source.meeting_id = ?1 ORDER BY source.imported_at, source.id"
+    );
+    let mut statement = connection.prepare(&sql).map_err(TranscriptError::from)?;
+    statement
+        .query_map([meeting_id], source_overview_from_row)
         .map_err(TranscriptError::from)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(TranscriptError::from)
@@ -322,6 +371,13 @@ fn source_from_row(row: &Row<'_>) -> rusqlite::Result<TranscriptSource> {
         imported_at: row.get(10)?,
         created_at: row.get(11)?,
         updated_at: row.get(12)?,
+    })
+}
+
+fn source_overview_from_row(row: &Row<'_>) -> rusqlite::Result<TranscriptSourceOverview> {
+    Ok(TranscriptSourceOverview {
+        source: source_from_row(row)?,
+        segment_count: nonnegative_integer(row, 13)?,
     })
 }
 

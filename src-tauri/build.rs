@@ -10,6 +10,16 @@ const APP_COMMANDS: &[&str] = &[
     "get_secret_status",
     "set_secret",
     "delete_secret",
+    "create_meeting_from_pasted_transcript",
+    "select_transcript_and_create_meeting",
+    "add_pasted_transcript_to_meeting",
+    "select_and_add_transcript_to_meeting",
+    "list_transcript_sources",
+    "get_transcript_source",
+    "list_transcript_segments",
+    "update_transcript_segment",
+    "delete_transcript_source",
+    "get_transcript_import_policy",
 ];
 
 fn main() {

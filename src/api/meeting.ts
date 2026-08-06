@@ -132,14 +132,14 @@ export function createMeetingApi(
         adapter,
         meetingCommandNames.create,
         { request },
-        parseMeeting,
+        parseMeetingResponse,
       ),
     get: (id) =>
       invokeAndParse(
         adapter,
         meetingCommandNames.get,
         { request: { id } },
-        parseMeeting,
+        parseMeetingResponse,
       ),
     list: () =>
       invokeAndParse(adapter, meetingCommandNames.list, undefined, parseList),
@@ -148,21 +148,21 @@ export function createMeetingApi(
         adapter,
         meetingCommandNames.update,
         { request },
-        parseMeeting,
+        parseMeetingResponse,
       ),
     start: (id) =>
       invokeAndParse(
         adapter,
         meetingCommandNames.start,
         { request: { id } },
-        parseMeeting,
+        parseMeetingResponse,
       ),
     end: (id) =>
       invokeAndParse(
         adapter,
         meetingCommandNames.end,
         { request: { id } },
-        parseMeeting,
+        parseMeetingResponse,
       ),
     delete: (id) =>
       invokeAndParse(
@@ -192,8 +192,22 @@ async function invokeAndParse<T>(
   }
 }
 
-function parseMeeting(value: unknown): MeetingResponse {
-  if (!isRecord(value)) {
+export function parseMeetingResponse(value: unknown): MeetingResponse {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, [
+      "id",
+      "title",
+      "status",
+      "primaryLanguage",
+      "selectedWindowJson",
+      "startedAt",
+      "endedAt",
+      "createdAt",
+      "updatedAt",
+      "deletionErrorCode",
+    ])
+  ) {
     throw internalError();
   }
 
@@ -232,7 +246,7 @@ function parseList(value: unknown): ListMeetingsResponse {
   if (!isRecord(value) || !Array.isArray(value.meetings)) {
     throw internalError();
   }
-  return { meetings: value.meetings.map(parseMeeting) };
+  return { meetings: value.meetings.map(parseMeetingResponse) };
 }
 
 function parseDelete(value: unknown): DeleteMeetingResponse {
@@ -268,4 +282,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function isNullableString(value: unknown): value is string | null {
   return value === null || typeof value === "string";
+}
+
+function hasOnlyKeys(
+  value: Record<string, unknown>,
+  keys: readonly string[],
+): boolean {
+  const allowed = new Set(keys);
+  return Object.keys(value).every((key) => allowed.has(key));
 }

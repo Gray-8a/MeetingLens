@@ -24,9 +24,10 @@ MVP 1A-2 实现前已使用 `docs/define-meeting-lifecycle` 固定会议状态�
 | 文件基础   | 安全文件导入、可恢复删除、隔离 Docling Worker       | PR #11–#14                                  | 已完成并合并   |
 | 转录规格   | 转录、输入快照和可追溯纪要规格                      | `docs/transcript-and-summary-spec` / PR #15 | 已完成并合并   |
 | 国际化基础 | zh-CN/en-US、locale 偏好、Help 和双语预览手册       | `feat/i18n-user-guide-foundation` / PR #16  | 已完成并合并   |
-| 简约版对齐 | 三种入口、共享管线、隐私边界和新顺序                | `docs/simplified-three-mode-spec`           | 当前阶段       |
-| 总结数据   | schema v3、转录来源/片段、TXT/SRT/VTT/粘贴解析      | `feat/transcript-data-core`                 | 待开始         |
-| 总结入口   | Commands/API、粘贴/导入/预览和说话人修正            | `feat/summary-mode-import`                  | 待开始         |
+| 简约版对齐 | 三种入口、共享管线、隐私边界和新顺序                | `docs/simplified-three-mode-spec` / PR #17  | 已完成并合并   |
+| 总结数据   | schema v3、转录来源/片段、TXT/SRT/VTT/粘贴解析      | `feat/transcript-data-core` / PR #18        | 已完成并合并   |
+| 转录接口   | Commands/API、原生选择器和原子创建边界              | `feat/transcript-command-api`               | 当前阶段       |
+| 总结入口   | 首页入口、粘贴/导入、来源预览和说话人修正           | `feat/summary-mode-input-ui`                | 待开始         |
 | 纪要数据   | run/revision、不可变快照、evidence 和 Mock          | `feat/summary-run-core`                     | 待开始         |
 | 同意数据   | 通用 consent events、会话失效与审计 API             | `feat/consent-data-core`                    | 待开始         |
 | 纪要服务   | SecretStore 消费、外发同意和受限 DeepSeek adapter   | `feat/summary-provider-deepseek`            | 待开始、需批准 |
@@ -286,21 +287,29 @@ MVP 1A-2 固定拆成以下两个顺序 PR。前一个 PR 合并后，后一个 
 
 本阶段不做 UI、Commands、DeepSeek、平台专用 adapters 或原始转录文件长期存储。实现时同步调整 Provider/API 的 `TranscriptionSegment` 时间字段，不能保留 ISO 与 offset 两套真相。
 
-### 8.2 Summary Mode Import
+### 8.2 Transcript Command API
 
-分支：`feat/summary-mode-import`
+分支：`feat/transcript-command-api`
 
 范围：
 
-- 首页三个模式入口中的总结模式，以及不承诺可用的实时模式状态说明
-- Transcript Tauri Commands、集中式 `transcriptApi` 和无路径 DTO
-- Rust 原生 TXT/SRT/VTT 选择器、粘贴面板、解析预览、来源列表和基础 speaker 修正
-- 自动创建 meeting 或选择已有 meeting；用户不必手动操作内部状态机
-- 未接入 Docling 时明确显示参考文档未参与本次总结
+- Transcript Tauri Commands、集中式 `transcriptApi` 和严格无路径 DTO
+- Rust 原生单文件 TXT/SRT/VTT 选择器；取消为无副作用的正常结果
+- 原子创建 draft meeting 与 transcript，或向可接受状态的既有 meeting 添加 transcript
+- source/segment 查询、乐观 revision 修正、source 删除和固定导入策略
+- WebView 不获得文件路径或 dialog/fs/shell/process/http 权限
 
-本 PR 不调用 DeepSeek，不实现平台专用导出、视频/音频文件转录、真实音频、屏幕或 Docling 接线。
+本 PR 不实现正式页面、首页快速入口、DeepSeek、Summary schema/Provider、平台专用导出、视频/音频文件转录、真实音频、屏幕或 Docling 接线。
 
-### 8.3 Summary Run Core
+### 8.3 Summary Mode Input UI
+
+分支：`feat/summary-mode-input-ui`
+
+范围：首页三个模式入口中的总结模式、粘贴/原生导入交互、来源/片段预览、基础 speaker/正文修正，以及不承诺可用的实时模式状态说明。只消费已合并的 `transcriptApi`；页面不得直接调用 `invoke`，不得取得路径或引入第二套 parser。
+
+本 PR 不调用 DeepSeek，不新增 transcript/Summary schema，不实现 Docling 接线、真实音频、屏幕、翻译或平台专用 adapter。
+
+### 8.4 Summary Run Core
 
 分支：`feat/summary-run-core`
 
@@ -308,13 +317,13 @@ MVP 1A-2 固定拆成以下两个顺序 PR。前一个 PR 合并后，后一个 
 
 本 PR 可以增加单一目的的 Summary migration 和 Rust service/commands，但不得消费 SecretStore、访问网络或增加正式结果页面。生成资格允许 `draft/recording/ready + transcript`，禁止 `deleting/delete_failed`、空输入和无法安全冻结的输入；不得新增 summary 型 meeting 状态。
 
-### 8.4 Consent Data Core
+### 8.5 Consent Data Core
 
 分支：`feat/consent-data-core`
 
 范围：通用 `consent_events` migration、capability allowlist、grant/revoke、当前应用会话失效、审计查询和稳定 commands/API。不得访问设备、调用外部 Provider、保存正文/凭据或增加产品工作区。后续 Summary、音频、翻译、checkpoint 和屏幕阶段只复用并在文档先行的前提下扩展该能力，不得各建一套授权记录。
 
-### 8.5 DeepSeek Summary Provider
+### 8.6 DeepSeek Summary Provider
 
 分支：`feat/summary-provider-deepseek`
 
@@ -322,7 +331,7 @@ MVP 1A-2 固定拆成以下两个顺序 PR。前一个 PR 合并后，后一个 
 
 真实 DeepSeek 调用会产生外部数据处理和潜在费用；实现前必须重新向用户确认 Provider、模型、价格/条款和发送范围。测试只使用 Mock 与合成数据，不得消费用户曾在聊天中提供的测试 key。
 
-### 8.6 Summary Mode Minutes Workspace
+### 8.7 Summary Mode Minutes Workspace
 
 分支：`feat/summary-mode-minutes`
 
@@ -330,7 +339,7 @@ MVP 1A-2 固定拆成以下两个顺序 PR。前一个 PR 合并后，后一个 
 
 模板为详实会议纪要、简洁会议总结、行动项与决定清单；输出为中文、英文或双语。不得发明参会人、负责人、截止日期或共识；缺负责人标“未分配”，缺截止日期为空。每项关键决定、行动项和争议必须带当前快照中的有效 evidence。
 
-### 8.7 Summary Editing and Export
+### 8.8 Summary Editing and Export
 
 分支：`feat/summary-editing-export`
 
@@ -485,6 +494,6 @@ Screenpipe 只能是可替换的可选 Capture Provider，不得成为核心强�
 
 ## 18. 当前下一步
 
-PR #1–#16 已合并；i18n、Help、中英文开发预览手册和 Docling Worker Foundation 已完成，Docling 尚未接入产品。当前只交付纯文档分支 `docs/simplified-three-mode-spec`，不得开始产品代码。
+PR #1–#18 已合并；三模式路线、i18n、Help、中英文开发预览手册、Docling Worker Foundation 和 Transcript Data Core 已完成，Docling 尚未接入产品。当前阶段为 `feat/transcript-command-api`，只交付安全 Commands、Rust 原生转录选择器、原子 meeting + transcript 工作流和集中式 `transcriptApi`；不得开始正式输入页面或后续功能。
 
-本规格 PR 合并后，才能从最新 `main` 创建 `feat/transcript-data-core`。此后按路线表逐项推进，不得同时启动总结模式 UI、外部 Provider、Docling、音频、翻译或屏幕功能。首个 transcript-only 纪要与编辑导出闭环完成后，必须先完成 `feat/document-parsing-orchestration` 和 `feat/document-evidence-index`，再进入实时采集与 ASR；Docling 仍不阻塞第一份纪要。未来 GitHub PR 编号只在实际创建后记录，不是计划契约。
+`feat/transcript-command-api` 经用户审查并合并后，才能从最新 `main` 创建 `feat/summary-mode-input-ui`。此后按路线表逐项推进，不得同时启动外部 Provider、Docling、音频、翻译或屏幕功能。首个 transcript-only 纪要与编辑导出闭环完成后，必须先完成 `feat/document-parsing-orchestration` 和 `feat/document-evidence-index`，再进入实时采集与 ASR；Docling 仍不阻塞第一份纪要。未来 GitHub PR 编号只在实际创建后记录，不是计划契约。

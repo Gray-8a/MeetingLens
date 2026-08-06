@@ -1,4 +1,4 @@
-use rusqlite::TransactionBehavior;
+use rusqlite::{Transaction, TransactionBehavior};
 use uuid::Uuid;
 
 use super::database::Database;
@@ -9,8 +9,9 @@ use super::transcript_error::{TranscriptError, TranscriptResult};
 use super::transcript_model::{
     NewTranscriptSegment, NewTranscriptSource, SummaryInputSegment, TranscriptImportInput,
     TranscriptImportOutcome, TranscriptPolicy, TranscriptSegment, TranscriptSource,
-    TranscriptSourceType, UpdateTranscriptSegment,
+    TranscriptSourceOverview, TranscriptSourceType, UpdateTranscriptSegment,
 };
+use super::transcript_parser::ParsedTranscript;
 use super::{transcript_parser, transcript_repository};
 
 const MAX_DISPLAY_NAME_BYTES: usize = 255;
@@ -22,6 +23,16 @@ const MAX_SPEAKER_NAME_BYTES: usize = 255;
 pub struct TranscriptService {
     database: Database,
     policy: TranscriptPolicy,
+}
+
+#[derive(Clone, PartialEq)]
+pub(crate) struct PreparedTranscriptImport {
+    source_type: TranscriptSourceType,
+    display_name: String,
+    original_filename: Option<String>,
+    language: Option<String>,
+    base_started_at: Option<String>,
+    parsed: ParsedTranscript,
 }
 
 impl TranscriptService {
@@ -84,8 +95,31 @@ impl TranscriptService {
         input: TranscriptImportInput,
     ) -> TranscriptResult<TranscriptImportOutcome> {
         validate_uuid(meeting_id)?;
+        let prepared = self.prepare_import(source_type, input)?;
+
+        let _guard = self.database.mutation_guard().map_err(map_data_error)?;
+        let mut connection = self.database.connect().map_err(map_data_error)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(TranscriptError::from)?;
+        let outcome = self.import_prepared(&transaction, meeting_id, prepared)?;
+        transaction.commit().map_err(TranscriptError::from)?;
+        Ok(outcome)
+    }
+
+    pub(crate) fn prepare_import(
+        &self,
+        source_type: TranscriptSourceType,
+        mut input: TranscriptImportInput,
+    ) -> TranscriptResult<PreparedTranscriptImport> {
         if !source_type.is_currently_importable() {
             return Err(TranscriptError::InvalidInput);
+        }
+        if source_type == TranscriptSourceType::PastedText {
+            if input.original_filename.is_some() {
+                return Err(TranscriptError::InvalidInput);
+            }
+            input.original_filename = None;
         }
         let display_name = normalize_display_name(&input.display_name)?;
         let original_filename = validate_original_filename(source_type, input.original_filename)?;
@@ -93,17 +127,29 @@ impl TranscriptService {
         let base_started_at = normalize_optional_utc(input.base_started_at)?;
         let parsed = transcript_parser::parse(source_type, &input.content, self.policy)?;
 
-        let _guard = self.database.mutation_guard().map_err(map_data_error)?;
-        let mut connection = self.database.connect().map_err(map_data_error)?;
-        let transaction = connection
-            .transaction_with_behavior(TransactionBehavior::Immediate)
-            .map_err(TranscriptError::from)?;
-        ensure_meeting_accepts_mutation(&transaction, meeting_id)?;
+        Ok(PreparedTranscriptImport {
+            source_type,
+            display_name,
+            original_filename,
+            language,
+            base_started_at,
+            parsed,
+        })
+    }
+
+    pub(crate) fn import_prepared(
+        &self,
+        transaction: &Transaction<'_>,
+        meeting_id: &str,
+        prepared: PreparedTranscriptImport,
+    ) -> TranscriptResult<TranscriptImportOutcome> {
+        validate_uuid(meeting_id)?;
+        ensure_meeting_accepts_mutation(transaction, meeting_id)?;
 
         if let Some(existing) = transcript_repository::find_source_by_hash(
-            &transaction,
+            transaction,
             meeting_id,
-            &parsed.content_sha256,
+            &prepared.parsed.content_sha256,
         )? {
             return Ok(TranscriptImportOutcome::Duplicate {
                 source_id: existing.id,
@@ -114,20 +160,20 @@ impl TranscriptService {
         let source = NewTranscriptSource {
             id: source_id.clone(),
             meeting_id: meeting_id.to_string(),
-            source_type,
-            display_name,
-            original_filename,
-            content_sha256: parsed.content_sha256.clone(),
-            language: language.clone(),
-            base_started_at,
-            parser_name: parsed.parser_name.to_string(),
-            parser_version: parsed.parser_version.to_string(),
+            source_type: prepared.source_type,
+            display_name: prepared.display_name,
+            original_filename: prepared.original_filename,
+            content_sha256: prepared.parsed.content_sha256.clone(),
+            language: prepared.language.clone(),
+            base_started_at: prepared.base_started_at,
+            parser_name: prepared.parsed.parser_name.to_string(),
+            parser_version: prepared.parsed.parser_version.to_string(),
         };
-        if let Err(error) = transcript_repository::insert_source(&transaction, &source) {
+        if let Err(error) = transcript_repository::insert_source(transaction, &source) {
             if let Some(existing) = transcript_repository::find_source_by_hash(
-                &transaction,
+                transaction,
                 meeting_id,
-                &parsed.content_sha256,
+                &prepared.parsed.content_sha256,
             )? {
                 return Ok(TranscriptImportOutcome::Duplicate {
                     source_id: existing.id,
@@ -136,7 +182,8 @@ impl TranscriptService {
             return Err(error);
         }
 
-        let segments = parsed
+        let segments = prepared
+            .parsed
             .segments
             .into_iter()
             .enumerate()
@@ -151,14 +198,13 @@ impl TranscriptService {
                 end_offset_ms: segment.end_offset_ms,
                 original_text: segment.original_text,
                 translated_text: None,
-                language: language.clone(),
+                language: prepared.language.clone(),
                 confidence: None,
                 is_final: true,
             })
             .collect::<Vec<_>>();
-        transcript_repository::insert_segments(&transaction, &segments)?;
-        let persisted = transcript_repository::get_source(&transaction, meeting_id, &source_id)?;
-        transaction.commit().map_err(TranscriptError::from)?;
+        transcript_repository::insert_segments(transaction, &segments)?;
+        let persisted = transcript_repository::get_source(transaction, meeting_id, &source_id)?;
         Ok(TranscriptImportOutcome::Imported {
             source: Box::new(persisted),
             segment_count: segments.len(),
@@ -182,6 +228,28 @@ impl TranscriptService {
         let connection = self.database.connect().map_err(map_data_error)?;
         ensure_meeting_is_readable(&connection, meeting_id)?;
         transcript_repository::list_sources(&connection, meeting_id)
+    }
+
+    pub fn get_source_overview(
+        &self,
+        meeting_id: &str,
+        source_id: &str,
+    ) -> TranscriptResult<TranscriptSourceOverview> {
+        validate_uuid(meeting_id)?;
+        validate_uuid(source_id)?;
+        let connection = self.database.connect().map_err(map_data_error)?;
+        ensure_meeting_is_readable(&connection, meeting_id)?;
+        transcript_repository::get_source_overview(&connection, meeting_id, source_id)
+    }
+
+    pub fn list_source_overviews(
+        &self,
+        meeting_id: &str,
+    ) -> TranscriptResult<Vec<TranscriptSourceOverview>> {
+        validate_uuid(meeting_id)?;
+        let connection = self.database.connect().map_err(map_data_error)?;
+        ensure_meeting_is_readable(&connection, meeting_id)?;
+        transcript_repository::list_source_overviews(&connection, meeting_id)
     }
 
     pub fn get_segment(
@@ -303,7 +371,7 @@ fn ensure_meeting_accepts_mutation(
     {
         Ok(())
     } else {
-        Err(TranscriptError::InvalidState)
+        Err(TranscriptError::MeetingInvalidState)
     }
 }
 
@@ -323,10 +391,9 @@ fn map_data_error(error: DataError) -> TranscriptError {
         }
         DataError::InvalidState
         | DataError::MeetingDeleteFailed
-        | DataError::MeetingDeletePending => TranscriptError::InvalidState,
-        DataError::InvalidId | DataError::InvalidInput | DataError::NotFound => {
-            TranscriptError::InvalidInput
-        }
+        | DataError::MeetingDeletePending => TranscriptError::MeetingInvalidState,
+        DataError::NotFound => TranscriptError::MeetingNotFound,
+        DataError::InvalidId | DataError::InvalidInput => TranscriptError::InvalidInput,
         DataError::UnsafePath => TranscriptError::Internal,
     }
 }
@@ -794,7 +861,7 @@ mod tests {
                     &meeting_id,
                     input("Blocked", Some("blocked.txt"), b"Synthetic"),
                 ),
-                Err(TranscriptError::InvalidState),
+                Err(TranscriptError::MeetingInvalidState),
                 "{status} must fail closed"
             );
         }

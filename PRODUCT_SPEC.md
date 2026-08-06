@@ -83,28 +83,29 @@ Phase 0 已通过 PR #1 合并，并在 Windows 本机实际启动 Tauri 窗口�
 
 ### 5.3 简约版近期主线：先完成总结模式
 
-PR #1–#16 已合并。文档安全存储、原生导入 UI、Docling Worker Foundation、转录/纪要规格、zh-CN/en-US 界面、Help 页面和双语开发预览手册已完成；Docling 具备独立锁定环境、显式离线模型、stdio 协议、Windows Job Object、超时/取消和多格式本机 Smoke，但尚未接入 SQLite、Provider、Commands 或 UI。当前 SQLite schema 为 v2，模拟字幕仍只在前端内存中，DeepSeek key 可以安全保存但没有真实 Provider 消费，产品当前不能生成真实会议纪要。阶段名和分支名是未来计划的权威标识；PR 编号只记录实际历史。
+PR #1–#18 已合并。文档安全存储、原生导入 UI、Docling Worker Foundation、转录/纪要规格、zh-CN/en-US 界面、Help 页面、双语开发预览手册和 Transcript Data Core 已完成；Docling 具备独立锁定环境、显式离线模型、stdio 协议、Windows Job Object、超时/取消和多格式本机 Smoke，但尚未接入 SQLite、Provider、Commands 或 UI。当前 SQLite schema 为 v3，真实转录可以在 Rust 数据层规范化和持久化，但普通用户尚无转录输入界面，DeepSeek key 可以安全保存但没有真实 Provider 消费，产品当前不能生成真实会议纪要。阶段名和分支名是未来计划的权威标识；PR 编号只记录实际历史。
 
 当前顺序不再使用未来 PR 编号作为计划契约：
 
 1. **`docs/transcript-and-summary-spec`（已完成，PR #15）**：冻结转录、输入快照和可追溯纪要规格。
 2. **`feat/i18n-user-guide-foundation`（已完成，PR #16）**：打包 zh-CN/en-US、界面语言偏好、Help 与双语开发预览手册；后续产品文案必须同步维护。
-3. **`docs/simplified-three-mode-spec`（当前）**：冻结三个入口、共享管线、隐私边界和新顺序，不实现功能。
-4. **`feat/transcript-data-core`**：schema v3、`transcript_sources`/`transcript_segments`、粘贴/TXT/SRT/VTT 同步解析、去重、修正和删除语义；不做 UI 或外部 Provider。
-5. **`feat/summary-mode-import`**：Transcript Commands/API、总结模式入口、粘贴与原生导入、片段预览和基础说话人修正；不调用 DeepSeek。
-6. **`feat/summary-run-core`**：Summary run/revision、不可变输入快照、evidence 与稳定错误；只使用 Mock，不接外部 Provider 或结果 UI。
-7. **`feat/consent-data-core`**：通用 `consent_events`、会话失效和审计 API；不调用 Provider、不访问设备。
-8. **`feat/summary-provider-deepseek`**：Rust SecretStore 消费、外发同意和受限 DeepSeek adapter；不新增 schema 或正式页面。
-9. **`feat/summary-mode-minutes`**：选择输入/模板、外发预览、生成状态、结果、证据和 Markdown 复制/下载；不新增数据库或 Provider。
-10. **`feat/summary-editing-export`**：用户编辑、summary revision、stale、章节重生成、DOCX 和历史版本，完成首个 transcript-only 总结闭环。
-11. **`feat/document-parsing-orchestration`**：接入已完成的 Docling Worker、parse jobs、文档状态、artifact 原子提交、取消/重试/恢复；不实现音频。
-12. **`feat/document-evidence-index`**：建立 document chunks 与页码/章节/表格定位，并把参考材料 evidence 接入既有 Summary pipeline；不重写 transcript pipeline。
-13. **实时采集基础**：依次完成 `feat/live-session-data-core`、`feat/sidecar-supervisor` 和 `feat/audio-capture`；保存原始音频仍须独立同意且默认关闭。
-14. **实时 ASR**：`feat/realtime-transcription` 直接写入既有 `transcript_sources/transcript_segments`，不建立第二套转录模型。
-15. **屏幕与窗口上下文**：依次完成 `feat/window-context` 和 `feat/screen-ocr`；只读取用户确认的目标，屏幕关键帧默认不保存。
-16. **说话人分离与命名**：先由 `feat/live-language-data-core` 建立会话级别名等共享数据，再由 `feat/speaker-diarization` 提供聚类、校准和人工修正；不承诺跨会议声纹复用。
-17. **实时翻译**：依次完成 `feat/realtime-translation-provider`、`feat/checkpoint-summary-runtime`、`feat/topic-checkpoints` 和 `feat/translation-overlay`，覆盖可关闭翻译、阶段摘要建议和透明字幕交互。
-18. **翻译/会议模式集成**：依次完成 `feat/translation-mode-workspace`、`feat/meeting-notes-core` 和 `feat/meeting-mode-workspace`；三种模式共享纪要、证据、历史和导出流程。
+3. **`docs/simplified-three-mode-spec`（已完成，PR #17）**：冻结三个入口、共享管线、隐私边界和新顺序，不实现功能。
+4. **`feat/transcript-data-core`（已完成，PR #18）**：schema v3、`transcript_sources`/`transcript_segments`、粘贴/TXT/SRT/VTT 同步解析、去重、修正和删除语义；不做 UI 或外部 Provider。
+5. **`feat/transcript-command-api`（当前）**：安全 Transcript Commands/API、Rust 原生选择器和原子 meeting + transcript 工作流；不实现正式页面。
+6. **`feat/summary-mode-input-ui`**：总结模式入口、粘贴与原生导入、片段预览和基础说话人/正文修正；只消费已合并 API，不调用 DeepSeek。
+7. **`feat/summary-run-core`**：Summary run/revision、不可变输入快照、evidence 与稳定错误；只使用 Mock，不接外部 Provider 或结果 UI。
+8. **`feat/consent-data-core`**：通用 `consent_events`、会话失效和审计 API；不调用 Provider、不访问设备。
+9. **`feat/summary-provider-deepseek`**：Rust SecretStore 消费、外发同意和受限 DeepSeek adapter；不新增 schema 或正式页面。
+10. **`feat/summary-mode-minutes`**：选择输入/模板、外发预览、生成状态、结果、证据和 Markdown 复制/下载；不新增数据库或 Provider。
+11. **`feat/summary-editing-export`**：用户编辑、summary revision、stale、章节重生成、DOCX 和历史版本，完成首个 transcript-only 总结闭环。
+12. **`feat/document-parsing-orchestration`**：接入已完成的 Docling Worker、parse jobs、文档状态、artifact 原子提交、取消/重试/恢复；不实现音频。
+13. **`feat/document-evidence-index`**：建立 document chunks 与页码/章节/表格定位，并把参考材料 evidence 接入既有 Summary pipeline；不重写 transcript pipeline。
+14. **实时采集基础**：依次完成 `feat/live-session-data-core`、`feat/sidecar-supervisor` 和 `feat/audio-capture`；保存原始音频仍须独立同意且默认关闭。
+15. **实时 ASR**：`feat/realtime-transcription` 直接写入既有 `transcript_sources/transcript_segments`，不建立第二套转录模型。
+16. **屏幕与窗口上下文**：依次完成 `feat/window-context` 和 `feat/screen-ocr`；只读取用户确认的目标，屏幕关键帧默认不保存。
+17. **说话人分离与命名**：先由 `feat/live-language-data-core` 建立会话级别名等共享数据，再由 `feat/speaker-diarization` 提供聚类、校准和人工修正；不承诺跨会议声纹复用。
+18. **实时翻译**：依次完成 `feat/realtime-translation-provider`、`feat/checkpoint-summary-runtime`、`feat/topic-checkpoints` 和 `feat/translation-overlay`，覆盖可关闭翻译、阶段摘要建议和透明字幕交互。
+19. **翻译/会议模式集成**：依次完成 `feat/translation-mode-workspace`、`feat/meeting-notes-core` 和 `feat/meeting-mode-workspace`；三种模式共享纪要、证据、历史和导出流程。
 
 界面语言与纪要输出语言是两项独立设置：切换 zh-CN/en-US 只改变应用界面，不得自动改变当前或未来 Summary run 的中文、英文或双语输出选择。
 

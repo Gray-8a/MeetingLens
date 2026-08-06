@@ -5,6 +5,7 @@ mod meeting_commands;
 mod secret_commands;
 pub mod secret_store;
 mod sidecar;
+mod transcript_commands;
 
 use tauri::Manager;
 
@@ -43,6 +44,16 @@ pub fn run() {
             secret_commands::get_secret_status,
             secret_commands::set_secret,
             secret_commands::delete_secret,
+            transcript_commands::create_meeting_from_pasted_transcript,
+            transcript_commands::select_transcript_and_create_meeting,
+            transcript_commands::add_pasted_transcript_to_meeting,
+            transcript_commands::select_and_add_transcript_to_meeting,
+            transcript_commands::list_transcript_sources,
+            transcript_commands::get_transcript_source,
+            transcript_commands::list_transcript_segments,
+            transcript_commands::update_transcript_segment,
+            transcript_commands::delete_transcript_source,
+            transcript_commands::get_transcript_import_policy,
         ])
         .run(tauri::generate_context!())
         .expect("error while running MeetingLens");
