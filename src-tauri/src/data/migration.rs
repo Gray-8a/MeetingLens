@@ -143,10 +143,118 @@ const MIGRATIONS: &[Migration] = &[
             ON deletion_jobs(status, updated_at, id);
     "#,
     },
+    Migration {
+        version: 3,
+        sql: r#"
+        CREATE TABLE transcript_sources (
+            id TEXT PRIMARY KEY NOT NULL CHECK(length(id) = 36),
+            meeting_id TEXT NOT NULL,
+            source_type TEXT NOT NULL CHECK(source_type IN (
+                'pasted_text', 'imported_txt', 'imported_srt', 'imported_vtt',
+                'live_asr', 'platform_export'
+            )),
+            display_name TEXT NOT NULL CHECK(
+                length(trim(display_name)) > 0
+                AND length(CAST(display_name AS BLOB)) <= 255
+            ),
+            original_filename TEXT CHECK(
+                original_filename IS NULL OR (
+                    length(original_filename) > 0
+                    AND length(CAST(original_filename AS BLOB)) <= 255
+                )
+            ),
+            content_sha256 TEXT NOT NULL CHECK(
+                length(content_sha256) = 64
+                AND content_sha256 = lower(content_sha256)
+                AND content_sha256 NOT GLOB '*[^0-9a-f]*'
+            ),
+            language TEXT CHECK(
+                language IS NULL OR length(trim(language)) BETWEEN 1 AND 35
+            ),
+            base_started_at TEXT,
+            parser_name TEXT NOT NULL CHECK(
+                length(trim(parser_name)) > 0
+                AND length(CAST(parser_name AS BLOB)) <= 64
+            ),
+            parser_version TEXT NOT NULL CHECK(
+                length(trim(parser_version)) > 0
+                AND length(CAST(parser_version AS BLOB)) <= 64
+            ),
+            imported_at TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(id, meeting_id),
+            FOREIGN KEY(meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX idx_transcript_sources_meeting
+            ON transcript_sources(meeting_id, imported_at, id);
+        CREATE INDEX idx_transcript_sources_meeting_type
+            ON transcript_sources(meeting_id, source_type, imported_at, id);
+        CREATE UNIQUE INDEX idx_transcript_sources_meeting_sha256
+            ON transcript_sources(meeting_id, content_sha256);
+
+        CREATE TABLE transcript_segments (
+            id TEXT PRIMARY KEY NOT NULL CHECK(length(id) = 36),
+            meeting_id TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 0 AND 19999),
+            speaker_label TEXT CHECK(
+                speaker_label IS NULL OR (
+                    length(trim(speaker_label)) > 0
+                    AND length(CAST(speaker_label AS BLOB)) <= 255
+                )
+            ),
+            speaker_name TEXT CHECK(
+                speaker_name IS NULL OR (
+                    length(trim(speaker_name)) > 0
+                    AND length(CAST(speaker_name AS BLOB)) <= 255
+                )
+            ),
+            start_offset_ms INTEGER CHECK(start_offset_ms IS NULL OR start_offset_ms >= 0),
+            end_offset_ms INTEGER CHECK(
+                end_offset_ms IS NULL OR (
+                    start_offset_ms IS NOT NULL
+                    AND end_offset_ms >= start_offset_ms
+                )
+            ),
+            original_text TEXT NOT NULL CHECK(
+                length(trim(original_text)) > 0
+                AND length(CAST(original_text AS BLOB)) <= 65536
+            ),
+            translated_text TEXT CHECK(
+                translated_text IS NULL OR (
+                    length(trim(translated_text)) > 0
+                    AND length(CAST(translated_text AS BLOB)) <= 65536
+                )
+            ),
+            language TEXT CHECK(
+                language IS NULL OR length(trim(language)) BETWEEN 1 AND 35
+            ),
+            confidence REAL CHECK(confidence IS NULL OR confidence BETWEEN 0.0 AND 1.0),
+            is_final INTEGER NOT NULL CHECK(is_final IN (0, 1)),
+            revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1),
+            created_at TEXT NOT NULL,
+            corrected_at TEXT,
+            UNIQUE(source_id, ordinal),
+            FOREIGN KEY(meeting_id) REFERENCES meetings(id) ON DELETE CASCADE,
+            FOREIGN KEY(source_id, meeting_id)
+                REFERENCES transcript_sources(id, meeting_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX idx_transcript_segments_meeting
+            ON transcript_segments(meeting_id, source_id, ordinal);
+    "#,
+    },
 ];
 
 pub(crate) fn run(connection: &mut Connection) -> DataResult<()> {
     apply(connection, MIGRATIONS)
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn run_through_v2(connection: &mut Connection) -> DataResult<()> {
+    apply(connection, &MIGRATIONS[..2])
 }
 
 fn apply(connection: &mut Connection, migrations: &[Migration]) -> DataResult<()> {
@@ -227,7 +335,7 @@ mod tests {
                 row.get(0)
             })
             .expect("migration count should be readable");
-        assert_eq!(count, 2);
+        assert_eq!(count, 3);
     }
 
     #[test]
@@ -236,7 +344,7 @@ mod tests {
         apply(&mut connection, MIGRATIONS).expect("migration should succeed");
         connection
             .execute(
-                "UPDATE schema_migrations SET checksum = 'changed' WHERE version = 1",
+                "UPDATE schema_migrations SET checksum = 'changed' WHERE version = 3",
                 [],
             )
             .expect("test should alter the checksum");
@@ -418,5 +526,324 @@ mod tests {
             )
             .expect("foreign keys should inspect");
         assert_eq!(foreign_keys, 1);
+    }
+
+    #[test]
+    fn upgrades_v2_data_without_loss_and_records_schema_v3() {
+        let mut connection = Connection::open_in_memory().expect("in-memory database should open");
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
+            .expect("foreign keys should enable");
+        apply(&mut connection, &MIGRATIONS[..2]).expect("v2 should apply");
+        connection
+            .execute_batch(
+                "
+                INSERT INTO meetings(
+                    id, title, status, primary_language, created_at, updated_at
+                ) VALUES (
+                    '00000000-0000-4000-8000-000000000020',
+                    'Synthetic v2 meeting', 'draft', 'en-AU',
+                    '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+                );
+
+                INSERT INTO documents(
+                    id, meeting_id, original_filename, safe_extension,
+                    size_bytes, sha256, status, storage_relative_path,
+                    imported_at, updated_at, created_at
+                ) VALUES (
+                    '00000000-0000-4000-8000-000000000021',
+                    '00000000-0000-4000-8000-000000000020',
+                    'synthetic.txt', 'txt', 9,
+                    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                    'staged',
+                    'meeting-data/meetings/00000000-0000-4000-8000-000000000020/documents/00000000-0000-4000-8000-000000000021.txt',
+                    '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z',
+                    '2026-01-01T00:00:00.000Z'
+                );
+
+                INSERT INTO deletion_jobs(
+                    id, entity_kind, meeting_id, document_id, status,
+                    attempt_count, created_at, updated_at
+                ) VALUES (
+                    '00000000-0000-4000-8000-000000000022', 'document',
+                    '00000000-0000-4000-8000-000000000020',
+                    '00000000-0000-4000-8000-000000000021', 'pending', 0,
+                    '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+                );
+                ",
+            )
+            .expect("v2 data should insert");
+
+        apply(&mut connection, MIGRATIONS).expect("v3 should apply");
+
+        for table in ["meetings", "documents", "deletion_jobs"] {
+            let count: i64 = connection
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .expect("legacy rows should remain readable");
+            assert_eq!(count, 1, "{table} should keep its v2 row");
+        }
+        for table in ["transcript_sources", "transcript_segments"] {
+            let count: i64 = connection
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .expect("v3 table should be readable");
+            assert_eq!(count, 0);
+        }
+        let migration_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| {
+                row.get(0)
+            })
+            .expect("migration records should be readable");
+        assert_eq!(migration_count, 3);
+        let integrity: String = connection
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .expect("integrity check should run");
+        assert_eq!(integrity, "ok");
+    }
+
+    #[test]
+    fn rolls_back_schema_v3_without_touching_existing_v2_data() {
+        let mut connection = Connection::open_in_memory().expect("in-memory database should open");
+        apply(&mut connection, &MIGRATIONS[..2]).expect("v2 should apply");
+        connection
+            .execute_batch(
+                "
+                INSERT INTO meetings(
+                    id, title, status, primary_language, created_at, updated_at
+                ) VALUES (
+                    '00000000-0000-4000-8000-000000000030',
+                    'Synthetic rollback meeting', 'draft', 'en-AU',
+                    '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+                );
+                ",
+            )
+            .expect("v2 meeting should insert");
+        let failing_v3 = [Migration {
+            version: 3,
+            sql: "CREATE TABLE transient_transcript(id INTEGER); INVALID SQL;",
+        }];
+
+        assert_eq!(
+            apply(&mut connection, &failing_v3),
+            Err(DataError::Database)
+        );
+
+        let meeting_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM meetings", [], |row| row.get(0))
+            .expect("v2 meeting should remain readable");
+        let transient_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'transient_transcript'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("schema should be inspectable");
+        let migration_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| {
+                row.get(0)
+            })
+            .expect("migration records should be readable");
+        assert_eq!(meeting_count, 1);
+        assert_eq!(transient_count, 0);
+        assert_eq!(migration_count, 2);
+    }
+
+    #[test]
+    fn schema_v3_enforces_transcript_ownership_order_hash_and_cascade_constraints() {
+        let mut connection = Connection::open_in_memory().expect("in-memory database should open");
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
+            .expect("foreign keys should enable");
+        apply(&mut connection, MIGRATIONS).expect("schema should apply");
+        connection
+            .execute_batch(
+                "
+                INSERT INTO meetings(
+                    id, title, status, primary_language, created_at, updated_at
+                ) VALUES
+                    (
+                        '00000000-0000-4000-8000-000000000040',
+                        'Synthetic transcript meeting A', 'draft', 'en-AU',
+                        '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+                    ),
+                    (
+                        '00000000-0000-4000-8000-000000000041',
+                        'Synthetic transcript meeting B', 'draft', 'en-AU',
+                        '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+                    );
+
+                INSERT INTO transcript_sources(
+                    id, meeting_id, source_type, display_name, content_sha256,
+                    parser_name, parser_version, imported_at, created_at, updated_at
+                ) VALUES
+                    (
+                        '00000000-0000-4000-8000-000000000042',
+                        '00000000-0000-4000-8000-000000000040',
+                        'pasted_text', 'Synthetic source A',
+                        'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+                        'plain_text', '1', '2026-01-01T00:00:00.000Z',
+                        '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+                    ),
+                    (
+                        '00000000-0000-4000-8000-000000000043',
+                        '00000000-0000-4000-8000-000000000041',
+                        'imported_txt', 'Synthetic source B',
+                        'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+                        'plain_text', '1', '2026-01-01T00:00:00.000Z',
+                        '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+                    );
+
+                INSERT INTO transcript_segments(
+                    id, meeting_id, source_id, ordinal, speaker_label,
+                    start_offset_ms, end_offset_ms, original_text,
+                    is_final, revision, created_at
+                ) VALUES
+                    (
+                        '00000000-0000-4000-8000-000000000044',
+                        '00000000-0000-4000-8000-000000000040',
+                        '00000000-0000-4000-8000-000000000042', 0, 'Speaker 1',
+                        0, 1000, 'Synthetic transcript text', 1, 1,
+                        '2026-01-01T00:00:00.000Z'
+                    ),
+                    (
+                        '00000000-0000-4000-8000-000000000049',
+                        '00000000-0000-4000-8000-000000000040',
+                        '00000000-0000-4000-8000-000000000042', 1, NULL,
+                        1000, 1000, 'Synthetic zero-duration cue', 1, 1,
+                        '2026-01-01T00:00:00.000Z'
+                    );
+                ",
+            )
+            .expect("valid transcript data should insert");
+
+        assert!(
+            connection
+                .execute(
+                    "
+                    INSERT INTO transcript_sources(
+                        id, meeting_id, source_type, display_name, content_sha256,
+                        parser_name, parser_version, imported_at, created_at, updated_at
+                    ) VALUES (
+                        '00000000-0000-4000-8000-000000000045',
+                        '00000000-0000-4000-8000-000000000040',
+                        'imported_txt', 'Duplicate hash',
+                        'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+                        'plain_text', '1', '2026-01-01T00:00:00.000Z',
+                        '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+                    )
+                    ",
+                    [],
+                )
+                .is_err()
+        );
+        assert!(
+            connection
+                .execute(
+                    "
+                    INSERT INTO transcript_segments(
+                        id, meeting_id, source_id, ordinal, original_text,
+                        is_final, revision, created_at
+                    ) VALUES (
+                        '00000000-0000-4000-8000-000000000046',
+                        '00000000-0000-4000-8000-000000000041',
+                        '00000000-0000-4000-8000-000000000042', 1,
+                        'Cross-meeting text', 1, 1,
+                        '2026-01-01T00:00:00.000Z'
+                    )
+                    ",
+                    [],
+                )
+                .is_err()
+        );
+        assert!(
+            connection
+                .execute(
+                    "
+                    INSERT INTO transcript_segments(
+                        id, meeting_id, source_id, ordinal, start_offset_ms,
+                        end_offset_ms, original_text, is_final, revision, created_at
+                    ) VALUES (
+                        '00000000-0000-4000-8000-000000000047',
+                        '00000000-0000-4000-8000-000000000040',
+                        '00000000-0000-4000-8000-000000000042', 2, 1000, 999,
+                        'Invalid offset text', 1, 1,
+                        '2026-01-01T00:00:00.000Z'
+                    )
+                    ",
+                    [],
+                )
+                .is_err()
+        );
+        assert!(
+            connection
+                .execute(
+                    "
+                    INSERT INTO transcript_segments(
+                        id, meeting_id, source_id, ordinal, original_text,
+                        is_final, revision, created_at
+                    ) VALUES (
+                        '00000000-0000-4000-8000-000000000048',
+                        '00000000-0000-4000-8000-000000000040',
+                        '00000000-0000-4000-8000-000000000042', 0,
+                        'Duplicate ordinal text', 1, 1,
+                        '2026-01-01T00:00:00.000Z'
+                    )
+                    ",
+                    [],
+                )
+                .is_err()
+        );
+
+        let index_count: i64 = connection
+            .query_row(
+                "
+                SELECT COUNT(*) FROM sqlite_master
+                WHERE type = 'index' AND name IN (
+                    'idx_transcript_sources_meeting',
+                    'idx_transcript_sources_meeting_type',
+                    'idx_transcript_sources_meeting_sha256',
+                    'idx_transcript_segments_meeting'
+                )
+                ",
+                [],
+                |row| row.get(0),
+            )
+            .expect("transcript indexes should inspect");
+        assert_eq!(index_count, 4);
+
+        connection
+            .execute(
+                "DELETE FROM transcript_sources WHERE id = '00000000-0000-4000-8000-000000000042'",
+                [],
+            )
+            .expect("source should delete");
+        let segment_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM transcript_segments", [], |row| {
+                row.get(0)
+            })
+            .expect("segments should be readable");
+        let source_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM transcript_sources", [], |row| {
+                row.get(0)
+            })
+            .expect("sources should be readable");
+        assert_eq!(segment_count, 0);
+        assert_eq!(source_count, 1);
+
+        connection
+            .execute(
+                "DELETE FROM meetings WHERE id = '00000000-0000-4000-8000-000000000041'",
+                [],
+            )
+            .expect("meeting should delete");
+        let source_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM transcript_sources", [], |row| {
+                row.get(0)
+            })
+            .expect("sources should be readable");
+        assert_eq!(source_count, 0);
     }
 }

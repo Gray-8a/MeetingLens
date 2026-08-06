@@ -9,6 +9,7 @@ use super::error::{DataError, DataResult};
 use super::model::{CreateMeeting, Meeting, MeetingStatus, UpdateMeeting};
 use super::paths::StoragePaths;
 use super::repository::{self, NewMeeting};
+use super::transcript_service::TranscriptService;
 
 const MAX_TITLE_CHARS: usize = 200;
 const MAX_LANGUAGE_CHARS: usize = 35;
@@ -35,6 +36,10 @@ impl MeetingService {
 
     pub fn documents(&self) -> DocumentService {
         DocumentService::new(self.database.clone())
+    }
+
+    pub fn transcripts(&self) -> TranscriptService {
+        TranscriptService::new(self.database.clone())
     }
 
     pub fn create(&self, input: CreateMeeting) -> DataResult<Meeting> {
