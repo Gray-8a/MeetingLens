@@ -1,10 +1,10 @@
 # MeetingLens Development Preview User Guide
 
-> Development Preview: this guide describes the local desktop workflows that the current repository actually provides. It is not a production manual and does not imply that real transcription or AI minutes are available.
+> Development Preview: this guide describes the local desktop workflows that the current repository actually provides. It is not a production manual; existing transcripts can be imported, reviewed, and corrected, but real AI minutes are not available.
 
 ## 1. Introduction to MeetingLens
 
-MeetingLens is a local-first meeting workspace for Windows 11. Its product goal is to turn pasted or imported meeting transcripts into detailed, editable, traceable minutes. The current development preview primarily validates meeting management, safe file import, the local service, and secure settings boundaries.
+MeetingLens is a local-first meeting workspace for Windows 11. Its product goal is to turn pasted or imported meeting transcripts into detailed, editable, traceable minutes. The current development preview can safely accept, persist, review, and correct transcripts, but it does not generate real minutes yet.
 
 The same application includes Simplified Chinese (`zh-CN`) and English (`en-US`); two installations are not required.
 
@@ -13,13 +13,16 @@ The same application includes Simplified Chinese (`zh-CN`) and English (`en-US`)
 The current version is a development preview. Available capabilities include:
 
 - creating, editing, starting, ending, and deleting local meetings;
+- choosing among Summary, Translation, and Meeting entries on Home; only Summary can currently be opened;
+- pasting UTF-8 meeting notes or importing TXT, SRT, and VTT through the native picker;
+- viewing transcript sources, reviewing paginated segments, correcting text and speaker display names, and deleting sources;
 - running a fully synthetic, memory-only mock transcript flow;
 - safely importing, deduplicating, listing, and deleting meeting-file copies through the native picker;
 - viewing Mock Provider, local Sidecar, and database status;
 - storing a DeepSeek API key in Windows Credential Manager without allowing the WebView to read it back;
 - running development validation of the isolated offline Docling Worker, which is not connected to the product UI.
 
-The application cannot currently generate real meeting minutes or process real recordings or realtime transcription.
+The application cannot currently generate real meeting minutes, call DeepSeek, process real recordings, or run realtime transcription. Translation and Meeting mode display Coming soon only.
 
 ## 3. System requirements
 
@@ -47,39 +50,67 @@ npm run check
 
 The desktop environment is verified only after the native MeetingLens window opens and the Settings page reports local runtime status. Passing CI does not replace local window acceptance.
 
-## 5. Home page overview
+## 5. Home and the three modes
 
-The Home page shows a meeting-status summary, recent meetings, and the New meeting entry point. Preparing, In meeting, and Ready are localized presentations of stable internal states; users are not asked to manipulate internal values directly.
+Home presents three task-oriented modes:
 
-The Home page does not yet provide paste-transcript, transcript-import, or generate-minutes shortcuts. Those belong to the upcoming transcript-first stages.
+- **Summary mode:** available now; opens the paste or transcript-import workflow.
+- **Translation mode:** coming soon; it does not start a microphone, realtime translation, or an external request.
+- **Meeting mode:** coming soon; it does not request audio or screen permissions.
 
-## 6. Creating a meeting
+Meeting history remains available. Create meeting manually is an advanced preview path with lower visual priority than Summary mode, but it is not removed. Home does not require ordinary users to understand Providers, Docling, or internal state machines.
 
-1. Select New meeting in the left navigation.
-2. Enter a short, recognizable title.
-3. Select Create meeting.
-4. On the meeting details page, confirm the title, timeline, language baseline, and file area.
+## 6. Summary mode input
 
-Creating a meeting stores local metadata only. It does not request microphone, screen, external-model, or file access.
+### Paste meeting notes
 
-## 7. Mock meeting flow
+1. Select Summary mode on Home.
+2. Optionally enter a meeting title. When left empty, the application creates a localized title from the local date and time.
+3. Paste strict UTF-8 text. The page displays its actual UTF-8 byte use, up to 2 MiB.
+4. Select Save and review. MeetingLens atomically creates the draft meeting and transcript; a failure does not leave an empty meeting.
+5. After success, the Transcript review page opens and the unsubmitted React text state is cleared.
 
-1. Select Start meeting on a draft meeting's details page.
-2. The application opens the mock meeting workspace and displays synthetic transcript entries.
-3. You can pause or resume the mock transcript and add memory-only important marks.
-4. Select End meeting.
-5. The application returns to meeting details and displays the meeting as Ready.
+### Import a meeting transcript
 
-The mock transcript is not recording, realtime ASR, or real meeting content. Temporary transcript entries, notes, and important marks are not saved as a real transcript when the page closes.
+1. Optionally enter a meeting title.
+2. Select Choose TXT, SRT or VTT.
+3. Select one strict UTF-8 file, up to 10 MiB, in the native Windows picker opened by MeetingLens.
+4. Cancelling is a safe no-op and does not create an empty meeting.
+5. Matching content in the same meeting displays Already added and does not create a second source.
 
-## 8. Importing and managing meeting files
+The absolute source path never returns to the WebView, and the source file is not copied, changed, or deleted. TXT, SRT, and VTT use the bounded Rust parser, not Docling, the Python Sidecar, or external AI.
+
+## 7. Reviewing and correcting transcripts
+
+Transcript review shows the meeting title, transcript sources, segment totals, available time range, speaker labels, and input status.
+
+- A source may contain up to 20,000 segments. The page reads stable bounded pages of no more than 200 rows rather than rendering everything at once.
+- Relative time displays as `00:12:34`; a segment without timing shows only its paragraph ordinal and never receives a fabricated timestamp.
+- Speaker display priority is the user-confirmed name, source label, then Unknown speaker.
+- Text and speaker-name edits use revision conflict protection. If content changed elsewhere, reload it; MeetingLens does not overwrite silently.
+- A display name can be set or cleared for matching speaker labels in the selected source. Original labels remain unchanged, names do not carry across sources or meetings, and AI does not infer identity.
+- Source deletion requires confirmation. Deleting the final source shows no usable input; it never deletes the user's source file or changes the meeting-file area.
+
+Generate meeting minutes remains disabled with an explicit later-stage notice and makes no network request.
+
+## 8. Advanced mock meeting and meeting files
+
+Create meeting manually remains available to validate the existing desktop preview:
+
+1. Create a draft and select Start meeting on its details page.
+2. Review the fully synthetic, memory-only captions, pause or resume them, and add temporary important marks.
+3. End the meeting to return to details. Mock captions and temporary notes are not persisted as a formal transcript.
+
+Meeting details also lets `draft`, `recording`, and `ready` meetings paste/import transcripts and open Transcript review. `processing`, `deleting`, `delete_failed`, and other disallowed states safely disable changes; the backend remains authoritative.
+
+Reference meeting files continue to use the separate Add files workflow:
 
 1. Open meeting details and select Add files.
 2. Use the native picker opened by MeetingLens to select an allowed file.
 3. Review validation, copying, saving, duplicate, or failure progress.
 4. After a successful import, review the safe display name, type, size, time, and status in the meeting-file list.
 
-The source absolute path is never returned to the WebView. MeetingLens copies allowed files into private application storage and does not modify the source. Files are not currently opened or parsed in the UI and are not sent to the Sidecar, Docling, or DeepSeek.
+Reference files and transcript sources are different data types. Reference files are copied into private application storage without changing the source. They are not currently opened or parsed in the UI and are not sent to the Sidecar, Docling, or DeepSeek.
 
 ## 9. Setting a DeepSeek API key
 
@@ -105,11 +136,17 @@ The interface language is independent of the future meeting-minutes output langu
 
 ## 11. Viewing meeting history
 
-Select History in the left navigation to view meetings ordered by creation time. Each entry displays a localized status and creation, start, and end times. Select View details to return to meeting details and the file list.
+Select History in the left navigation to view meetings ordered by creation time. Each entry displays a localized status and creation, start, and end times. The current model has no independent editable occurrence date; Created is not presented as the meeting date. Select View details to return to meeting details, transcript actions, and the file list.
 
-Meetings stored in SQLite should remain after closing and reopening the application. Mock transcript entries and temporary notes are not persistent meeting transcripts.
+Meetings, transcript sources, normalized segments, and correction revisions stored in SQLite should remain after closing and reopening the application. Mock transcript entries and temporary notes are not persistent meeting transcripts.
 
-## 12. Deleting meetings and documents
+## 12. Deleting meetings, transcripts, and documents
+
+To delete a transcript source:
+
+1. Select Delete source in Transcript review.
+2. Confirm removal of its normalized segments from MeetingLens; the user's original TXT/SRT/VTT remains unchanged.
+3. A failed deletion keeps the source visible with a stable error instead of claiming early success.
 
 To delete a document:
 
@@ -129,6 +166,9 @@ Deletion is irreversible. Confirm that the selected meeting and files are correc
 ## 13. Data storage and privacy
 
 - Meeting metadata is stored in the private application SQLite database.
+- Submitted transcript sources and normalized segments are stored in the same private database.
+- Unsubmitted pasted text exists only briefly in React memory and is cleared after save, cancel, or navigation away.
+- Transcript bodies, speakers, and source paths are not written to localStorage, sessionStorage, IndexedDB, or console.
 - Imported copies are stored in private application storage; React does not receive absolute paths.
 - The DeepSeek key is stored in Windows Credential Manager.
 - Interface language is the only application setting allowed in WebView preference storage.
@@ -141,9 +181,8 @@ See [SECURITY.md](../SECURITY.md) for the detailed boundaries.
 
 The following features are not implemented:
 
-- pasted meeting transcripts;
-- TXT, SRT, or VTT transcript import;
 - real meeting-minutes generation;
+- the DeepSeek Summary Provider and outbound confirmation;
 - real audio recording;
 - realtime transcription;
 - screen reading;
@@ -158,6 +197,14 @@ The following features are not implemented:
 ### Why can I not generate minutes after saving a DeepSeek key?
 
 Only secure credential storage is complete. The real Summary Provider, immutable input snapshot, sending preview, and evidence validation belong to a later independent stage.
+
+### Why is Generate meeting minutes unavailable when the transcript is ready?
+
+This stage covers input, persistence, paginated review, and manual correction only. The next stages add immutable Summary runs and Mock behavior, consent data, the bounded DeepSeek Provider, and the minutes result workspace. The disabled action does not call AI.
+
+### Does transcript import copy or delete the source file?
+
+No. Rust reads it only during selection and stores normalized segments; the absolute path does not enter the WebView or SQLite. Deleting a transcript source does not affect the user's file.
 
 ### Why is there no parsed result after importing a file?
 
@@ -177,16 +224,18 @@ No. It resets only the non-sensitive interface-language preference. Meetings and
 - Local service unavailable: close residual development processes and restart the application; do not weaken authentication or security checks.
 - Database unavailable: stop write actions and retain the safe error code; do not edit or delete database files directly.
 - File import fails: check the type, size, quota, and file integrity; do not rename an extension to bypass validation.
+- Transcript import fails: confirm that it is a strict UTF-8 TXT/SRT/VTT file no larger than 10 MiB and that cue/timestamp syntax is complete. Do not include the path or transcript body in a report.
+- Correction conflict: reload the current segment before editing again; do not bypass revision protection.
 - Secure storage unavailable: confirm that the application is running in a supported Windows user session; do not fall back to plaintext files.
 - When reporting a problem, include the action, application version, and stable error code. Do not attach keys, meeting content, recordings, databases, logs, private paths, or uploaded files.
 
 ## 17. Roadmap
 
-The next core delivery path is:
+The completed and current delivery path is:
 
-1. `feat/transcript-data-core`: schema v3, transcript sources and segments, and local paste/TXT/SRT/VTT parsing;
-2. `feat/transcript-command-api`: secure transcript commands, the Rust-native picker, and atomic meeting + transcript creation;
-3. `feat/summary-mode-input-ui`: the Summary entry point, paste, native import, preview, and basic speaker/text correction;
+1. `feat/transcript-data-core` (PR #18 merged): schema v3, transcript sources and segments, and local paste/TXT/SRT/VTT parsing;
+2. `feat/transcript-command-api` (PR #19 merged): secure transcript commands, the Rust-native picker, and atomic meeting + transcript creation;
+3. `feat/summary-mode-input-ui` (current): the Summary entry point, paste, native import, paginated review, and basic speaker/text correction;
 4. `feat/summary-run-core`: immutable snapshots, runs/revisions, evidence, and Mock behavior;
 5. `feat/consent-data-core`: shared consent records, session expiry, and audit behavior;
 6. `feat/summary-provider-deepseek`: the bounded DeepSeek adapter, SecretStore use, and outbound consent;

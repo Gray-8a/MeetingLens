@@ -7,9 +7,11 @@ use super::model::MeetingStatus;
 use super::repository;
 use super::transcript_error::{TranscriptError, TranscriptResult};
 use super::transcript_model::{
-    NewTranscriptSegment, NewTranscriptSource, SummaryInputSegment, TranscriptImportInput,
-    TranscriptImportOutcome, TranscriptPolicy, TranscriptSegment, TranscriptSource,
-    TranscriptSourceOverview, TranscriptSourceType, UpdateTranscriptSegment,
+    NewTranscriptSegment, NewTranscriptSource, SummaryInputSegment, TRANSCRIPT_MAX_SEGMENTS,
+    TRANSCRIPT_PAGE_DEFAULT_LIMIT, TRANSCRIPT_PAGE_MAX_LIMIT, TranscriptImportInput,
+    TranscriptImportOutcome, TranscriptPolicy, TranscriptSegment, TranscriptSegmentPage,
+    TranscriptSource, TranscriptSourceOverview, TranscriptSourceType, TranscriptSpeakerGroupPage,
+    UpdateTranscriptSegment,
 };
 use super::transcript_parser::ParsedTranscript;
 use super::{transcript_parser, transcript_repository};
@@ -277,6 +279,66 @@ impl TranscriptService {
         transcript_repository::list_segments(&connection, meeting_id, source_id)
     }
 
+    pub fn list_segment_page(
+        &self,
+        meeting_id: &str,
+        source_id: &str,
+        cursor: Option<u64>,
+        limit: Option<u64>,
+    ) -> TranscriptResult<TranscriptSegmentPage> {
+        validate_uuid(meeting_id)?;
+        validate_uuid(source_id)?;
+        let limit = validate_page_limit(limit)?;
+        if cursor.is_some_and(|cursor| cursor >= TRANSCRIPT_MAX_SEGMENTS as u64) {
+            return Err(TranscriptError::InvalidInput);
+        }
+        let mut connection = self.database.connect().map_err(map_data_error)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Deferred)
+            .map_err(TranscriptError::from)?;
+        ensure_meeting_is_readable(&transaction, meeting_id)?;
+        transcript_repository::get_source(&transaction, meeting_id, source_id)?;
+        let page = transcript_repository::list_segment_page(
+            &transaction,
+            meeting_id,
+            source_id,
+            cursor,
+            limit,
+        )?;
+        transaction.commit().map_err(TranscriptError::from)?;
+        Ok(page)
+    }
+
+    pub fn list_speaker_group_page(
+        &self,
+        meeting_id: &str,
+        source_id: &str,
+        cursor: Option<String>,
+        limit: Option<u64>,
+    ) -> TranscriptResult<TranscriptSpeakerGroupPage> {
+        validate_uuid(meeting_id)?;
+        validate_uuid(source_id)?;
+        let cursor = cursor
+            .map(|cursor| normalize_required(&cursor, MAX_SPEAKER_NAME_BYTES))
+            .transpose()?;
+        let limit = validate_page_limit(limit)?;
+        let mut connection = self.database.connect().map_err(map_data_error)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Deferred)
+            .map_err(TranscriptError::from)?;
+        ensure_meeting_is_readable(&transaction, meeting_id)?;
+        transcript_repository::get_source(&transaction, meeting_id, source_id)?;
+        let page = transcript_repository::list_speaker_group_page(
+            &transaction,
+            meeting_id,
+            source_id,
+            cursor.as_deref(),
+            limit,
+        )?;
+        transaction.commit().map_err(TranscriptError::from)?;
+        Ok(page)
+    }
+
     pub fn update_segment(
         &self,
         meeting_id: &str,
@@ -317,6 +379,37 @@ impl TranscriptService {
         )?;
         transaction.commit().map_err(TranscriptError::from)?;
         Ok(updated)
+    }
+
+    pub fn rename_speaker_in_source(
+        &self,
+        meeting_id: &str,
+        source_id: &str,
+        speaker_label: &str,
+        speaker_name: Option<String>,
+    ) -> TranscriptResult<u64> {
+        validate_uuid(meeting_id)?;
+        validate_uuid(source_id)?;
+        let speaker_label = normalize_required(speaker_label, MAX_SPEAKER_NAME_BYTES)?;
+        let speaker_name = speaker_name
+            .map(|speaker_name| normalize_required(&speaker_name, MAX_SPEAKER_NAME_BYTES))
+            .transpose()?;
+        let _guard = self.database.mutation_guard().map_err(map_data_error)?;
+        let mut connection = self.database.connect().map_err(map_data_error)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(TranscriptError::from)?;
+        ensure_meeting_accepts_mutation(&transaction, meeting_id)?;
+        transcript_repository::get_source(&transaction, meeting_id, source_id)?;
+        let updated_count = transcript_repository::rename_speaker_in_source(
+            &transaction,
+            meeting_id,
+            source_id,
+            &speaker_label,
+            speaker_name.as_deref(),
+        )?;
+        transaction.commit().map_err(TranscriptError::from)?;
+        Ok(updated_count)
     }
 
     pub fn delete_source(&self, meeting_id: &str, source_id: &str) -> TranscriptResult<()> {
@@ -418,6 +511,14 @@ fn normalize_required(value: &str, max_bytes: usize) -> TranscriptResult<String>
         return Err(TranscriptError::InvalidInput);
     }
     Ok(value.to_string())
+}
+
+fn validate_page_limit(limit: Option<u64>) -> TranscriptResult<usize> {
+    let limit = limit.unwrap_or(TRANSCRIPT_PAGE_DEFAULT_LIMIT);
+    if !(1..=TRANSCRIPT_PAGE_MAX_LIMIT).contains(&limit) {
+        return Err(TranscriptError::InvalidInput);
+    }
+    usize::try_from(limit).map_err(|_| TranscriptError::InvalidInput)
 }
 
 fn normalize_display_name(value: &str) -> TranscriptResult<String> {
@@ -757,6 +858,163 @@ mod tests {
             ),
             Ok(TranscriptImportOutcome::Imported { .. })
         ));
+    }
+
+    #[test]
+    fn bounds_pages_and_rolls_back_failed_speaker_renames() {
+        let (_directory, meetings, meeting_id) = setup();
+        let transcripts = meetings.transcripts();
+        let content = (0..205)
+            .map(|ordinal| format!("Speaker {ordinal:03}: Synthetic point {ordinal}"))
+            .collect::<Vec<_>>()
+            .join("\n\n");
+        let source = imported_source(
+            transcripts
+                .import_pasted_text(
+                    &meeting_id,
+                    input("Synthetic paged paste", None, content.as_bytes()),
+                )
+                .expect("paged paste should import"),
+        );
+
+        let first = transcripts
+            .list_segment_page(&meeting_id, &source.id, None, None)
+            .expect("default page should load");
+        assert_eq!(first.items.len(), 100);
+        assert_eq!(first.total_count, 205);
+        assert_eq!(first.next_cursor, Some(99));
+        assert!(first.has_more);
+        let second = transcripts
+            .list_segment_page(&meeting_id, &source.id, first.next_cursor, Some(200))
+            .expect("bounded second page should load");
+        assert_eq!(second.items.len(), 105);
+        assert_eq!(second.items[0].ordinal, 100);
+        assert!(!second.has_more);
+        assert_eq!(
+            transcripts.list_segment_page(&meeting_id, &source.id, None, Some(0)),
+            Err(TranscriptError::InvalidInput)
+        );
+        assert_eq!(
+            transcripts.list_segment_page(&meeting_id, &source.id, None, Some(201)),
+            Err(TranscriptError::InvalidInput)
+        );
+        assert_eq!(
+            transcripts.list_segment_page(
+                &meeting_id,
+                &source.id,
+                Some(TRANSCRIPT_MAX_SEGMENTS as u64),
+                None
+            ),
+            Err(TranscriptError::InvalidInput)
+        );
+
+        let first_speakers = transcripts
+            .list_speaker_group_page(&meeting_id, &source.id, None, Some(100))
+            .expect("speaker page should load");
+        assert_eq!(first_speakers.items.len(), 100);
+        assert_eq!(first_speakers.total_count, 205);
+        assert!(first_speakers.has_more);
+        assert_eq!(
+            transcripts.list_speaker_group_page(
+                &meeting_id,
+                &source.id,
+                None,
+                Some(TRANSCRIPT_PAGE_MAX_LIMIT + 1)
+            ),
+            Err(TranscriptError::InvalidInput)
+        );
+
+        assert_eq!(
+            transcripts.rename_speaker_in_source(
+                &meeting_id,
+                &source.id,
+                "Speaker 000",
+                Some("   ".to_string())
+            ),
+            Err(TranscriptError::InvalidInput)
+        );
+        let connection = transcripts
+            .database
+            .connect()
+            .expect("database should connect");
+        connection
+            .execute_batch(
+                "
+                CREATE TRIGGER fail_synthetic_source_touch
+                BEFORE UPDATE OF updated_at ON transcript_sources
+                BEGIN
+                    SELECT RAISE(ABORT, 'synthetic rollback');
+                END;
+                ",
+            )
+            .expect("rollback trigger should create");
+        drop(connection);
+        assert_eq!(
+            transcripts.rename_speaker_in_source(
+                &meeting_id,
+                &source.id,
+                "Speaker 000",
+                Some("Confirmed synthetic name".to_string())
+            ),
+            Err(TranscriptError::PersistenceFailed)
+        );
+        let connection = transcripts
+            .database
+            .connect()
+            .expect("database should reconnect");
+        connection
+            .execute_batch("DROP TRIGGER fail_synthetic_source_touch;")
+            .expect("rollback trigger should drop");
+        drop(connection);
+        let unchanged = transcripts
+            .list_segment_page(&meeting_id, &source.id, None, Some(1))
+            .expect("rolled back segment should load")
+            .items
+            .remove(0);
+        assert_eq!(unchanged.speaker_name, None);
+        assert_eq!(unchanged.revision, 1);
+        assert_eq!(unchanged.corrected_at, None);
+
+        let other_meeting = meetings
+            .create(CreateMeeting {
+                title: "Synthetic scoped meeting".to_string(),
+                primary_language: "en-AU".to_string(),
+            })
+            .expect("scoped meeting should create");
+        assert_eq!(
+            transcripts.list_segment_page(&other_meeting.id, &source.id, None, None),
+            Err(TranscriptError::SourceNotFound)
+        );
+        assert_eq!(
+            transcripts.rename_speaker_in_source(
+                &other_meeting.id,
+                &source.id,
+                "Speaker 000",
+                Some("Scoped name".to_string())
+            ),
+            Err(TranscriptError::SourceNotFound)
+        );
+
+        let connection = transcripts
+            .database
+            .connect()
+            .expect("database should connect for state check");
+        connection
+            .execute(
+                "UPDATE meetings SET status = 'processing' WHERE id = ?1",
+                [&meeting_id],
+            )
+            .expect("meeting state should update");
+        drop(connection);
+        assert_eq!(
+            transcripts.rename_speaker_in_source(
+                &meeting_id,
+                &source.id,
+                "Speaker 000",
+                Some("Blocked name".to_string())
+            ),
+            Err(TranscriptError::MeetingInvalidState)
+        );
     }
 
     #[test]

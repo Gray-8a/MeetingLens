@@ -47,9 +47,43 @@ function source(
     language: "en-AU",
     baseStartedAt: null,
     segmentCount: 1,
+    startOffsetMs: 0,
+    endOffsetMs: 1_000,
+    speakerCount: 1,
     importedAt: timestamp,
     createdAt: timestamp,
     updatedAt: timestamp,
+    ...overrides,
+  };
+}
+
+function segmentPage(
+  items: TranscriptSegmentResponse[] = [segment()],
+  overrides: Record<string, unknown> = {},
+) {
+  return {
+    items,
+    nextCursor: null,
+    hasMore: false,
+    totalCount: items.length,
+    ...overrides,
+  };
+}
+
+function speakerPage(overrides: Record<string, unknown> = {}) {
+  return {
+    sourceId,
+    items: [
+      {
+        speakerLabel: "Speaker 1",
+        speakerName: null,
+        hasMixedNames: false,
+        segmentCount: 1,
+      },
+    ],
+    nextCursor: null,
+    hasMore: false,
+    totalCount: 1,
     ...overrides,
   };
 }
@@ -194,7 +228,13 @@ describe("transcriptApi command routing", () => {
       command: "listSegments",
       run: (api) => api.listSegments(meetingId, sourceId),
       expectedArgs: { request: { meetingId, sourceId } },
-      response: { segments: [segment()] },
+      response: segmentPage(),
+    },
+    {
+      command: "listSpeakerGroups",
+      run: (api) => api.listSpeakerGroups(meetingId, sourceId),
+      expectedArgs: { request: { meetingId, sourceId } },
+      response: speakerPage(),
     },
     {
       command: "updateSegment",
@@ -226,6 +266,25 @@ describe("transcriptApi command routing", () => {
       run: (api) => api.deleteSource(meetingId, sourceId),
       expectedArgs: { request: { meetingId, sourceId } },
       response: { sourceId, deleted: true },
+    },
+    {
+      command: "renameSpeakerInSource",
+      run: (api) =>
+        api.renameSpeakerInSource({
+          meetingId,
+          sourceId,
+          speakerLabel: "Speaker 1",
+          speakerName: "Synthetic speaker",
+        }),
+      expectedArgs: {
+        request: {
+          meetingId,
+          sourceId,
+          speakerLabel: "Speaker 1",
+          speakerName: "Synthetic speaker",
+        },
+      },
+      response: { sourceId, updatedCount: 1 },
     },
     {
       command: "getImportPolicy",
@@ -272,6 +331,73 @@ describe("transcriptApi command routing", () => {
         segmentId,
         speakerName: null,
         expectedRevision: 2,
+      },
+    });
+  });
+
+  it("serializes bounded segment and speaker pagination", async () => {
+    const adapter = new FakeInvokeAdapter();
+    const api = createTranscriptApi(adapter);
+    adapter.response = segmentPage([segment({ ordinal: 8 })], {
+      nextCursor: 8,
+      hasMore: true,
+      totalCount: 20,
+    });
+
+    await api.listSegments(meetingId, sourceId, { cursor: 7, limit: 25 });
+    expect(adapter.calls[0]?.args).toEqual({
+      request: { meetingId, sourceId, cursor: 7, limit: 25 },
+    });
+
+    adapter.response = speakerPage({
+      nextCursor: "Speaker 1",
+      hasMore: true,
+      totalCount: 2,
+    });
+    await api.listSpeakerGroups(meetingId, sourceId, {
+      cursor: "Speaker 0",
+      limit: 50,
+    });
+    expect(adapter.calls[1]?.args).toEqual({
+      request: {
+        meetingId,
+        sourceId,
+        cursor: "Speaker 0",
+        limit: 50,
+      },
+    });
+  });
+
+  it("rejects invalid page limits before invoking the backend", async () => {
+    const adapter = new FakeInvokeAdapter();
+    const api = createTranscriptApi(adapter);
+
+    await expect(
+      api.listSegments(meetingId, sourceId, { limit: 201 }),
+    ).rejects.toMatchObject({ code: "transcript_invalid_input" });
+    await expect(
+      api.listSpeakerGroups(meetingId, sourceId, { limit: 0 }),
+    ).rejects.toMatchObject({ code: "transcript_invalid_input" });
+    expect(adapter.calls).toHaveLength(0);
+  });
+
+  it("serializes an explicit null speaker name for source-level clearing", async () => {
+    const adapter = new FakeInvokeAdapter();
+    adapter.response = { sourceId, updatedCount: 2 };
+
+    await createTranscriptApi(adapter).renameSpeakerInSource({
+      meetingId,
+      sourceId,
+      speakerLabel: "Speaker 1",
+      speakerName: null,
+    });
+
+    expect(adapter.calls[0]?.args).toEqual({
+      request: {
+        meetingId,
+        sourceId,
+        speakerLabel: "Speaker 1",
+        speakerName: null,
       },
     });
   });
@@ -385,7 +511,10 @@ describe("transcriptApi response and error boundary", () => {
     ],
     [
       "segment private fields",
-      () => ({ segments: [{ ...segment(), createdAt: timestamp }] }),
+      () => ({
+        ...segmentPage(),
+        items: [{ ...segment(), createdAt: timestamp }],
+      }),
     ],
     [
       "cross-meeting sources",
@@ -393,13 +522,12 @@ describe("transcriptApi response and error boundary", () => {
     ],
     [
       "backwards offsets",
-      () => ({
-        segments: [segment({ startOffsetMs: 2_000, endOffsetMs: 1_000 })],
-      }),
+      () =>
+        segmentPage([segment({ startOffsetMs: 2_000, endOffsetMs: 1_000 })]),
     ],
     [
       "invalid confidence",
-      () => ({ segments: [segment({ confidence: Number.POSITIVE_INFINITY })] }),
+      () => segmentPage([segment({ confidence: Number.POSITIVE_INFINITY })]),
     ],
   ] as const)("rejects malformed %s fail-closed", async (_name, response) => {
     const adapter = new FakeInvokeAdapter();
@@ -412,6 +540,81 @@ describe("transcriptApi response and error boundary", () => {
     await expect(operation).rejects.toEqual(
       new TranscriptApiError("internal_error", false),
     );
+  });
+
+  it("rejects malformed pagination and speaker aggregation fail-closed", async () => {
+    const adapter = new FakeInvokeAdapter();
+    const api = createTranscriptApi(adapter);
+
+    adapter.response = segmentPage(
+      [segment({ ordinal: 1 }), segment({ id: otherMeetingId, ordinal: 0 })],
+      { totalCount: 2 },
+    );
+    await expect(api.listSegments(meetingId, sourceId)).rejects.toMatchObject({
+      code: "internal_error",
+    });
+
+    adapter.response = segmentPage([segment()], {
+      nextCursor: 0,
+      hasMore: false,
+    });
+    await expect(api.listSegments(meetingId, sourceId)).rejects.toMatchObject({
+      code: "internal_error",
+    });
+
+    adapter.response = speakerPage({ sourceId: otherMeetingId });
+    await expect(
+      api.listSpeakerGroups(meetingId, sourceId),
+    ).rejects.toMatchObject({ code: "internal_error" });
+
+    adapter.response = speakerPage({
+      items: [
+        {
+          speakerLabel: "Speaker 1",
+          speakerName: "Conflicting name",
+          hasMixedNames: true,
+          segmentCount: 1,
+        },
+      ],
+    });
+    await expect(
+      api.listSpeakerGroups(meetingId, sourceId),
+    ).rejects.toMatchObject({ code: "internal_error" });
+
+    adapter.response = speakerPage({
+      items: [
+        {
+          speakerLabel: "speaker a",
+          speakerName: null,
+          hasMixedNames: false,
+          segmentCount: 1,
+        },
+        {
+          speakerLabel: "Speaker Z",
+          speakerName: null,
+          hasMixedNames: false,
+          segmentCount: 1,
+        },
+      ],
+      totalCount: 2,
+    });
+    await expect(
+      api.listSpeakerGroups(meetingId, sourceId),
+    ).rejects.toMatchObject({ code: "internal_error" });
+
+    adapter.response = speakerPage({
+      items: [
+        {
+          speakerLabel: "Speaker 1",
+          speakerName: null,
+          hasMixedNames: false,
+          segmentCount: 1,
+        },
+      ],
+    });
+    await expect(
+      api.listSpeakerGroups(meetingId, sourceId, { cursor: "Speaker 1" }),
+    ).rejects.toMatchObject({ code: "internal_error" });
   });
 
   it("rejects inconsistent import and policy result invariants", async () => {
@@ -469,7 +672,7 @@ describe("transcriptApi response and error boundary", () => {
 });
 
 describe("transcriptApi security surface", () => {
-  it("exposes exactly the approved ten methods", () => {
+  it("exposes exactly the approved twelve methods", () => {
     expect(
       Object.keys(createTranscriptApi(new FakeInvokeAdapter())).sort(),
     ).toEqual(
@@ -481,7 +684,9 @@ describe("transcriptApi security surface", () => {
         "listSources",
         "getSource",
         "listSegments",
+        "listSpeakerGroups",
         "updateSegment",
+        "renameSpeakerInSource",
         "deleteSource",
         "getImportPolicy",
       ].sort(),

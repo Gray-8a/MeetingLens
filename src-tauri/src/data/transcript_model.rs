@@ -8,6 +8,8 @@ pub const PASTED_TEXT_MAX_BYTES: usize = 2 * 1024 * 1024;
 pub const TRANSCRIPT_FILE_MAX_BYTES: usize = 10 * 1024 * 1024;
 pub const TRANSCRIPT_MAX_SEGMENTS: usize = 20_000;
 pub const TRANSCRIPT_SEGMENT_MAX_BYTES: usize = 64 * 1024;
+pub const TRANSCRIPT_PAGE_DEFAULT_LIMIT: u64 = 100;
+pub const TRANSCRIPT_PAGE_MAX_LIMIT: u64 = 200;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct TranscriptPolicy {
@@ -102,6 +104,9 @@ pub struct TranscriptSource {
 pub struct TranscriptSourceOverview {
     pub source: TranscriptSource,
     pub segment_count: u64,
+    pub start_offset_ms: Option<u64>,
+    pub end_offset_ms: Option<u64>,
+    pub speaker_count: u64,
 }
 
 impl fmt::Debug for TranscriptSourceOverview {
@@ -117,6 +122,9 @@ impl fmt::Debug for TranscriptSourceOverview {
                 &self.source.original_filename.as_ref().map(|_| "[REDACTED]"),
             )
             .field("segment_count", &self.segment_count)
+            .field("start_offset_ms", &self.start_offset_ms)
+            .field("end_offset_ms", &self.end_offset_ms)
+            .field("speaker_count", &self.speaker_count)
             .finish()
     }
 }
@@ -171,6 +179,72 @@ impl fmt::Debug for TranscriptSegment {
             .field("revision", &self.revision)
             .field("created_at", &self.created_at)
             .field("corrected_at", &self.corrected_at)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq)]
+pub struct TranscriptSegmentPage {
+    pub items: Vec<TranscriptSegment>,
+    pub next_cursor: Option<u64>,
+    pub has_more: bool,
+    pub total_count: u64,
+}
+
+impl fmt::Debug for TranscriptSegmentPage {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TranscriptSegmentPage")
+            .field("item_count", &self.items.len())
+            .field("next_cursor", &self.next_cursor)
+            .field("has_more", &self.has_more)
+            .field("total_count", &self.total_count)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq)]
+pub struct TranscriptSpeakerGroup {
+    pub speaker_label: String,
+    pub speaker_name: Option<String>,
+    pub has_mixed_names: bool,
+    pub segment_count: u64,
+}
+
+impl fmt::Debug for TranscriptSpeakerGroup {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TranscriptSpeakerGroup")
+            .field("speaker_label", &"[REDACTED]")
+            .field(
+                "speaker_name",
+                &self.speaker_name.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("has_mixed_names", &self.has_mixed_names)
+            .field("segment_count", &self.segment_count)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq)]
+pub struct TranscriptSpeakerGroupPage {
+    pub items: Vec<TranscriptSpeakerGroup>,
+    pub next_cursor: Option<String>,
+    pub has_more: bool,
+    pub total_count: u64,
+}
+
+impl fmt::Debug for TranscriptSpeakerGroupPage {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TranscriptSpeakerGroupPage")
+            .field("item_count", &self.items.len())
+            .field(
+                "next_cursor",
+                &self.next_cursor.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("has_more", &self.has_more)
+            .field("total_count", &self.total_count)
             .finish()
     }
 }

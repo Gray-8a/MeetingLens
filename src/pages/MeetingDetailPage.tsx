@@ -4,6 +4,7 @@ import { AppLink, liveMeetingPath, useNavigation } from "../app/navigation";
 import { useServices } from "../app/services";
 import type { MeetingResponse } from "../api/meeting";
 import { DocumentPanel } from "../components/DocumentPanel";
+import { MeetingTranscriptPanel } from "../components/MeetingTranscriptPanel";
 import { StatusBadge } from "../components/StatusBadge";
 import { ErrorNotice, LoadingState } from "../components/UiState";
 import {
@@ -383,6 +384,10 @@ export function MeetingDetailPage({
           ) : null}
         </article>
       </section>
+      <MeetingTranscriptPanel
+        meetingId={meeting.id}
+        meetingStatus={meeting.status}
+      />
       <DocumentPanel meetingId={meeting.id} meetingStatus={meeting.status} />
     </div>
   );

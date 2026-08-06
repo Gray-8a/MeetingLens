@@ -11,10 +11,12 @@ import {
 
 export type AppRoute =
   | { name: "home" }
+  | { name: "summary" }
   | { name: "new" }
   | { name: "history" }
   | { name: "meeting"; meetingId: string }
   | { name: "live"; meetingId: string }
+  | { name: "transcript"; meetingId: string }
   | { name: "settings" }
   | { name: "help" };
 
@@ -31,6 +33,7 @@ function currentPath(): string {
 }
 
 export function parseRoute(path: string): AppRoute {
+  if (path === "/summary") return { name: "summary" };
   if (path === "/new") return { name: "new" };
   if (path === "/history") return { name: "history" };
   if (path === "/settings") return { name: "settings" };
@@ -39,6 +42,14 @@ export function parseRoute(path: string): AppRoute {
   const liveMatch = path.match(/^\/meetings\/([^/]+)\/live$/);
   if (liveMatch) {
     return { name: "live", meetingId: safeDecode(liveMatch[1]) };
+  }
+
+  const transcriptMatch = path.match(/^\/meetings\/([^/]+)\/transcript$/);
+  if (transcriptMatch) {
+    return {
+      name: "transcript",
+      meetingId: safeDecode(transcriptMatch[1]),
+    };
   }
 
   const meetingMatch = path.match(/^\/meetings\/([^/]+)$/);

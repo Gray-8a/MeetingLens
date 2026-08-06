@@ -1,11 +1,18 @@
 import appSource from "../App.tsx?raw";
 import documentSource from "../components/DocumentPanel.tsx?raw";
+import speakerRenameSource from "../components/SpeakerRenamePanel.tsx?raw";
+import transcriptInputSource from "../components/TranscriptInputPanel.tsx?raw";
+import transcriptSegmentSource from "../components/TranscriptSegmentPanel.tsx?raw";
+import transcriptSourceListSource from "../components/TranscriptSourceList.tsx?raw";
+import helpSource from "../pages/HelpPage.tsx?raw";
 import historySource from "../pages/HistoryPage.tsx?raw";
 import homeSource from "../pages/HomePage.tsx?raw";
 import liveSource from "../pages/LiveMeetingPage.tsx?raw";
 import detailSource from "../pages/MeetingDetailPage.tsx?raw";
 import newSource from "../pages/NewMeetingPage.tsx?raw";
 import settingsSource from "../pages/SettingsPage.tsx?raw";
+import summaryInputSource from "../pages/SummaryModeInputPage.tsx?raw";
+import transcriptWorkspaceSource from "../pages/TranscriptWorkspacePage.tsx?raw";
 import { MeetingApiError } from "../api/meeting";
 import { transcriptErrorMessage } from "./errors";
 import { meetingErrorMessage, statusLabel, uiError } from "../lib/presentation";
@@ -22,12 +29,19 @@ import zhCN from "./locales/zh-CN.json";
 const uiSources = [
   appSource,
   documentSource,
+  speakerRenameSource,
+  transcriptInputSource,
+  transcriptSegmentSource,
+  transcriptSourceListSource,
+  helpSource,
   historySource,
   homeSource,
   liveSource,
   detailSource,
   newSource,
   settingsSource,
+  summaryInputSource,
+  transcriptWorkspaceSource,
 ].join("\n");
 
 afterEach(async () => {
@@ -144,14 +158,69 @@ describe("MeetingLens i18n foundation", () => {
     expect(zhCN.settings.languageAria).toBe("选择界面语言");
   });
 
+  it("localizes the three modes without claiming unfinished modes are available", async () => {
+    await i18n.changeLanguage("en-US");
+    expect(i18n.t("modes.summaryAvailable")).toBe("Available now");
+    expect(i18n.t("modes.translationTitle")).toBe("Translation mode");
+    expect(i18n.t("modes.meetingTitle")).toBe("Meeting mode");
+    expect(i18n.t("modes.comingSoon")).toBe("Coming soon");
+
+    await i18n.changeLanguage("zh-CN");
+    expect(i18n.t("modes.summaryAvailable")).toBe("现在可用");
+    expect(i18n.t("modes.comingSoon")).toBe("即将推出");
+  });
+
+  it("localizes every supported and reserved transcript source type", async () => {
+    const sourceTypeKeys = [
+      "transcriptWorkspace.sourceType.pasted_text",
+      "transcriptWorkspace.sourceType.imported_txt",
+      "transcriptWorkspace.sourceType.imported_srt",
+      "transcriptWorkspace.sourceType.imported_vtt",
+      "transcriptWorkspace.sourceType.live_asr",
+      "transcriptWorkspace.sourceType.platform_export",
+    ] as const;
+
+    for (const locale of ["en-US", "zh-CN"] as const) {
+      await i18n.changeLanguage(locale);
+      for (const key of sourceTypeKeys) {
+        expect(i18n.exists(key)).toBe(true);
+        expect(i18n.t(key)).not.toBe(key);
+      }
+    }
+  });
+
+  it("keeps transcript readiness and correction messages localized", async () => {
+    for (const locale of ["en-US", "zh-CN"] as const) {
+      await i18n.changeLanguage(locale);
+      for (const state of ["empty", "usable", "partial", "ready"]) {
+        expect(i18n.exists(`transcriptWorkspace.readiness.${state}`)).toBe(
+          true,
+        );
+      }
+      expect(i18n.t("transcriptWorkspace.revisionConflict")).not.toContain(
+        "transcript_revision_conflict",
+      );
+      expect(i18n.t("transcriptWorkspace.summaryComingSoon")).not.toContain(
+        "DeepSeek",
+      );
+    }
+  });
+
+  it("describes transcript input as available while real minutes remain unavailable", async () => {
+    await i18n.changeLanguage("en-US");
+    expect(i18n.t("help.availableBody")).toContain("TXT, SRT and VTT");
+    expect(i18n.t("help.unavailableBody")).toContain("Real AI minutes");
+
+    await i18n.changeLanguage("zh-CN");
+    expect(i18n.t("help.availableBody")).toContain("TXT、SRT、VTT");
+    expect(i18n.t("help.unavailableBody")).toContain("真实 AI 纪要");
+  });
+
   it("detects every literal translation key used by the main UI", () => {
     const keys = [...uiSources.matchAll(/\bt\("([^"]+)"/g)].map(
       (match) => match[1],
     );
-    const missing = keys.filter(
-      (key) =>
-        !i18n.exists(key, key === "document.fileCount" ? { count: 2 } : {}),
-    );
+    const missing = keys.filter((key) => !i18n.exists(key, { count: 2 }));
     expect(missing).toEqual([]);
   });
 
@@ -172,6 +241,23 @@ describe("MeetingLens i18n foundation", () => {
     }
     expect(uiSources).not.toContain("dangerouslySetInnerHTML");
     expect(uiSources).not.toMatch(/locale\s*===\s*["']zh-CN["']/);
+  });
+
+  it("keeps transcript UI out of browser persistence, console and direct Tauri invoke", () => {
+    const transcriptUiSources = [
+      speakerRenameSource,
+      transcriptInputSource,
+      transcriptSegmentSource,
+      transcriptSourceListSource,
+      summaryInputSource,
+      transcriptWorkspaceSource,
+    ].join("\n");
+
+    expect(transcriptUiSources).not.toMatch(
+      /localStorage|sessionStorage|indexedDB|console\./,
+    );
+    expect(transcriptUiSources).not.toContain("invoke(");
+    expect(transcriptUiSources).not.toContain("dangerouslySetInnerHTML");
   });
 });
 

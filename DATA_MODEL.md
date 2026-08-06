@@ -58,6 +58,8 @@ erDiagram
 | `deleted_at`           | TEXT NULL | 软删除/清理协调标记                                                       |
 | `deletion_error_code`  | TEXT NULL | 删除失败的稳定安全错误码，不含路径或原始异常                              |
 
+schema v3 没有独立、可编辑的会议发生日期字段。`created_at` 只表示 MeetingLens 创建该记录的时间，`started_at/ended_at` 只由真实或模拟会议生命周期写入；总结模式输入 UI 可以将 `created_at` 明确展示为创建时间，但不得把它冒充会议发生日期，也不得提供无法持久化的日期输入。若以后需要 `occurred_at` 或等价语义，必须先在独立数据模型阶段定义、迁移和验收。
+
 #### 会议生命周期
 
 会议状态由 Rust service 和专用 Tauri command 控制，普通更新接口只能修改标题、主要语言等可编辑元数据，不得直接写入 `status`、`started_at` 或 `ended_at`。
@@ -159,6 +161,10 @@ erDiagram
 约束：同一 source 的 `(source_id, ordinal)` 唯一；offset 可空，有值时满足 `start_offset_ms >= 0` 且 `end_offset_ms >= start_offset_ms`。无时间戳来源使用 ordinal 作为证据位置，不推断时间。总结模式导入阶段不创建 `speakers`/`speaker_aliases`，也不强制连接 `participants`；`speaker_label` 保留来源事实，`speaker_name` 保存用户确认。segment 不是 document chunk。schema v3 的 `translated_text` 仅用于稳定 DTO 兼容且本阶段始终为 `NULL`；实时语言阶段建立 `translations` 后，后者是唯一权威译文来源，不得把 Provider 译文写回 segment。
 
 第一版输入固定为：粘贴最多 2 MiB、TXT/SRT/VTT 文件最多 10 MiB、每 source 最多 20,000 个 segments、单 segment 正文最多 64 KiB；严格 UTF-8，拒绝 UTF-16/UTF-32、NUL、孤立 CR 和除 TAB/LF 外的危险 C0 控制字符，CRLF 只规范化为 LF，超限不截断。普通文本只识别明确的 `姓名: 内容`，格式不清时 speaker 为空；SRT/VTT 保留 cue 时间和顺序。解析器不调用 Docling/网络，不执行文本中的 URL、代码或指令。
+
+segment 列表必须由 SQLite 按稳定 `ordinal` 顺序分页，不允许先返回最多 20,000 条再由 React 切片。`feat/summary-mode-input-ui` 使用有界 `limit`（production 最大 200）和不泄漏路径/正文的 cursor 或 offset，请求结果至少包含当页 items、`total_count` 和后续页信息；页面切换或卸载时释放不再需要的数组。
+
+总结模式允许用户为同一 source 中具有相同非空 `speaker_label` 的 segments 批量设置或清空 `speaker_name`。该操作在单事务内只更新目标 meeting/source/label 的 `speaker_name`，每条实际修改记录的 revision 增加并写入 `corrected_at`；`speaker_label`、正文、ordinal、offset 和归属关系保持不变。空字符串不是名称；清空使用明确的 NULL 语义。该便利能力不创建 `speaker_aliases`，不跨 source/meeting，也不推断真实姓名、声纹或身份。
 
 去重哈希使用确定性规范化口径：去除 UTF-8 BOM、把 CRLF 统一为 LF，但不折叠大小写、不删除普通空白、不改写正文；SRT/VTT 对严格解析后的 cue 时间、speaker 与正文序列编码后计算 SHA-256。同一 meeting 的 `(meeting_id, content_sha256)` 唯一，跨 meeting 不去重。哈希只用于内容身份识别，不是信任、杀毒或安全扫描结论。
 

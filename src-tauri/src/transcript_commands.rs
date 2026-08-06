@@ -13,8 +13,8 @@ use tauri_plugin_dialog::DialogExt;
 use crate::{
     data::{
         CreateMeeting, DataError, MeetingService, TranscriptError, TranscriptImportInput,
-        TranscriptImportWorkflowOutcome, TranscriptPolicy, TranscriptSegment, TranscriptSource,
-        TranscriptSourceType, TranscriptWorkflowError, UpdateTranscriptSegment,
+        TranscriptImportWorkflowOutcome, TranscriptPolicy, TranscriptSegment, TranscriptSourceType,
+        TranscriptSpeakerGroup, TranscriptWorkflowError, UpdateTranscriptSegment,
     },
     meeting_commands::MeetingResponse,
 };
@@ -30,6 +30,8 @@ const TRANSCRIPT_COMMAND_NAMES: &[&str] = &[
     "list_transcript_sources",
     "get_transcript_source",
     "list_transcript_segments",
+    "list_transcript_speaker_groups",
+    "rename_speaker_in_source",
     "update_transcript_segment",
     "delete_transcript_source",
     "get_transcript_import_policy",
@@ -113,6 +115,61 @@ pub struct TranscriptSourceRequest {
     pub source_id: String,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ListTranscriptSegmentsRequest {
+    pub meeting_id: String,
+    pub source_id: String,
+    pub cursor: Option<u64>,
+    pub limit: Option<u64>,
+}
+
+#[derive(Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ListTranscriptSpeakerGroupsRequest {
+    pub meeting_id: String,
+    pub source_id: String,
+    pub cursor: Option<String>,
+    pub limit: Option<u64>,
+}
+
+impl fmt::Debug for ListTranscriptSpeakerGroupsRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ListTranscriptSpeakerGroupsRequest")
+            .field("meeting_id", &self.meeting_id)
+            .field("source_id", &self.source_id)
+            .field("cursor", &self.cursor.as_ref().map(|_| "[REDACTED]"))
+            .field("limit", &self.limit)
+            .finish()
+    }
+}
+
+#[derive(Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RenameSpeakerInSourceRequest {
+    pub meeting_id: String,
+    pub source_id: String,
+    pub speaker_label: String,
+    #[serde(default, deserialize_with = "deserialize_nullable_field")]
+    pub speaker_name: Option<Option<String>>,
+}
+
+impl fmt::Debug for RenameSpeakerInSourceRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("RenameSpeakerInSourceRequest")
+            .field("meeting_id", &self.meeting_id)
+            .field("source_id", &self.source_id)
+            .field("speaker_label", &"[REDACTED]")
+            .field(
+                "speaker_name",
+                &self.speaker_name.as_ref().map(|_| "[REDACTED]"),
+            )
+            .finish()
+    }
+}
+
 #[derive(Clone, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct UpdateTranscriptSegmentRequest {
@@ -161,6 +218,9 @@ pub struct TranscriptSourceResponse {
     pub language: Option<String>,
     pub base_started_at: Option<String>,
     pub segment_count: u64,
+    pub start_offset_ms: Option<u64>,
+    pub end_offset_ms: Option<u64>,
+    pub speaker_count: u64,
     pub imported_at: String,
     pub created_at: String,
     pub updated_at: String,
@@ -181,6 +241,9 @@ impl fmt::Debug for TranscriptSourceResponse {
             .field("language", &self.language)
             .field("base_started_at", &self.base_started_at)
             .field("segment_count", &self.segment_count)
+            .field("start_offset_ms", &self.start_offset_ms)
+            .field("end_offset_ms", &self.end_offset_ms)
+            .field("speaker_count", &self.speaker_count)
             .field("imported_at", &self.imported_at)
             .field("created_at", &self.created_at)
             .field("updated_at", &self.updated_at)
@@ -189,7 +252,8 @@ impl fmt::Debug for TranscriptSourceResponse {
 }
 
 impl TranscriptSourceResponse {
-    fn from_parts(source: TranscriptSource, segment_count: u64) -> Self {
+    fn from_overview(overview: crate::data::TranscriptSourceOverview) -> Self {
+        let source = overview.source;
         Self {
             id: source.id,
             meeting_id: source.meeting_id,
@@ -198,7 +262,10 @@ impl TranscriptSourceResponse {
             original_filename: source.original_filename,
             language: source.language,
             base_started_at: source.base_started_at,
-            segment_count,
+            segment_count: overview.segment_count,
+            start_offset_ms: overview.start_offset_ms,
+            end_offset_ms: overview.end_offset_ms,
+            speaker_count: overview.speaker_count,
             imported_at: source.imported_at,
             created_at: source.created_at,
             updated_at: source.updated_at,
@@ -295,10 +362,93 @@ impl fmt::Debug for ListTranscriptSourcesResponse {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ListTranscriptSegmentsResponse {
-    pub segments: Vec<TranscriptSegmentResponse>,
+    pub items: Vec<TranscriptSegmentResponse>,
+    pub next_cursor: Option<u64>,
+    pub has_more: bool,
+    pub total_count: u64,
+}
+
+impl fmt::Debug for ListTranscriptSegmentsResponse {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ListTranscriptSegmentsResponse")
+            .field("item_count", &self.items.len())
+            .field("next_cursor", &self.next_cursor)
+            .field("has_more", &self.has_more)
+            .field("total_count", &self.total_count)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TranscriptSpeakerGroupResponse {
+    pub speaker_label: String,
+    pub speaker_name: Option<String>,
+    pub has_mixed_names: bool,
+    pub segment_count: u64,
+}
+
+impl fmt::Debug for TranscriptSpeakerGroupResponse {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("TranscriptSpeakerGroupResponse")
+            .field("speaker_label", &"[REDACTED]")
+            .field(
+                "speaker_name",
+                &self.speaker_name.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("has_mixed_names", &self.has_mixed_names)
+            .field("segment_count", &self.segment_count)
+            .finish()
+    }
+}
+
+impl From<TranscriptSpeakerGroup> for TranscriptSpeakerGroupResponse {
+    fn from(group: TranscriptSpeakerGroup) -> Self {
+        Self {
+            speaker_label: group.speaker_label,
+            speaker_name: group.speaker_name,
+            has_mixed_names: group.has_mixed_names,
+            segment_count: group.segment_count,
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ListTranscriptSpeakerGroupsResponse {
+    pub source_id: String,
+    pub items: Vec<TranscriptSpeakerGroupResponse>,
+    pub next_cursor: Option<String>,
+    pub has_more: bool,
+    pub total_count: u64,
+}
+
+impl fmt::Debug for ListTranscriptSpeakerGroupsResponse {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("ListTranscriptSpeakerGroupsResponse")
+            .field("source_id", &self.source_id)
+            .field("item_count", &self.items.len())
+            .field(
+                "next_cursor",
+                &self.next_cursor.as_ref().map(|_| "[REDACTED]"),
+            )
+            .field("has_more", &self.has_more)
+            .field("total_count", &self.total_count)
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RenameSpeakerInSourceResponse {
+    pub source_id: String,
+    pub updated_count: u64,
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize)]
@@ -514,10 +664,26 @@ pub fn get_transcript_source(
 
 #[tauri::command]
 pub fn list_transcript_segments(
-    request: TranscriptSourceRequest,
+    request: ListTranscriptSegmentsRequest,
     service: State<'_, MeetingService>,
 ) -> CommandResult<ListTranscriptSegmentsResponse> {
     list_segments_with_service(&service, request)
+}
+
+#[tauri::command]
+pub fn list_transcript_speaker_groups(
+    request: ListTranscriptSpeakerGroupsRequest,
+    service: State<'_, MeetingService>,
+) -> CommandResult<ListTranscriptSpeakerGroupsResponse> {
+    list_speaker_groups_with_service(&service, request)
+}
+
+#[tauri::command]
+pub fn rename_speaker_in_source(
+    request: RenameSpeakerInSourceRequest,
+    service: State<'_, MeetingService>,
+) -> CommandResult<RenameSpeakerInSourceResponse> {
+    rename_speaker_with_service(&service, request)
 }
 
 #[tauri::command]
@@ -654,10 +820,7 @@ fn complete_import_result(
         cancelled: false,
         duplicate: outcome.duplicate,
         meeting: Some(meeting),
-        source: Some(TranscriptSourceResponse::from_parts(
-            outcome.source.source,
-            segment_count,
-        )),
+        source: Some(TranscriptSourceResponse::from_overview(outcome.source)),
         segment_count,
     })
 }
@@ -672,9 +835,7 @@ fn list_sources_with_service(
         .map(|overviews| ListTranscriptSourcesResponse {
             sources: overviews
                 .into_iter()
-                .map(|overview| {
-                    TranscriptSourceResponse::from_parts(overview.source, overview.segment_count)
-                })
+                .map(TranscriptSourceResponse::from_overview)
                 .collect(),
         })
         .map_err(TranscriptCommandError::from)
@@ -687,26 +848,82 @@ fn get_source_with_service(
     service
         .transcripts()
         .get_source_overview(&request.meeting_id, &request.source_id)
-        .map(|overview| {
-            TranscriptSourceResponse::from_parts(overview.source, overview.segment_count)
-        })
+        .map(TranscriptSourceResponse::from_overview)
         .map_err(TranscriptCommandError::from)
 }
 
 fn list_segments_with_service(
     service: &MeetingService,
-    request: TranscriptSourceRequest,
+    request: ListTranscriptSegmentsRequest,
 ) -> CommandResult<ListTranscriptSegmentsResponse> {
     service
         .transcripts()
-        .list_segments(&request.meeting_id, &request.source_id)
-        .map(|segments| ListTranscriptSegmentsResponse {
-            segments: segments
+        .list_segment_page(
+            &request.meeting_id,
+            &request.source_id,
+            request.cursor,
+            request.limit,
+        )
+        .map(|page| ListTranscriptSegmentsResponse {
+            items: page
+                .items
                 .into_iter()
                 .map(TranscriptSegmentResponse::from)
                 .collect(),
+            next_cursor: page.next_cursor,
+            has_more: page.has_more,
+            total_count: page.total_count,
         })
         .map_err(TranscriptCommandError::from)
+}
+
+fn list_speaker_groups_with_service(
+    service: &MeetingService,
+    request: ListTranscriptSpeakerGroupsRequest,
+) -> CommandResult<ListTranscriptSpeakerGroupsResponse> {
+    let source_id = request.source_id.clone();
+    service
+        .transcripts()
+        .list_speaker_group_page(
+            &request.meeting_id,
+            &request.source_id,
+            request.cursor,
+            request.limit,
+        )
+        .map(|page| ListTranscriptSpeakerGroupsResponse {
+            source_id,
+            items: page
+                .items
+                .into_iter()
+                .map(TranscriptSpeakerGroupResponse::from)
+                .collect(),
+            next_cursor: page.next_cursor,
+            has_more: page.has_more,
+            total_count: page.total_count,
+        })
+        .map_err(TranscriptCommandError::from)
+}
+
+fn rename_speaker_with_service(
+    service: &MeetingService,
+    request: RenameSpeakerInSourceRequest,
+) -> CommandResult<RenameSpeakerInSourceResponse> {
+    let speaker_name = request
+        .speaker_name
+        .ok_or_else(|| TranscriptCommandError::from(TranscriptError::InvalidInput))?;
+    let updated_count = service
+        .transcripts()
+        .rename_speaker_in_source(
+            &request.meeting_id,
+            &request.source_id,
+            &request.speaker_label,
+            speaker_name,
+        )
+        .map_err(TranscriptCommandError::from)?;
+    Ok(RenameSpeakerInSourceResponse {
+        source_id: request.source_id,
+        updated_count,
+    })
 }
 
 fn update_segment_with_service(
@@ -1105,6 +1322,8 @@ mod tests {
         )
         .expect("sources should list");
         assert_eq!(sources.sources.len(), 1);
+        assert_eq!(sources.sources[0].segment_count, 1);
+        assert_eq!(sources.sources[0].speaker_count, 1);
         assert_eq!(
             get_source_with_service(
                 &service,
@@ -1119,13 +1338,32 @@ mod tests {
 
         let segments = list_segments_with_service(
             &service,
-            TranscriptSourceRequest {
+            ListTranscriptSegmentsRequest {
                 meeting_id: meeting_id.clone(),
                 source_id: source_id.clone(),
+                cursor: None,
+                limit: None,
             },
         )
         .expect("segments should list");
-        let segment = &segments.segments[0];
+        assert_eq!(segments.total_count, 1);
+        assert!(!segments.has_more);
+        assert_eq!(segments.next_cursor, None);
+        let segment = &segments.items[0];
+        let speaker_groups = list_speaker_groups_with_service(
+            &service,
+            ListTranscriptSpeakerGroupsRequest {
+                meeting_id: meeting_id.clone(),
+                source_id: source_id.clone(),
+                cursor: None,
+                limit: None,
+            },
+        )
+        .expect("speaker groups should list");
+        assert_eq!(speaker_groups.source_id, source_id);
+        assert_eq!(speaker_groups.total_count, 1);
+        assert_eq!(speaker_groups.items[0].speaker_label, "Speaker One");
+        assert_eq!(speaker_groups.items[0].segment_count, 1);
         let updated = update_segment_with_service(
             &service,
             UpdateTranscriptSegmentRequest {
@@ -1138,6 +1376,32 @@ mod tests {
         )
         .expect("segment should update");
         assert_eq!(updated.revision, segment.revision + 1);
+        let renamed = rename_speaker_with_service(
+            &service,
+            RenameSpeakerInSourceRequest {
+                meeting_id: meeting_id.clone(),
+                source_id: source_id.clone(),
+                speaker_label: "Speaker One".to_string(),
+                speaker_name: Some(Some("Synthetic batch speaker".to_string())),
+            },
+        )
+        .expect("speaker group should rename");
+        assert_eq!(renamed.source_id, source_id);
+        assert_eq!(renamed.updated_count, 1);
+        assert_eq!(
+            rename_speaker_with_service(
+                &service,
+                RenameSpeakerInSourceRequest {
+                    meeting_id: meeting_id.clone(),
+                    source_id: source_id.clone(),
+                    speaker_label: "Speaker One".to_string(),
+                    speaker_name: None,
+                },
+            )
+            .expect_err("omitted speaker name must fail")
+            .code,
+            "transcript_invalid_input"
+        );
 
         assert!(
             delete_source_with_service(
@@ -1187,6 +1451,26 @@ mod tests {
         }))
         .expect("explicit null should be accepted");
         assert_eq!(clear.speaker_name, Some(None));
+
+        let clear_group: RenameSpeakerInSourceRequest = serde_json::from_value(json!({
+            "meetingId": Uuid::new_v4().to_string(),
+            "sourceId": Uuid::new_v4().to_string(),
+            "speakerLabel": "Speaker 1",
+            "speakerName": null
+        }))
+        .expect("explicit group null should be accepted");
+        assert_eq!(clear_group.speaker_name, Some(None));
+
+        assert!(
+            serde_json::from_value::<ListTranscriptSpeakerGroupsRequest>(json!({
+                "meetingId": Uuid::new_v4().to_string(),
+                "sourceId": Uuid::new_v4().to_string(),
+                "cursor": "Speaker 1",
+                "limit": 100,
+                "sourcePath": "private"
+            }))
+            .is_err()
+        );
     }
 
     #[test]
@@ -1279,6 +1563,18 @@ mod tests {
             original_text: Some("Private synthetic corrected transcript".to_string()),
             expected_revision: 1,
         };
+        let rename = RenameSpeakerInSourceRequest {
+            meeting_id: Uuid::new_v4().to_string(),
+            source_id: Uuid::new_v4().to_string(),
+            speaker_label: "Private synthetic group label".to_string(),
+            speaker_name: Some(Some("Private synthetic group name".to_string())),
+        };
+        let speaker_request = ListTranscriptSpeakerGroupsRequest {
+            meeting_id: Uuid::new_v4().to_string(),
+            source_id: Uuid::new_v4().to_string(),
+            cursor: Some("Private synthetic cursor".to_string()),
+            limit: Some(100),
+        };
         let segment = TranscriptSegmentResponse {
             id: Uuid::new_v4().to_string(),
             source_id: Uuid::new_v4().to_string(),
@@ -1305,12 +1601,27 @@ mod tests {
             language: None,
             base_started_at: None,
             segment_count: 1,
+            start_offset_ms: None,
+            end_offset_ms: None,
+            speaker_count: 1,
             imported_at: "2026-08-06T00:00:00.000Z".to_string(),
             created_at: "2026-08-06T00:00:00.000Z".to_string(),
             updated_at: "2026-08-06T00:00:00.000Z".to_string(),
         };
         let source_list = ListTranscriptSourcesResponse {
             sources: vec![source.clone()],
+        };
+        let speaker_list = ListTranscriptSpeakerGroupsResponse {
+            source_id: source.id.clone(),
+            items: vec![TranscriptSpeakerGroupResponse {
+                speaker_label: "Private synthetic response label".to_string(),
+                speaker_name: Some("Private synthetic response name".to_string()),
+                has_mixed_names: false,
+                segment_count: 1,
+            }],
+            next_cursor: Some("Private synthetic response cursor".to_string()),
+            has_more: true,
+            total_count: 2,
         };
         let import = TranscriptImportResult {
             cancelled: false,
@@ -1330,17 +1641,26 @@ mod tests {
             source: Some(source),
             segment_count: 1,
         };
-        let debug = format!("{paste:?} {update:?} {segment:?} {source_list:?} {import:?}");
+        let debug = format!(
+            "{paste:?} {update:?} {rename:?} {speaker_request:?} {segment:?} \
+             {source_list:?} {speaker_list:?} {import:?}"
+        );
         for private in [
             "Private synthetic title",
             "Private synthetic transcript",
             "Private synthetic display",
             "Private synthetic speaker",
             "Private synthetic corrected transcript",
+            "Private synthetic group label",
+            "Private synthetic group name",
+            "Private synthetic cursor",
             "Private synthetic label",
             "Private synthetic response speaker",
             "Private synthetic response transcript",
             "Private synthetic translation",
+            "Private synthetic response label",
+            "Private synthetic response name",
+            "Private synthetic response cursor",
             "Private synthetic source display",
             "private-synthetic-file.txt",
             "Private synthetic import title",

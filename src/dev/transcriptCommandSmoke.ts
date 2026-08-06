@@ -17,6 +17,7 @@ const restartTitlePrefix = "Synthetic transcript command smoke restart";
 const selectedFileTitlePrefix = "Synthetic transcript file smoke";
 const cancelledTitlePrefix = "Synthetic transcript cancelled smoke";
 const primaryLanguage = "en-AU";
+let smokeCheckpoint = "startup";
 
 interface SmokeState {
   runId: string;
@@ -29,6 +30,7 @@ export async function runTranscriptCommandSmoke(): Promise<void> {
   let state = readState();
   try {
     if (state?.phase === "restart") {
+      smokeCheckpoint = "restart-verification";
       await verifyRestartAndCleanUp(state);
       clearState();
       mark("passed");
@@ -47,6 +49,7 @@ export async function runTranscriptCommandSmoke(): Promise<void> {
       selectedFileMeetingId: null,
     };
     writeState(state);
+    smokeCheckpoint = "first-pass";
     await runFirstPass(state);
   } catch (error: unknown) {
     if (state !== null) {
@@ -63,6 +66,7 @@ export async function runTranscriptCommandSmoke(): Promise<void> {
 
 async function runFirstPass(state: SmokeState): Promise<void> {
   const titles = titlesFor(state.runId);
+  smokeCheckpoint = "import-policy";
   const policy = await transcriptApi.getImportPolicy();
   requireCondition(policy.allowedExtensions.join(",") === "txt,srt,vtt");
   requireCondition(policy.maxPasteBytes === 2 * 1024 * 1024);
@@ -70,6 +74,7 @@ async function runFirstPass(state: SmokeState): Promise<void> {
   requireCondition(policy.maxSegmentsPerSource === 20_000);
   requireCondition(policy.maxSegmentBytes === 64 * 1024);
 
+  smokeCheckpoint = "create-pasted-transcript";
   const pasted = requireCompleted(
     await transcriptApi.createMeetingFromPaste({
       title: titles.primary,
@@ -88,13 +93,16 @@ async function runFirstPass(state: SmokeState): Promise<void> {
   requireCondition(pasted.source.sourceType === "pasted_text");
   requireCondition(pasted.segmentCount === 2);
 
+  smokeCheckpoint = "cancel-picker";
   mark("cancel-picker");
   const cancelled = await transcriptApi.selectTranscriptAndCreateMeeting({
     title: titles.cancelled,
     primaryLanguage,
     language: primaryLanguage,
   });
+  smokeCheckpoint = "cancel-result";
   requireCondition(cancelled.cancelled);
+  smokeCheckpoint = "cancel-empty-meeting";
   const cancelledMeetings = (await meetingApi.list()).meetings.filter(
     (meeting) => meeting.title === titles.cancelled,
   );
@@ -103,6 +111,7 @@ async function runFirstPass(state: SmokeState): Promise<void> {
   }
   requireCondition(cancelledMeetings.length === 0);
 
+  smokeCheckpoint = "select-txt";
   mark("select-txt");
   const selectedTxt = requireCompleted(
     await transcriptApi.selectTranscriptAndCreateMeeting({
@@ -116,6 +125,7 @@ async function runFirstPass(state: SmokeState): Promise<void> {
   requireCondition(selectedTxt.meeting.status === "draft");
   requireCondition(selectedTxt.source.sourceType === "imported_txt");
 
+  smokeCheckpoint = "select-srt";
   mark("select-srt");
   const selectedSrt = requireCompleted(
     await transcriptApi.selectAndAddToMeeting({
@@ -125,11 +135,11 @@ async function runFirstPass(state: SmokeState): Promise<void> {
   );
   requireCondition(selectedSrt.source.sourceType === "imported_srt");
   const srtSegment = requireTimedSegment(
-    (await transcriptApi.listSegments(pasted.meeting.id, selectedSrt.source.id))
-      .segments,
+    await loadAllSegments(pasted.meeting.id, selectedSrt.source.id),
   );
   requireCondition(srtSegment.speakerLabel === "Speaker SRT");
 
+  smokeCheckpoint = "select-vtt";
   mark("select-vtt");
   const selectedVtt = requireCompleted(
     await transcriptApi.selectAndAddToMeeting({
@@ -139,11 +149,11 @@ async function runFirstPass(state: SmokeState): Promise<void> {
   );
   requireCondition(selectedVtt.source.sourceType === "imported_vtt");
   const vttSegment = requireTimedSegment(
-    (await transcriptApi.listSegments(pasted.meeting.id, selectedVtt.source.id))
-      .segments,
+    await loadAllSegments(pasted.meeting.id, selectedVtt.source.id),
   );
   requireCondition(vttSegment.speakerLabel === "Speaker VTT");
 
+  smokeCheckpoint = "verify-imports";
   const sources = await transcriptApi.listSources(pasted.meeting.id);
   requireCondition(sources.sources.length === 3);
   for (const source of sources.sources) {
@@ -152,12 +162,13 @@ async function runFirstPass(state: SmokeState): Promise<void> {
     requireCondition(fetched.meetingId === pasted.meeting.id);
   }
 
-  const pastedSegments = await transcriptApi.listSegments(
+  smokeCheckpoint = "segment-correction";
+  const pastedSegments = await loadAllSegments(
     pasted.meeting.id,
     pasted.source.id,
   );
-  requireCondition(pastedSegments.segments.length === 2);
-  const original = requireFirst(pastedSegments.segments);
+  requireCondition(pastedSegments.length === 2);
+  const original = requireFirst(pastedSegments);
   const corrected = await transcriptApi.updateSegment({
     meetingId: pasted.meeting.id,
     segmentId: original.id,
@@ -170,6 +181,25 @@ async function runFirstPass(state: SmokeState): Promise<void> {
   requireCondition(corrected.originalText === "Corrected synthetic point");
   await expectRevisionConflict(pasted.meeting.id, original);
 
+  smokeCheckpoint = "speaker-batch-rename";
+  const speakerGroups = await transcriptApi.listSpeakerGroups(
+    pasted.meeting.id,
+    pasted.source.id,
+    { limit: 100 },
+  );
+  const batchGroup = speakerGroups.items.find(
+    (group) => group.speakerLabel === "Speaker 2",
+  );
+  requireCondition(batchGroup?.segmentCount === 1);
+  const renamed = await transcriptApi.renameSpeakerInSource({
+    meetingId: pasted.meeting.id,
+    sourceId: pasted.source.id,
+    speakerLabel: "Speaker 2",
+    speakerName: "Synthetic Batch Speaker",
+  });
+  requireCondition(renamed.updatedCount === 1);
+
+  smokeCheckpoint = "source-delete";
   const deleted = await transcriptApi.deleteSource(
     pasted.meeting.id,
     selectedSrt.source.id,
@@ -181,6 +211,7 @@ async function runFirstPass(state: SmokeState): Promise<void> {
     ),
   );
 
+  smokeCheckpoint = "prepare-restart";
   const updated = await meetingApi.update({
     id: pasted.meeting.id,
     title: titles.restart,
@@ -205,12 +236,20 @@ async function verifyRestartAndCleanUp(state: SmokeState): Promise<void> {
   requireCondition(sources.length === 2);
   const pasted = requireSource(sources, "pasted_text");
   requireSource(sources, "imported_vtt");
-  const segments = await transcriptApi.listSegments(persisted.id, pasted.id);
+  const segments = await loadAllSegments(persisted.id, pasted.id);
   requireCondition(
-    segments.segments.some(
+    segments.some(
       (segment) =>
         segment.speakerName === "Synthetic Speaker" &&
         segment.originalText === "Corrected synthetic point" &&
+        segment.revision === 2,
+    ),
+  );
+  requireCondition(
+    segments.some(
+      (segment) =>
+        segment.speakerLabel === "Speaker 2" &&
+        segment.speakerName === "Synthetic Batch Speaker" &&
         segment.revision === 2,
     ),
   );
@@ -219,8 +258,7 @@ async function verifyRestartAndCleanUp(state: SmokeState): Promise<void> {
     .sources;
   const txt = requireSource(fileSources, "imported_txt");
   requireCondition(
-    (await transcriptApi.listSegments(selectedFileMeeting.id, txt.id)).segments
-      .length > 0,
+    (await loadAllSegments(selectedFileMeeting.id, txt.id)).length > 0,
   );
 
   await deleteOwnedMeeting(persisted, titles.restart);
@@ -331,6 +369,29 @@ function requireSource(
   return source;
 }
 
+async function loadAllSegments(
+  meetingId: string,
+  sourceId: string,
+): Promise<TranscriptSegmentResponse[]> {
+  const segments: TranscriptSegmentResponse[] = [];
+  let cursor: number | null = null;
+  let expectedTotal: number | null = null;
+  do {
+    const page = await transcriptApi.listSegments(meetingId, sourceId, {
+      cursor,
+      limit: 100,
+    });
+    expectedTotal ??= page.totalCount;
+    requireCondition(page.totalCount === expectedTotal);
+    segments.push(...page.items);
+    cursor = page.nextCursor;
+    if (!page.hasMore) break;
+    requireCondition(cursor !== null);
+  } while (segments.length <= 20_000);
+  requireCondition(expectedTotal === segments.length);
+  return segments;
+}
+
 function titlesFor(runId: string) {
   return {
     primary: `${primaryTitlePrefix} ${runId}`,
@@ -393,7 +454,7 @@ function safeErrorCode(error: unknown): string {
   if (error instanceof TranscriptApiError || error instanceof MeetingApiError) {
     return error.code;
   }
-  return "unexpected";
+  return smokeCheckpoint;
 }
 
 function requireCondition(

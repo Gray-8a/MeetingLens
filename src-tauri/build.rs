@@ -17,6 +17,8 @@ const APP_COMMANDS: &[&str] = &[
     "list_transcript_sources",
     "get_transcript_source",
     "list_transcript_segments",
+    "list_transcript_speaker_groups",
+    "rename_speaker_in_source",
     "update_transcript_segment",
     "delete_transcript_source",
     "get_transcript_import_policy",

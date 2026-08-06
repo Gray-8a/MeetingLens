@@ -5,7 +5,8 @@ use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 use super::transcript_error::{TranscriptError, TranscriptResult};
 use super::transcript_model::{
     NewTranscriptSegment, NewTranscriptSource, SummaryInputSegment, TranscriptSegment,
-    TranscriptSource, TranscriptSourceOverview, TranscriptSourceType,
+    TranscriptSegmentPage, TranscriptSource, TranscriptSourceOverview, TranscriptSourceType,
+    TranscriptSpeakerGroup, TranscriptSpeakerGroupPage,
 };
 
 const SOURCE_COLUMNS: &str = "
@@ -30,7 +31,26 @@ const SOURCE_OVERVIEW_COLUMNS: &str = "
         FROM transcript_segments AS segment
         WHERE segment.meeting_id = source.meeting_id
           AND segment.source_id = source.id
-    ) AS segment_count
+    ) AS segment_count,
+    (
+        SELECT MIN(segment.start_offset_ms)
+        FROM transcript_segments AS segment
+        WHERE segment.meeting_id = source.meeting_id
+          AND segment.source_id = source.id
+    ) AS start_offset_ms,
+    (
+        SELECT MAX(segment.end_offset_ms)
+        FROM transcript_segments AS segment
+        WHERE segment.meeting_id = source.meeting_id
+          AND segment.source_id = source.id
+    ) AS end_offset_ms,
+    (
+        SELECT COUNT(DISTINCT segment.speaker_label)
+        FROM transcript_segments AS segment
+        WHERE segment.meeting_id = source.meeting_id
+          AND segment.source_id = source.id
+          AND segment.speaker_label IS NOT NULL
+    ) AS speaker_count
 ";
 
 pub(crate) fn find_source_by_hash(
@@ -231,6 +251,152 @@ pub(crate) fn list_segments(
         .map_err(TranscriptError::from)
 }
 
+pub(crate) fn list_segment_page(
+    connection: &Connection,
+    meeting_id: &str,
+    source_id: &str,
+    cursor: Option<u64>,
+    limit: usize,
+) -> TranscriptResult<TranscriptSegmentPage> {
+    let total_count = connection
+        .query_row(
+            "SELECT COUNT(*) FROM transcript_segments WHERE meeting_id = ?1 AND source_id = ?2",
+            params![meeting_id, source_id],
+            |row| nonnegative_integer(row, 0),
+        )
+        .map_err(TranscriptError::from)?;
+    let query_limit = sqlite_integer(
+        u64::try_from(limit)
+            .map_err(|_| TranscriptError::InvalidInput)?
+            .checked_add(1)
+            .ok_or(TranscriptError::InvalidInput)?,
+    )?;
+    let mut items = match cursor {
+        Some(cursor) => {
+            let cursor = sqlite_integer(cursor)?;
+            let sql = format!(
+                "SELECT {SEGMENT_COLUMNS} FROM transcript_segments \
+                 WHERE meeting_id = ?1 AND source_id = ?2 AND ordinal > ?3 \
+                 ORDER BY ordinal LIMIT ?4"
+            );
+            let mut statement = connection.prepare(&sql).map_err(TranscriptError::from)?;
+            statement
+                .query_map(
+                    params![meeting_id, source_id, cursor, query_limit],
+                    segment_from_row,
+                )
+                .map_err(TranscriptError::from)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(TranscriptError::from)?
+        }
+        None => {
+            let sql = format!(
+                "SELECT {SEGMENT_COLUMNS} FROM transcript_segments \
+                 WHERE meeting_id = ?1 AND source_id = ?2 \
+                 ORDER BY ordinal LIMIT ?3"
+            );
+            let mut statement = connection.prepare(&sql).map_err(TranscriptError::from)?;
+            statement
+                .query_map(
+                    params![meeting_id, source_id, query_limit],
+                    segment_from_row,
+                )
+                .map_err(TranscriptError::from)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(TranscriptError::from)?
+        }
+    };
+    let has_more = items.len() > limit;
+    if has_more {
+        items.truncate(limit);
+    }
+    let next_cursor = has_more
+        .then(|| items.last().map(|segment| segment.ordinal))
+        .flatten();
+    Ok(TranscriptSegmentPage {
+        items,
+        next_cursor,
+        has_more,
+        total_count,
+    })
+}
+
+pub(crate) fn list_speaker_group_page(
+    connection: &Connection,
+    meeting_id: &str,
+    source_id: &str,
+    cursor: Option<&str>,
+    limit: usize,
+) -> TranscriptResult<TranscriptSpeakerGroupPage> {
+    let total_count = connection
+        .query_row(
+            "SELECT COUNT(DISTINCT speaker_label) FROM transcript_segments \
+             WHERE meeting_id = ?1 AND source_id = ?2 AND speaker_label IS NOT NULL",
+            params![meeting_id, source_id],
+            |row| nonnegative_integer(row, 0),
+        )
+        .map_err(TranscriptError::from)?;
+    let query_limit = sqlite_integer(
+        u64::try_from(limit)
+            .map_err(|_| TranscriptError::InvalidInput)?
+            .checked_add(1)
+            .ok_or(TranscriptError::InvalidInput)?,
+    )?;
+    let columns = "
+        speaker_label,
+        MIN(speaker_name) AS minimum_name,
+        MAX(speaker_name) AS maximum_name,
+        SUM(CASE WHEN speaker_name IS NULL THEN 1 ELSE 0 END) AS null_name_count,
+        COUNT(*) AS segment_count
+    ";
+    let mut items = match cursor {
+        Some(cursor) => {
+            let sql = format!(
+                "SELECT {columns} FROM transcript_segments \
+                 WHERE meeting_id = ?1 AND source_id = ?2 \
+                   AND speaker_label IS NOT NULL AND speaker_label > ?3 \
+                 GROUP BY speaker_label ORDER BY speaker_label LIMIT ?4"
+            );
+            let mut statement = connection.prepare(&sql).map_err(TranscriptError::from)?;
+            statement
+                .query_map(params![meeting_id, source_id, cursor, query_limit], |row| {
+                    speaker_group_from_row(row)
+                })
+                .map_err(TranscriptError::from)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(TranscriptError::from)?
+        }
+        None => {
+            let sql = format!(
+                "SELECT {columns} FROM transcript_segments \
+                 WHERE meeting_id = ?1 AND source_id = ?2 AND speaker_label IS NOT NULL \
+                 GROUP BY speaker_label ORDER BY speaker_label LIMIT ?3"
+            );
+            let mut statement = connection.prepare(&sql).map_err(TranscriptError::from)?;
+            statement
+                .query_map(params![meeting_id, source_id, query_limit], |row| {
+                    speaker_group_from_row(row)
+                })
+                .map_err(TranscriptError::from)?
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(TranscriptError::from)?
+        }
+    };
+    let has_more = items.len() > limit;
+    if has_more {
+        items.truncate(limit);
+    }
+    let next_cursor = has_more
+        .then(|| items.last().map(|group| group.speaker_label.clone()))
+        .flatten();
+    Ok(TranscriptSpeakerGroupPage {
+        items,
+        next_cursor,
+        has_more,
+        total_count,
+    })
+}
+
 pub(crate) fn update_segment(
     transaction: &Transaction<'_>,
     meeting_id: &str,
@@ -279,6 +445,41 @@ pub(crate) fn update_segment(
         )
         .map_err(TranscriptError::from)?;
     get_segment(transaction, meeting_id, segment_id)
+}
+
+pub(crate) fn rename_speaker_in_source(
+    transaction: &Transaction<'_>,
+    meeting_id: &str,
+    source_id: &str,
+    speaker_label: &str,
+    speaker_name: Option<&str>,
+) -> TranscriptResult<u64> {
+    let changed = transaction
+        .execute(
+            "
+            UPDATE transcript_segments
+            SET speaker_name = ?4,
+                revision = revision + 1,
+                corrected_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE meeting_id = ?1
+              AND source_id = ?2
+              AND speaker_label = ?3
+              AND speaker_name IS NOT ?4
+            ",
+            params![meeting_id, source_id, speaker_label, speaker_name],
+        )
+        .map_err(TranscriptError::from)?;
+    if changed > 0 {
+        transaction
+            .execute(
+                "UPDATE transcript_sources \
+                 SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') \
+                 WHERE meeting_id = ?1 AND id = ?2",
+                params![meeting_id, source_id],
+            )
+            .map_err(TranscriptError::from)?;
+    }
+    u64::try_from(changed).map_err(|_| TranscriptError::PersistenceFailed)
 }
 
 pub(crate) fn delete_source(
@@ -378,6 +579,25 @@ fn source_overview_from_row(row: &Row<'_>) -> rusqlite::Result<TranscriptSourceO
     Ok(TranscriptSourceOverview {
         source: source_from_row(row)?,
         segment_count: nonnegative_integer(row, 13)?,
+        start_offset_ms: optional_nonnegative_integer(row, 14)?,
+        end_offset_ms: optional_nonnegative_integer(row, 15)?,
+        speaker_count: nonnegative_integer(row, 16)?,
+    })
+}
+
+fn speaker_group_from_row(row: &Row<'_>) -> rusqlite::Result<TranscriptSpeakerGroup> {
+    let speaker_label = row.get(0)?;
+    let minimum_name = row.get::<_, Option<String>>(1)?;
+    let maximum_name = row.get::<_, Option<String>>(2)?;
+    let null_name_count = nonnegative_integer(row, 3)?;
+    let segment_count = nonnegative_integer(row, 4)?;
+    let has_mixed_names =
+        minimum_name != maximum_name || (null_name_count > 0 && null_name_count < segment_count);
+    Ok(TranscriptSpeakerGroup {
+        speaker_label,
+        speaker_name: (!has_mixed_names).then_some(minimum_name).flatten(),
+        has_mixed_names,
+        segment_count,
     })
 }
 
@@ -611,5 +831,167 @@ mod tests {
             build_summary_input(&connection, MEETING_A, &[SOURCE_A.to_string()]),
             Err(TranscriptError::InputInsufficient)
         );
+    }
+
+    #[test]
+    fn repository_pages_segments_and_speaker_groups_and_renames_only_the_target_group() {
+        let mut connection = database();
+        let transaction = connection.transaction().expect("transaction should begin");
+        insert_source(&transaction, &source(SOURCE_A, MEETING_A, 'c'))
+            .expect("source A should insert");
+        insert_source(&transaction, &source(SOURCE_B, MEETING_A, 'd'))
+            .expect("source B should insert");
+        let mut segments = (0..5)
+            .map(|ordinal| {
+                segment(
+                    &format!("00000000-0000-4000-8000-{ordinal:012}"),
+                    MEETING_A,
+                    SOURCE_A,
+                    ordinal,
+                    true,
+                )
+            })
+            .collect::<Vec<_>>();
+        segments[0].speaker_label = Some("Speaker A".to_string());
+        segments[0].speaker_name = Some("Old name".to_string());
+        segments[0].start_offset_ms = Some(1_000);
+        segments[0].end_offset_ms = Some(2_000);
+        segments[1].speaker_label = Some("Speaker A".to_string());
+        segments[1].speaker_name = None;
+        segments[1].start_offset_ms = Some(2_000);
+        segments[1].end_offset_ms = Some(3_000);
+        segments[2].speaker_label = Some("Speaker B".to_string());
+        segments[2].speaker_name = Some("Stable name".to_string());
+        segments[2].start_offset_ms = Some(3_000);
+        segments[2].end_offset_ms = Some(4_000);
+        segments[3].speaker_label = Some("Speaker C".to_string());
+        segments[4].speaker_label = Some("Speaker D".to_string());
+        insert_segments(&transaction, &segments).expect("source A segments should insert");
+        let mut other = segment(SEGMENT_B, MEETING_A, SOURCE_B, 0, true);
+        other.speaker_label = Some("Speaker A".to_string());
+        insert_segments(&transaction, &[other]).expect("source B segment should insert");
+        transaction.commit().expect("transaction should commit");
+
+        let overview =
+            get_source_overview(&connection, MEETING_A, SOURCE_A).expect("overview should load");
+        assert_eq!(overview.segment_count, 5);
+        assert_eq!(overview.start_offset_ms, Some(1_000));
+        assert_eq!(overview.end_offset_ms, Some(4_000));
+        assert_eq!(overview.speaker_count, 4);
+
+        let first = list_segment_page(&connection, MEETING_A, SOURCE_A, None, 2)
+            .expect("first segment page should load");
+        assert_eq!(first.total_count, 5);
+        assert_eq!(
+            first
+                .items
+                .iter()
+                .map(|item| item.ordinal)
+                .collect::<Vec<_>>(),
+            [0, 1]
+        );
+        assert!(first.has_more);
+        assert_eq!(first.next_cursor, Some(1));
+        let second = list_segment_page(&connection, MEETING_A, SOURCE_A, first.next_cursor, 2)
+            .expect("second segment page should load");
+        assert_eq!(
+            second
+                .items
+                .iter()
+                .map(|item| item.ordinal)
+                .collect::<Vec<_>>(),
+            [2, 3]
+        );
+        assert!(second.has_more);
+        let final_page = list_segment_page(&connection, MEETING_A, SOURCE_A, second.next_cursor, 2)
+            .expect("final segment page should load");
+        assert_eq!(final_page.items[0].ordinal, 4);
+        assert!(!final_page.has_more);
+        assert_eq!(final_page.next_cursor, None);
+
+        let groups = list_speaker_group_page(&connection, MEETING_A, SOURCE_A, None, 2)
+            .expect("first speaker page should load");
+        assert_eq!(groups.total_count, 4);
+        assert_eq!(groups.items.len(), 2);
+        assert_eq!(groups.items[0].speaker_label, "Speaker A");
+        assert_eq!(groups.items[0].segment_count, 2);
+        assert!(groups.items[0].has_mixed_names);
+        assert_eq!(groups.items[0].speaker_name, None);
+        assert_eq!(groups.next_cursor.as_deref(), Some("Speaker B"));
+        let remaining = list_speaker_group_page(
+            &connection,
+            MEETING_A,
+            SOURCE_A,
+            groups.next_cursor.as_deref(),
+            2,
+        )
+        .expect("second speaker page should load");
+        assert_eq!(
+            remaining
+                .items
+                .iter()
+                .map(|group| group.speaker_label.as_str())
+                .collect::<Vec<_>>(),
+            ["Speaker C", "Speaker D"]
+        );
+        assert!(!remaining.has_more);
+
+        let transaction = connection.transaction().expect("rename should begin");
+        assert_eq!(
+            rename_speaker_in_source(
+                &transaction,
+                MEETING_A,
+                SOURCE_A,
+                "Speaker A",
+                Some("Confirmed name")
+            )
+            .expect("speaker should rename"),
+            2
+        );
+        transaction.commit().expect("rename should commit");
+        let renamed =
+            list_segments(&connection, MEETING_A, SOURCE_A).expect("renamed segments should list");
+        for segment in &renamed[..2] {
+            assert_eq!(segment.speaker_name.as_deref(), Some("Confirmed name"));
+            assert_eq!(segment.revision, 2);
+            assert!(segment.corrected_at.is_some());
+        }
+        assert_eq!(
+            list_segments(&connection, MEETING_A, SOURCE_B).expect("other source should list")[0]
+                .speaker_name,
+            None
+        );
+
+        let transaction = connection
+            .transaction()
+            .expect("idempotent rename should begin");
+        assert_eq!(
+            rename_speaker_in_source(
+                &transaction,
+                MEETING_A,
+                SOURCE_A,
+                "Speaker A",
+                Some("Confirmed name")
+            )
+            .expect("idempotent rename should succeed"),
+            0
+        );
+        transaction
+            .commit()
+            .expect("idempotent rename should commit");
+
+        let transaction = connection.transaction().expect("clear should begin");
+        assert_eq!(
+            rename_speaker_in_source(&transaction, MEETING_A, SOURCE_A, "Speaker A", None)
+                .expect("speaker names should clear"),
+            2
+        );
+        transaction.commit().expect("clear should commit");
+        for segment in &list_segments(&connection, MEETING_A, SOURCE_A)
+            .expect("cleared segments should list")[..2]
+        {
+            assert_eq!(segment.speaker_name, None);
+            assert_eq!(segment.revision, 3);
+        }
     }
 }

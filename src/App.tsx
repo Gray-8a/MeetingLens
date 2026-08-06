@@ -21,6 +21,8 @@ import { LiveMeetingPage } from "./pages/LiveMeetingPage";
 import { MeetingDetailPage } from "./pages/MeetingDetailPage";
 import { NewMeetingPage } from "./pages/NewMeetingPage";
 import { SettingsPage, type LocalServiceStatus } from "./pages/SettingsPage";
+import { SummaryModeInputPage } from "./pages/SummaryModeInputPage";
+import { TranscriptWorkspacePage } from "./pages/TranscriptWorkspacePage";
 
 export interface AppProps {
   services?: AppServices;
@@ -128,7 +130,8 @@ function MeetingLensApp({ services }: { services: AppServices }) {
             active={
               route.name === "history" ||
               route.name === "meeting" ||
-              route.name === "live"
+              route.name === "live" ||
+              route.name === "transcript"
             }
             label={t("app.nav.history")}
             mark="HS"
@@ -201,7 +204,9 @@ function MeetingLensApp({ services }: { services: AppServices }) {
                     : "warning"
               }
             />
-            {(route.name === "meeting" || route.name === "live") &&
+            {(route.name === "meeting" ||
+              route.name === "live" ||
+              route.name === "transcript") &&
             meetingStatus ? (
               <StatusBadge status={meetingStatus} />
             ) : null}
@@ -238,6 +243,8 @@ function RouteContent({
   switch (route.name) {
     case "home":
       return <HomePage onDatabaseStatus={onDatabaseStatus} />;
+    case "summary":
+      return <SummaryModeInputPage onDatabaseStatus={onDatabaseStatus} />;
     case "new":
       return <NewMeetingPage />;
     case "history":
@@ -253,6 +260,14 @@ function RouteContent({
     case "live":
       return (
         <LiveMeetingPage
+          meetingId={route.meetingId}
+          onDatabaseStatus={onDatabaseStatus}
+          onMeetingStatus={onMeetingStatus}
+        />
+      );
+    case "transcript":
+      return (
+        <TranscriptWorkspacePage
           meetingId={route.meetingId}
           onDatabaseStatus={onDatabaseStatus}
           onMeetingStatus={onMeetingStatus}
