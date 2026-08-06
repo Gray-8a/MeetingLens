@@ -1,5 +1,6 @@
 import type { DocumentErrorCode } from "../api/document";
 import type { SecretErrorCode } from "../api/secret";
+import type { TranscriptErrorCode } from "../api/transcript";
 import type { SidecarErrorCode } from "../lib/sidecar";
 import type { ProviderErrorCode } from "../providers/errors";
 import i18n from ".";
@@ -61,6 +62,33 @@ const sidecarErrorKeys = {
   internal_error: "error.sidecar.internal_error",
 } as const satisfies Record<SidecarErrorCode, string>;
 
+const transcriptErrorKeys = {
+  transcript_already_imported: "error.transcript.transcript_already_imported",
+  transcript_empty: "error.transcript.transcript_empty",
+  transcript_input_insufficient:
+    "error.transcript.transcript_input_insufficient",
+  transcript_invalid_encoding: "error.transcript.transcript_invalid_encoding",
+  transcript_invalid_format: "error.transcript.transcript_invalid_format",
+  transcript_invalid_input: "error.transcript.transcript_invalid_input",
+  transcript_invalid_state: "error.transcript.transcript_invalid_state",
+  transcript_invalid_timestamp: "error.transcript.transcript_invalid_timestamp",
+  transcript_persistence_failed:
+    "error.transcript.transcript_persistence_failed",
+  transcript_revision_conflict: "error.transcript.transcript_revision_conflict",
+  transcript_segment_limit_exceeded:
+    "error.transcript.transcript_segment_limit_exceeded",
+  transcript_segment_not_found: "error.transcript.transcript_segment_not_found",
+  transcript_segment_too_large: "error.transcript.transcript_segment_too_large",
+  transcript_source_in_use: "error.transcript.transcript_source_in_use",
+  transcript_source_not_found: "error.transcript.transcript_source_not_found",
+  transcript_too_large: "error.transcript.transcript_too_large",
+  transcript_picker_unavailable:
+    "error.transcript.transcript_picker_unavailable",
+  meeting_not_found: "error.transcript.meeting_not_found",
+  meeting_invalid_state: "error.transcript.meeting_invalid_state",
+  internal_error: "error.transcript.internal_error",
+} as const satisfies Record<TranscriptErrorCode, string>;
+
 export function documentErrorMessage(code: DocumentErrorCode): string {
   return i18n.t(documentErrorKeys[code]);
 }
@@ -75,4 +103,8 @@ export function providerErrorMessage(code: ProviderErrorCode): string {
 
 export function sidecarErrorMessage(code: SidecarErrorCode): string {
   return i18n.t(sidecarErrorKeys[code]);
+}
+
+export function transcriptErrorMessage(code: TranscriptErrorCode): string {
+  return i18n.t(transcriptErrorKeys[code]);
 }

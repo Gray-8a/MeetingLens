@@ -348,6 +348,28 @@
     "guidesBody": "仓库中包含结构一致的简体中文和英文开发预览指南。"
   },
   "error": {
+    "transcript": {
+      "transcript_already_imported": "此转录已添加到该会议。",
+      "transcript_empty": "转录内容为空。",
+      "transcript_input_insufficient": "转录中没有可用的最终片段。",
+      "transcript_invalid_encoding": "转录必须使用受支持的 UTF-8 文本编码。",
+      "transcript_invalid_format": "转录格式无效。",
+      "transcript_invalid_input": "转录信息无效。",
+      "transcript_invalid_state": "当前状态下无法更改转录。",
+      "transcript_invalid_timestamp": "转录包含无效时间戳。",
+      "transcript_persistence_failed": "无法保存转录。",
+      "transcript_revision_conflict": "此转录片段已发生变化，请刷新后重试。",
+      "transcript_segment_limit_exceeded": "转录片段数量超过限制。",
+      "transcript_segment_not_found": "未找到此转录片段。",
+      "transcript_segment_too_large": "某个转录片段超过大小限制。",
+      "transcript_source_in_use": "此转录来源当前正在使用。",
+      "transcript_source_not_found": "未找到此转录来源。",
+      "transcript_too_large": "转录内容超过大小限制。",
+      "transcript_picker_unavailable": "无法打开转录文件选择器。",
+      "meeting_not_found": "未找到此会议。",
+      "meeting_invalid_state": "当前会议状态下无法执行此操作。",
+      "internal_error": "MeetingLens 无法完成此操作。"
+    },
     "document": {
       "document_invalid_type": "不支持此文件类型。",
       "document_type_mismatch": "文件内容与文件名类型不一致。",

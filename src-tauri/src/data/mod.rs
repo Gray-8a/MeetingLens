@@ -17,6 +17,7 @@ mod transcript_model;
 mod transcript_parser;
 mod transcript_repository;
 mod transcript_service;
+mod transcript_workflow;
 
 pub use document_error::{DocumentError, DocumentResult};
 pub use document_model::{
@@ -34,6 +35,11 @@ pub use transcript_error::{TranscriptError, TranscriptResult};
 pub use transcript_model::{
     PASTED_TEXT_MAX_BYTES, SummaryInputSegment, TRANSCRIPT_FILE_MAX_BYTES, TRANSCRIPT_MAX_SEGMENTS,
     TRANSCRIPT_SEGMENT_MAX_BYTES, TranscriptImportInput, TranscriptImportOutcome, TranscriptPolicy,
-    TranscriptSegment, TranscriptSource, TranscriptSourceType, UpdateTranscriptSegment,
+    TranscriptSegment, TranscriptSource, TranscriptSourceOverview, TranscriptSourceType,
+    UpdateTranscriptSegment,
 };
 pub use transcript_service::TranscriptService;
+pub use transcript_workflow::{
+    TranscriptImportWorkflow, TranscriptImportWorkflowOutcome, TranscriptWorkflowError,
+    TranscriptWorkflowResult,
+};

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-select-transcript-and-create-meeting"
+description = "Enables the select_transcript_and_create_meeting command without any pre-configured scope."
+commands.allow = ["select_transcript_and_create_meeting"]
+
+[[permission]]
+identifier = "deny-select-transcript-and-create-meeting"
+description = "Denies the select_transcript_and_create_meeting command without any pre-configured scope."
+commands.deny = ["select_transcript_and_create_meeting"]

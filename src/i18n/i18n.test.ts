@@ -7,6 +7,7 @@ import detailSource from "../pages/MeetingDetailPage.tsx?raw";
 import newSource from "../pages/NewMeetingPage.tsx?raw";
 import settingsSource from "../pages/SettingsPage.tsx?raw";
 import { MeetingApiError } from "../api/meeting";
+import { transcriptErrorMessage } from "./errors";
 import { meetingErrorMessage, statusLabel, uiError } from "../lib/presentation";
 import i18n, {
   changeUiLocale,
@@ -106,6 +107,16 @@ describe("MeetingLens i18n foundation", () => {
     expect(error.code).toBe("internal_error");
     expect(meetingErrorMessage(error.code)).toBe(
       "MeetingLens 无法完成此操作。",
+    );
+  });
+
+  it("localizes stable transcript revision and picker errors", async () => {
+    await i18n.changeLanguage("zh-CN");
+    expect(transcriptErrorMessage("transcript_revision_conflict")).toBe(
+      "此转录片段已发生变化，请刷新后重试。",
+    );
+    expect(transcriptErrorMessage("transcript_picker_unavailable")).toBe(
+      "无法打开转录文件选择器。",
     );
   });
 

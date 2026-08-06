@@ -36,3 +36,19 @@ permissions = [
   "allow-set-secret",
   "allow-delete-secret",
 ]
+
+[[set]]
+identifier = "transcript-management-commands"
+description = "Allows the local main window to import and manage transcript data through the Rust trust boundary."
+permissions = [
+  "allow-create-meeting-from-pasted-transcript",
+  "allow-select-transcript-and-create-meeting",
+  "allow-add-pasted-transcript-to-meeting",
+  "allow-select-and-add-transcript-to-meeting",
+  "allow-list-transcript-sources",
+  "allow-get-transcript-source",
+  "allow-list-transcript-segments",
+  "allow-update-transcript-segment",
+  "allow-delete-transcript-source",
+  "allow-get-transcript-import-policy",
+]

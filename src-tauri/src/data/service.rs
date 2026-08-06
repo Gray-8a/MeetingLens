@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use rusqlite::TransactionBehavior;
+use rusqlite::{Transaction, TransactionBehavior};
 use uuid::Uuid;
 
 use super::database::Database;
@@ -10,6 +10,7 @@ use super::model::{CreateMeeting, Meeting, MeetingStatus, UpdateMeeting};
 use super::paths::StoragePaths;
 use super::repository::{self, NewMeeting};
 use super::transcript_service::TranscriptService;
+use super::transcript_workflow::TranscriptImportWorkflow;
 
 const MAX_TITLE_CHARS: usize = 200;
 const MAX_LANGUAGE_CHARS: usize = 35;
@@ -17,6 +18,13 @@ const MAX_LANGUAGE_CHARS: usize = 35;
 #[derive(Clone, Debug)]
 pub struct MeetingService {
     database: Database,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct PreparedMeeting {
+    id: String,
+    title: String,
+    primary_language: String,
 }
 
 impl MeetingService {
@@ -42,27 +50,43 @@ impl MeetingService {
         TranscriptService::new(self.database.clone())
     }
 
+    pub fn transcript_imports(&self) -> TranscriptImportWorkflow {
+        TranscriptImportWorkflow::new(self.database.clone())
+    }
+
     pub fn create(&self, input: CreateMeeting) -> DataResult<Meeting> {
-        let title = normalize_required(&input.title, MAX_TITLE_CHARS)?;
-        let primary_language = normalize_required(&input.primary_language, MAX_LANGUAGE_CHARS)?;
-        let id = Uuid::new_v4().to_string();
+        let prepared = Self::prepare_create(input)?;
         let _guard = self.database.mutation_guard()?;
         let mut connection = self.database.connect()?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(DataError::from)?;
-
-        repository::insert(
-            &transaction,
-            NewMeeting {
-                id: &id,
-                title: &title,
-                primary_language: &primary_language,
-            },
-        )?;
-        let meeting = repository::get(&transaction, &id)?;
+        let meeting = Self::insert_prepared(&transaction, &prepared)?;
         transaction.commit().map_err(DataError::from)?;
         Ok(meeting)
+    }
+
+    pub(crate) fn prepare_create(input: CreateMeeting) -> DataResult<PreparedMeeting> {
+        Ok(PreparedMeeting {
+            id: Uuid::new_v4().to_string(),
+            title: normalize_required(&input.title, MAX_TITLE_CHARS)?,
+            primary_language: normalize_required(&input.primary_language, MAX_LANGUAGE_CHARS)?,
+        })
+    }
+
+    pub(crate) fn insert_prepared(
+        transaction: &Transaction<'_>,
+        prepared: &PreparedMeeting,
+    ) -> DataResult<Meeting> {
+        repository::insert(
+            transaction,
+            NewMeeting {
+                id: &prepared.id,
+                title: &prepared.title,
+                primary_language: &prepared.primary_language,
+            },
+        )?;
+        repository::get(transaction, &prepared.id)
     }
 
     pub fn get(&self, id: &str) -> DataResult<Meeting> {

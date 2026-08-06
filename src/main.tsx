@@ -45,6 +45,15 @@ if (import.meta.env.DEV && import.meta.env.VITE_I18N_UI_SMOKE === "1") {
   );
 }
 
+if (
+  import.meta.env.DEV &&
+  import.meta.env.VITE_TRANSCRIPT_COMMAND_SMOKE === "1"
+) {
+  void import("./dev/transcriptCommandSmoke").then(
+    ({ runTranscriptCommandSmoke }) => runTranscriptCommandSmoke(),
+  );
+}
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <App />
