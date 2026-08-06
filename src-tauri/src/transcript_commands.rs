@@ -1202,7 +1202,7 @@ mod tests {
             assert!(!serialized.to_ascii_lowercase().contains(forbidden));
         }
 
-        let source = include_str!("transcript_commands.rs");
+        let source = include_str!("transcript_commands.rs").replace("\r\n", "\n");
         let production = source
             .split("#[cfg(test)]\nmod tests")
             .next()
