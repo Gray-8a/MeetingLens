@@ -333,9 +333,7 @@ export function LiveMeetingPage({
                 key={entry.segmentId}
               >
                 <div className="transcript-entry__meta">
-                  <span>
-                    {formatTranscriptOffset(entry, meeting.startedAt)}
-                  </span>
+                  <span>{formatTranscriptOffset(entry)}</span>
                   <strong>{entry.speakerLabel}</strong>
                   <span>
                     {entry.isFinal ? t("live.final") : t("live.provisional")}
@@ -410,11 +408,9 @@ export function LiveMeetingPage({
   );
 }
 
-function formatTranscriptOffset(
-  segment: TranscriptionSegment,
-  meetingStartedAt: string | null,
-): string {
-  if (meetingStartedAt === null) return formatDuration(0);
-  const offset = Date.parse(segment.startedAt) - Date.parse(meetingStartedAt);
-  return formatDuration(Number.isFinite(offset) ? Math.max(0, offset) : 0);
+function formatTranscriptOffset(segment: TranscriptionSegment): string {
+  const offset = segment.startOffsetMs;
+  return formatDuration(
+    offset !== null && Number.isFinite(offset) ? Math.max(0, offset) : 0,
+  );
 }

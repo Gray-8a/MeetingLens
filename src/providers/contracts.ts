@@ -44,8 +44,8 @@ export interface TranscriptionSessionRequest {
 export interface TranscriptionSegment {
   segmentId: string;
   speakerLabel: string;
-  startedAt: string;
-  endedAt: string;
+  startOffsetMs: number | null;
+  endOffsetMs: number | null;
   text: string;
   language: string;
   confidence: number | null;

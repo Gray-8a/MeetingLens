@@ -78,7 +78,7 @@ erDiagram
 
 #### 模式提示
 
-当前 schema v2 不持久化模式，总结模式入口只是导航到共享 meeting/transcript 工作区。实时模式落地前，`feat/live-session-data-core` 可增加可空的 `workflow_mode = summary/translation/meeting` 作为历史列表和恢复布局的提示；旧会议保持 NULL。该字段不得决定权限、同意、数据保留或会议状态，实际已启用能力仍以来源、任务和 `consent_events` 为准。
+当前 schema v3 不持久化模式，总结模式入口只是导航到共享 meeting/transcript 工作区。实时模式落地前，`feat/live-session-data-core` 可增加可空的 `workflow_mode = summary/translation/meeting` 作为历史列表和恢复布局的提示；旧会议保持 NULL。该字段不得决定权限、同意、数据保留或会议状态，实际已启用能力仍以来源、任务和 `consent_events` 为准。
 
 ### `artifacts`
 
@@ -113,9 +113,9 @@ erDiagram
 
 语音样本不用于跨会议自动识别，必须允许重录和删除。系统不得在没有独立同意与安全设计时通过声纹映射真实身份。
 
-### `transcript_sources`（schema v3 计划）
+### `transcript_sources`（schema v3）
 
-转录是独立于参考 `documents` 的一等公民来源。schema v3 由 `feat/transcript-data-core` 创建；本规格不创建 migration。
+转录是独立于参考 `documents` 的一等公民来源。schema v3 由 `feat/transcript-data-core` 引入，后续实时转录和纪要阶段复用同一模型，不得创建竞争表。
 
 | 字段                | 类型      | 说明                                                                          |
 | ------------------- | --------- | ----------------------------------------------------------------------------- |
@@ -124,7 +124,7 @@ erDiagram
 | `source_type`       | TEXT      | `pasted_text/imported_txt/imported_srt/imported_vtt/live_asr/platform_export` |
 | `display_name`      | TEXT      | 安全显示名称                                                                  |
 | `original_filename` | TEXT NULL | 导入来源的显示文件名；不保存绝对路径                                          |
-| `content_sha256`    | TEXT NULL | 规范化前输入 bytes 的 SHA-256，用于同会议来源识别/去重，不代表可信或防病毒    |
+| `content_sha256`    | TEXT      | 规范化内容的 SHA-256，用于同会议来源识别/去重，不代表可信或防病毒             |
 | `language`          | TEXT NULL | 可识别/用户指定的 BCP 47 标签                                                 |
 | `base_started_at`   | TEXT NULL | UTC ISO 8601 基准；只在需要把相对 offset 映射到绝对时间时使用                 |
 | `parser_name`       | TEXT      | 例如 `plain_text/srt/vtt/live_asr`                                            |
@@ -135,33 +135,36 @@ erDiagram
 
 近期实现 `pasted_text/imported_txt/imported_srt/imported_vtt`；`live_asr` 留给真实音频阶段，`platform_export` 只是保留类型，取得脱敏真实平台样例并实现专用 adapter 前不得对外宣称支持。第一版不长期复制 TXT/SRT/VTT 原始文件，只保存规范化 segments 与上述来源元数据；重新解析需要用户重新导入，用户源文件不被修改或删除。
 
-### `transcript_segments`（schema v3 计划）
+### `transcript_segments`（schema v3）
 
-| 字段              | 类型         | 说明                           |
-| ----------------- | ------------ | ------------------------------ |
-| `id`              | TEXT PK      | segment UUID                   |
-| `meeting_id`      | TEXT FK      | 所属会议                       |
-| `source_id`       | TEXT FK      | 所属 `transcript_sources`      |
-| `ordinal`         | INTEGER      | source 内从 0 开始的稳定顺序   |
-| `speaker_label`   | TEXT NULL    | 来源中明确存在的原始标签       |
-| `speaker_name`    | TEXT NULL    | 用户确认或修正后的显示名称     |
-| `start_offset_ms` | INTEGER NULL | 相对 source/会议基准的开始毫秒 |
-| `end_offset_ms`   | INTEGER NULL | 相对 source/会议基准的结束毫秒 |
-| `original_text`   | TEXT         | 原始语言的规范化转录正文       |
-| `language`        | TEXT NULL    | BCP 47 标签                    |
-| `confidence`      | REAL NULL    | 0–1，若来源提供                |
-| `is_final`        | INTEGER      | 0/1；导入来源默认为 1          |
-| `revision`        | INTEGER      | 从 1 开始；用户修正递增        |
-| `created_at`      | TEXT         | 创建时间                       |
-| `corrected_at`    | TEXT NULL    | 最近人工修正时间               |
+| 字段              | 类型         | 说明                             |
+| ----------------- | ------------ | -------------------------------- |
+| `id`              | TEXT PK      | segment UUID                     |
+| `meeting_id`      | TEXT FK      | 所属会议                         |
+| `source_id`       | TEXT FK      | 所属 `transcript_sources`        |
+| `ordinal`         | INTEGER      | source 内从 0 开始的稳定顺序     |
+| `speaker_label`   | TEXT NULL    | 来源中明确存在的原始标签         |
+| `speaker_name`    | TEXT NULL    | 用户确认或修正后的显示名称       |
+| `start_offset_ms` | INTEGER NULL | 相对 source/会议基准的开始毫秒   |
+| `end_offset_ms`   | INTEGER NULL | 相对 source/会议基准的结束毫秒   |
+| `original_text`   | TEXT         | 原始语言的规范化转录正文         |
+| `translated_text` | TEXT NULL    | schema v3 兼容占位；当前始终为空 |
+| `language`        | TEXT NULL    | BCP 47 标签                      |
+| `confidence`      | REAL NULL    | 0–1，若来源提供                  |
+| `is_final`        | INTEGER      | 0/1；导入来源默认为 1            |
+| `revision`        | INTEGER      | 从 1 开始；用户修正递增          |
+| `created_at`      | TEXT         | 创建时间                         |
+| `corrected_at`    | TEXT NULL    | 最近人工修正时间                 |
 
-约束：同一 source 的 `(source_id, ordinal)` 唯一；offset 可空，有值时满足 `start_offset_ms >= 0` 且 `end_offset_ms > start_offset_ms`。无时间戳来源使用 ordinal 作为证据位置，不推断时间。总结模式导入阶段不创建 `speakers`/`speaker_aliases`，也不强制连接 `participants`；`speaker_label` 保留来源事实，`speaker_name` 保存用户确认。segment 不是 document chunk。译文不写回 segment，`translations` 是唯一权威译文来源。
+约束：同一 source 的 `(source_id, ordinal)` 唯一；offset 可空，有值时满足 `start_offset_ms >= 0` 且 `end_offset_ms >= start_offset_ms`。无时间戳来源使用 ordinal 作为证据位置，不推断时间。总结模式导入阶段不创建 `speakers`/`speaker_aliases`，也不强制连接 `participants`；`speaker_label` 保留来源事实，`speaker_name` 保存用户确认。segment 不是 document chunk。schema v3 的 `translated_text` 仅用于稳定 DTO 兼容且本阶段始终为 `NULL`；实时语言阶段建立 `translations` 后，后者是唯一权威译文来源，不得把 Provider 译文写回 segment。
 
-第一版输入固定为：粘贴最多 2 MiB、TXT/SRT/VTT 文件最多 10 MiB、每 source 最多 20,000 个 segments、单 segment 正文最多 64 KiB；严格 UTF-8，拒绝 NUL 和除 TAB/LF/CR 外的危险 C0 控制字符。普通文本只识别明确的 `姓名: 内容`，格式不清时 speaker 为空；SRT/VTT 保留 cue 时间和顺序。解析器不调用 Docling/网络，不执行文本中的 URL、代码或指令。
+第一版输入固定为：粘贴最多 2 MiB、TXT/SRT/VTT 文件最多 10 MiB、每 source 最多 20,000 个 segments、单 segment 正文最多 64 KiB；严格 UTF-8，拒绝 UTF-16/UTF-32、NUL、孤立 CR 和除 TAB/LF 外的危险 C0 控制字符，CRLF 只规范化为 LF，超限不截断。普通文本只识别明确的 `姓名: 内容`，格式不清时 speaker 为空；SRT/VTT 保留 cue 时间和顺序。解析器不调用 Docling/网络，不执行文本中的 URL、代码或指令。
+
+去重哈希使用确定性规范化口径：去除 UTF-8 BOM、把 CRLF 统一为 LF，但不折叠大小写、不删除普通空白、不改写正文；SRT/VTT 对严格解析后的 cue 时间、speaker 与正文序列编码后计算 SHA-256。同一 meeting 的 `(meeting_id, content_sha256)` 唯一，跨 meeting 不去重。哈希只用于内容身份识别，不是信任、杀毒或安全扫描结论。
 
 删除 source 会在同一协调操作中处理其 segments，但不影响用户原始文件。若 source 正被非终态 Summary run 使用，删除请求必须稳定拒绝或进入明确 pending，不能在 run 中途直接移除；run 读取的不可变快照不受后续编辑影响。删除完成后已有 summary 保留最小 evidence snapshot 并把来源显示为已删除。修正 segment 增加 revision，并可把依赖旧 revision 的 summary 标记 stale；不得后台静默重新生成。
 
-首版稳定错误至少包括：`transcript_empty`、`transcript_invalid_utf8`、`transcript_invalid_format`、`transcript_too_large`、`transcript_too_many_segments`、`transcript_segment_too_large`、`transcript_already_imported`、`transcript_not_found`、`transcript_invalid_state`、`transcript_source_in_use` 和 `internal_error`。错误响应不得包含正文、源路径、文件名、说话人、parser 原始异常或用户目录。
+首版稳定错误包括：`transcript_invalid_input`、`transcript_empty`、`transcript_too_large`、`transcript_segment_too_large`、`transcript_segment_limit_exceeded`、`transcript_invalid_encoding`、`transcript_invalid_format`、`transcript_invalid_timestamp`、`transcript_source_not_found`、`transcript_segment_not_found`、`transcript_already_imported`、`transcript_invalid_state`、`transcript_input_insufficient`、`transcript_persistence_failed`、`transcript_revision_conflict`、`transcript_source_in_use` 和 `internal_error`。错误响应不得包含正文、源路径、文件名、说话人、parser 原始异常或用户目录。
 
 ### `screen_events`
 
@@ -423,8 +426,8 @@ schema v2 使用统一删除任务表协调 meeting/document 的文件清理：`
 
 - 启用 `PRAGMA foreign_keys = ON`。
 - 使用 WAL 时，`.db-wal` 和 `.db-shm` 必须保持本地且被 Git 忽略。
-- 当前 schema v2 已建立 `idx_documents_meeting_status`、`idx_documents_meeting_sha256`、两个 deletion job partial unique indexes 和 `idx_deletion_jobs_status`。其他计划表在所属 migration 中建立对应索引。
-- schema v3 专用于 `transcript_sources`/`transcript_segments` 及同会议来源哈希、source ordinal、meeting/source 查询索引；原 Docling 编排 migration 顺延到 v4 或更高，并按落地顺序递增。
+- schema v2 已建立 `idx_documents_meeting_status`、`idx_documents_meeting_sha256`、两个 deletion job partial unique indexes 和 `idx_deletion_jobs_status`。
+- 当前 schema v3 已建立 `transcript_sources`/`transcript_segments` 及同会议来源哈希、source ordinal、meeting/source 查询索引；其他计划表在所属 migration 中建立对应索引，原 Docling 编排 migration 顺延到 v4 或更高并按落地顺序递增。
 - `documents(meeting_id, sha256)` 对非 NULL 哈希使用唯一约束，确保同一会议内容去重；跨会议不共享物理副本。
 - 状态字段使用 `CHECK` 约束或迁移层枚举校验。
 - 所有迁移在事务中执行，并在 schema 版本表中记录。
@@ -517,7 +520,7 @@ MVP 1B-1A 已同时迁移删除实现和测试；MVP 1B-1B 的 `delete_meeting` 
 ## 8. 数据模型版本化
 
 - `schema_migrations(version, applied_at, checksum)` 记录数据库迁移。
-- 当前 SQLite schema 版本为 2：v1 是 meeting 数据核心；v2 以事务方式保留既有 meeting 数据并扩展删除状态，同时创建 `documents`、`deletion_jobs` 和相关索引。重复启动按 checksum 幂等跳过，冲突或中途失败 fail closed。
-- 下一版本 v3 只由 `feat/transcript-data-core` 创建 `transcript_sources` 与 `transcript_segments`。后续 Docling parsing、summary/evidence 或其他 migration 不得再使用 v3，必须基于合并时最新版本顺序递增。
+- 当前 SQLite schema 版本为 3：v1 是 meeting 数据核心；v2 以事务方式保留既有 meeting 数据并扩展删除状态，同时创建 `documents`、`deletion_jobs` 和相关索引；v3 创建 `transcript_sources` 与 `transcript_segments`。重复启动按 checksum 幂等跳过，冲突或中途失败 fail closed。
+- 后续 Docling parsing、summary/evidence 或其他 migration 不得再使用 v3，必须基于合并时最新版本顺序递增。
 - Sidecar API 和 `content_json` 都包含独立 `api_version/schema_version`。
 - 破坏性迁移必须先备份并获得用户批准，不得自动丢弃未知字段。

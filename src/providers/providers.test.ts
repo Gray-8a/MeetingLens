@@ -228,9 +228,13 @@ describe("MockTranscriptionProvider", () => {
     );
   });
 
-  it("emits the final revision with UTC ISO timestamps", async () => {
+  it("emits the final revision with relative millisecond offsets", async () => {
     const provider = new MockTranscriptionProvider();
-    const events: Array<{ isFinal: boolean; startedAt: string }> = [];
+    const events: Array<{
+      isFinal: boolean;
+      startOffsetMs: number | null;
+      endOffsetMs: number | null;
+    }> = [];
     provider.subscribe((event) => events.push(event));
     await provider.start(transcriptionRequest);
 
@@ -238,7 +242,8 @@ describe("MockTranscriptionProvider", () => {
 
     const lastEvent = events[events.length - 1];
     expect(lastEvent?.isFinal).toBe(true);
-    expect(lastEvent?.startedAt).toMatch(/Z$/);
+    expect(lastEvent?.startOffsetMs).toBe(900);
+    expect(lastEvent?.endOffsetMs).toBe(1_800);
   });
 
   it("pauses and resumes without emitting while paused", async () => {

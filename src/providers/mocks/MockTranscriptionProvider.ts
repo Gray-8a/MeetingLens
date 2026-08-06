@@ -166,13 +166,11 @@ export class MockTranscriptionProvider
     }
 
     const line = syntheticScript[this.scriptIndex];
-    const sessionStart = Date.parse(this.session.startedAt);
-    const segmentStart = sessionStart + this.elapsedMs;
     this.provisional = {
       segmentId: `mock-segment-${this.sequence}`,
       speakerLabel: line.speakerLabel,
-      startedAt: new Date(segmentStart).toISOString(),
-      endedAt: new Date(segmentStart + this.intervalMs).toISOString(),
+      startOffsetMs: this.elapsedMs,
+      endOffsetMs: this.elapsedMs + this.intervalMs,
       text: line.text,
       language: line.language,
       confidence: 0.92,

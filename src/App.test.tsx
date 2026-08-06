@@ -82,8 +82,8 @@ class ManualTranscriptionProvider implements TranscriptionProvider {
     this.status = "running";
     this.emit({
       segmentId: "synthetic-ui-entry",
-      startedAt: "2026-07-30T01:02:00.900Z",
-      endedAt: "2026-07-30T01:02:01.800Z",
+      startOffsetMs: 900,
+      endOffsetMs: 1_800,
       speakerLabel: "Speaker A",
       text: "Synthetic UI transcript entry",
       language: "en-AU",
@@ -102,8 +102,8 @@ class ManualTranscriptionProvider implements TranscriptionProvider {
     this.status = "running";
     this.emit({
       segmentId: "synthetic-ui-entry",
-      startedAt: "2026-07-30T01:02:00.900Z",
-      endedAt: "2026-07-30T01:02:01.800Z",
+      startOffsetMs: 900,
+      endOffsetMs: 1_800,
       speakerLabel: "Speaker A",
       text: "Synthetic UI transcript entry",
       language: "en-AU",
@@ -112,8 +112,8 @@ class ManualTranscriptionProvider implements TranscriptionProvider {
     });
     this.emit({
       segmentId: "synthetic-ui-entry-2",
-      startedAt: "2026-07-30T01:02:01.800Z",
-      endedAt: "2026-07-30T01:02:02.700Z",
+      startOffsetMs: 1_800,
+      endOffsetMs: 2_700,
       speakerLabel: "Speaker B",
       text: "Synthetic resumed transcript entry",
       language: "en-AU",
