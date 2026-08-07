@@ -60,6 +60,15 @@ if (import.meta.env.DEV && import.meta.env.VITE_SUMMARY_MODE_UI_SMOKE === "1") {
   );
 }
 
+if (
+  import.meta.env.DEV &&
+  import.meta.env.VITE_SUMMARY_RUN_CORE_SMOKE === "1"
+) {
+  void import("./dev/summaryRunCoreSmoke").then(({ runSummaryRunCoreSmoke }) =>
+    runSummaryRunCoreSmoke(),
+  );
+}
+
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
     <App />

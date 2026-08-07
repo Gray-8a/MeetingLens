@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-create-summary-revision"
+description = "Enables the create_summary_revision command without any pre-configured scope."
+commands.allow = ["create_summary_revision"]
+
+[[permission]]
+identifier = "deny-create-summary-revision"
+description = "Denies the create_summary_revision command without any pre-configured scope."
+commands.deny = ["create_summary_revision"]

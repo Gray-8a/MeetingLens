@@ -1,10 +1,10 @@
 # MeetingLens 开发预览使用手册
 
-> 开发预览版：本手册描述当前仓库实际可用的本地桌面流程。它不是正式产品手册；已有转录可以导入、检查和修正，但真实 AI 纪要尚未开放。
+> 开发预览版：本手册描述当前仓库实际可用的本地桌面流程。它不是正式产品手册；已有转录可以导入、检查和修正，当前 Summary Run Core 仍是仅供开发验证的零网络基础，真实 AI 纪要尚未开放。
 
 ## 1. MeetingLens 简介
 
-MeetingLens 是面向 Windows 11 的本地优先会议工作台。产品目标是把粘贴或导入的会议转录转化为详实、可编辑、可追溯的会议纪要；当前开发预览版已经可以安全接收、持久化、检查和修正转录，但还不会生成真实纪要。
+MeetingLens 是面向 Windows 11 的本地优先会议工作台。产品目标是把粘贴或导入的会议转录转化为详实、可编辑、可追溯的会议纪要；当前开发预览版已经可以安全接收、持久化、检查和修正转录。当前功能分支也在建立可持久化的 Summary run/快照开发边界，但普通用户仍不能生成真实纪要。
 
 同一个应用内置简体中文（`zh-CN`）和 English（`en-US`），不需要安装两个版本。
 
@@ -21,8 +21,9 @@ MeetingLens 是面向 Windows 11 的本地优先会议工作台。产品目标�
 - 查看 Mock Provider、本地 Sidecar 和数据库状态；
 - 将 DeepSeek API Key 保存到 Windows Credential Manager，且 WebView 无法读回；
 - 运行独立离线 Docling Worker 的开发验证，但该 Worker 尚未接入产品界面。
+- 在当前功能分支中，通过仅开发 API 和合成数据验证 schema v4 Summary series/revision、不可变转录快照、run-owned evidence 与确定性 Rust Mock。
 
-当前不能生成真实会议纪要，也不能调用 DeepSeek、处理真实录音或实时转录。翻译模式和会议模式只显示“即将推出”。
+当前普通用户界面不能生成真实 AI 会议纪要，也不能调用 DeepSeek、处理真实录音或实时转录。“生成会议纪要”保持禁用，翻译模式和会议模式只显示“即将推出”。Rust Mock 不访问网络，也不是生产 AI 结果。
 
 ## 3. 系统要求
 
@@ -90,6 +91,7 @@ npm run check
 - 编辑正文或说话人名称时使用 revision 冲突保护；如果内容已在其他位置更新，必须重新加载，应用不会静默覆盖。
 - 可以为当前来源中相同的说话人标签统一设置或清空显示名称；原始标签保持不变，名称不会跨来源或会议复用，也不使用 AI 猜测身份。
 - 删除来源前需要确认；删除最后一个来源后页面会显示“还没有可用输入”。用户原始文件不会被删除，会议文件区域也不受影响。
+- queued/running 的开发 Summary run 正在使用来源时不能删除；run 终态后删除只保留已引用 evidence、清理完整正文快照，并把历史结果标记 stale/来源已删除。
 
 “生成会议纪要”当前保持禁用，只提示下一阶段开放，不会发出网络请求。
 
@@ -167,6 +169,7 @@ Key 保存在当前 Windows 用户的 Credential Manager 中，而不是 SQLite�
 
 - 会议元数据保存在应用私有 SQLite 数据库中；
 - 已提交的转录来源和规范化片段保存在同一私有数据库中；
+- 当前功能分支的 schema v4 在本地保存开发 Summary runs 与不可变转录快照。单个 run 最多 20,000 个 final segments 和 10 MiB UTF-8 正文；显式来源删除会清理终态完整正文快照，只保留已引用 evidence；
 - 未提交的粘贴文本只短暂存在于 React 内存，保存、取消或离开页面后清除；
 - 转录正文、说话人和源路径不会写入 localStorage、sessionStorage、IndexedDB 或 console；
 - 导入文件副本位于应用私有存储，React 不取得绝对路径；
@@ -181,7 +184,7 @@ Key 保存在当前 Windows 用户的 Credential Manager 中，而不是 SQLite�
 
 以下功能尚未实现：
 
-- 真实会议纪要生成；
+- 面向普通用户的真实 AI 会议纪要生成和正式结果工作区；
 - DeepSeek Summary Provider 和外发确认；
 - 真实音频录制；
 - 实时转写；
@@ -196,11 +199,11 @@ Key 保存在当前 Windows 用户的 Credential Manager 中，而不是 SQLite�
 
 ### 为什么已经保存 DeepSeek Key，却不能生成纪要？
 
-当前只完成安全凭据存储。真实 Summary Provider、输入快照、发送预览和证据验证将在后续独立阶段实现。
+安全凭据存储与零网络 Summary core 是两个独立边界。当前 Rust Mock 可以验证本地不可变快照和 evidence，但不会读取 Key。真实 Summary Provider、外发同意/预览和正式结果工作区仍由后续独立阶段实现。
 
 ### 为什么转录已准备好，“生成会议纪要”仍不可用？
 
-当前阶段只负责输入、持久化、分页检查和人工修正。下一阶段先建立不可变 Summary run 和 Mock，再分别实现同意数据、受限 DeepSeek Provider 和纪要结果页；禁用按钮不会调用 AI。
+PR #20 已完成输入、持久化、分页检查和人工修正。当前分支通过八个最小 Commands 增加仅供开发的不可变 Summary run、`series_id + revision`、20,000 segments/10 MiB 快照策略、evidence allowlist、可传递到运行中 Mock 的取消、stale/删除协调和遗留运行恢复。开发验收使用隔离的系统临时数据目录及匹配的合成 WebView2 profile，不会写入用户正常 MeetingLens 数据位置。随后仍分别实现同意数据、受限 DeepSeek Provider 和纪要结果页；禁用按钮不会调用 AI。
 
 ### 导入转录会复制或删除原文件吗？
 
@@ -235,8 +238,8 @@ Key 保存在当前 Windows 用户的 Credential Manager 中，而不是 SQLite�
 
 1. `feat/transcript-data-core`（PR #18 已合并）：schema v3、转录来源和片段、粘贴/TXT/SRT/VTT 本地解析；
 2. `feat/transcript-command-api`（PR #19 已合并）：安全转录 Commands、Rust 原生选择器和原子 meeting + transcript 创建；
-3. `feat/summary-mode-input-ui`（当前）：总结模式入口、粘贴、原生导入、分页预览和基础说话人/正文修正；
-4. `feat/summary-run-core`：不可变快照、run/revision、evidence 和 Mock；
+3. `feat/summary-mode-input-ui`（PR #20 已合并）：总结模式入口、粘贴、原生导入、分页预览和基础说话人/正文修正；
+4. `feat/summary-run-core`（当前）：schema v4、完整正文快照、series/revision、evidence allowlist、恢复和 Rust zero-network Mock；
 5. `feat/consent-data-core`：通用同意记录、会话失效与审计；
 6. `feat/summary-provider-deepseek`：受限 DeepSeek adapter、SecretStore 和外发同意；
 7. `feat/summary-mode-minutes`：模板、生成状态、证据导航、Markdown 查看、复制和下载；

@@ -27,8 +27,8 @@ MVP 1A-2 实现前已使用 `docs/define-meeting-lifecycle` 固定会议状态�
 | 简约版对齐 | 三种入口、共享管线、隐私边界和新顺序                | `docs/simplified-three-mode-spec` / PR #17  | 已完成并合并   |
 | 总结数据   | schema v3、转录来源/片段、TXT/SRT/VTT/粘贴解析      | `feat/transcript-data-core` / PR #18        | 已完成并合并   |
 | 转录接口   | Commands/API、原生选择器和原子创建边界              | `feat/transcript-command-api` / PR #19      | 已完成并合并   |
-| 总结入口   | 首页入口、粘贴/导入、分页预览和说话人修正           | `feat/summary-mode-input-ui`                | 当前阶段       |
-| 纪要数据   | run/revision、不可变快照、evidence 和 Mock          | `feat/summary-run-core`                     | 待开始         |
+| 总结入口   | 首页入口、粘贴/导入、分页预览和说话人修正           | `feat/summary-mode-input-ui` / PR #20       | 已完成并合并   |
+| 纪要数据   | schema v4、run/series/revision、正文快照和 evidence | `feat/summary-run-core`                     | 当前阶段       |
 | 同意数据   | 通用 consent events、会话失效与审计 API             | `feat/consent-data-core`                    | 待开始         |
 | 纪要服务   | SecretStore 消费、外发同意和受限 DeepSeek adapter   | `feat/summary-provider-deepseek`            | 待开始、需批准 |
 | 纪要工作区 | 输入/模板选择、外发预览、结果和 Markdown            | `feat/summary-mode-minutes`                 | 待开始         |
@@ -305,7 +305,7 @@ MVP 1A-2 固定拆成以下两个顺序 PR。前一个 PR 合并后，后一个 
 
 完成证据：PR #19 已交付 10 个安全 Transcript Commands、集中式 `transcriptApi`、Rust 原生 TXT/SRT/VTT 选择器、原子 meeting + transcript 创建、向既有 meeting 添加、source/segment 查询、乐观 revision 修正与 source 删除；路径不进入 WebView，取消不创建空 meeting。Windows 本机、SQLite 完整性和 CI 验收通过后已合并。
 
-### 8.3 当前：Summary Mode Input UI
+### 8.3 Summary Mode Input UI（已完成，PR #20）
 
 分支：`feat/summary-mode-input-ui`
 
@@ -313,13 +313,23 @@ MVP 1A-2 固定拆成以下两个顺序 PR。前一个 PR 合并后，后一个 
 
 本 PR 不调用 DeepSeek，不新增 transcript/Summary schema，不实现 Docling 接线、真实音频、屏幕、翻译或平台专用 adapter。
 
-### 8.4 Summary Run Core
+完成证据：PR #20 已交付三模式首页、总结模式粘贴与 Rust 原生 TXT/SRT/VTT 导入、来源与后端有界分页、正文修正和 source-scoped speaker 显示名修正；禁用的纪要入口不调用网络，Windows 本机、SQLite 持久化和 CI 验收通过后已合并。
+
+### 8.4 当前：Summary Run Core
 
 分支：`feat/summary-run-core`
 
-范围：Summary run/revision、不可变 input snapshot、`summary_sources`、evidence、稳定状态/错误、资格校验和 Mock Summary Provider。快照冻结 source/segment IDs、segment revision/order、speaker、offset、language、模板、输出语言和创建时间；未知 evidence ID 必须拒绝。
+范围：schema v4 的 `summaries`、`summary_sources` 与 `evidence_items`，Summary run/series/revision、transcript-only 不可变 input snapshot、稳定状态/错误、资格校验和 Rust `SummaryProvider` 边界。每个新系列从 revision 1 开始，`series_id + revision` 唯一；重新生成在事务内分配下一 revision 并重新冻结当前输入，不覆盖旧 run。快照实际复制 source/segment IDs、segment revision、source/segment/global ordinal、source 显示元数据、speaker label/name、offset、规范化正文、language、confidence、`is_final` 和快照时间；Provider 运行时只读快照，不回读 live segment。
 
-本 PR 可以增加单一目的的 Summary migration 和 Rust service/commands，但不得消费 SecretStore、访问网络或增加正式结果页面。生成资格允许 `draft/recording/ready + transcript`，禁止 `deleting/delete_failed`、空输入和无法安全冻结的输入；不得新增 summary 型 meeting 状态。
+本阶段只创建 `run_purpose=final`、`trigger_kind=manual`，每个 run 最多冻结 20,000 个 final segments 和 10 MiB UTF-8 正文，超限整体拒绝、不截断。状态机固定为 `queued → running → completed/failed/cancelled` 和 `queued → cancelled`；启动恢复把遗留 `running` 标为 `failed + summary_interrupted`。确定性 Rust Mock 不读取 SecretStore、环境凭据、文件、Sidecar 或网络；Provider 输出必须先在 Rust 中完成结构、大小和 evidence allowlist 校验，再原子写入结果与当次实际引用的 evidence，未知或跨 run ID 必须拒绝。
+
+本 PR 交付 `get_summary_policy`、`create_summary_run`、`create_summary_revision`、`execute_summary_run`、`get_summary_run`、`list_summary_runs`、`cancel_summary_run` 和 `list_summary_evidence` 八个最小 Tauri Commands，以及集中式 TypeScript `summaryApi`。WebView 只提交用户选择和 run ID，不能提交 Provider 结果或 evidence，也不获得 dialog/fs/shell/process/http 权限。生成资格允许 `draft/recording/ready + transcript`，禁止 `deleting/delete_failed`、空输入和无法安全冻结的输入；不得新增 summary 型 meeting 状态。
+
+所有 command/result DTO（含嵌套结构化结果）统一 camelCase；run/evidence 列表均使用默认 50、最大 100 的 keyset 分页。schema 独立保存 `provider_mode`，当前固定 `mock`；revision lineage 由数据库约束同 meeting/series 的直接前驱，再由 Service 在 IMMEDIATE 事务中保证 terminal/latest。竞态 stale base 与未知/重复/跨 run evidence 分别返回 `summary_revision_conflict` 和 `summary_evidence_invalid`。
+
+segment 修正只把依赖旧 revision 的 run 标记 stale，不改变其快照或结果；queued/running run 使用的 source 删除稳定拒绝，terminal source 删除清理完整正文/显示元数据快照，只保留已引用的最小 evidence 并标记 `source_deleted`/stale。会议删除先取消 active Summary run，再通过既有协调器删除该会议的 summaries、snapshots 和 evidence。当前 PR 不实现 Consent、DeepSeek、正式纪要页面、持久编辑/导出、Docling、document/screen/manual-note evidence、checkpoint、音频、翻译或屏幕能力。
+
+验收必须用 development-only、系统 Temp 直属隔离 app-data 根完成两次 `npm run tauri dev`，并为两次启动合并与根目录 UUID 相同的合成 Tauri identifier，隔离 SQLite 与 WebView2 profile，不得触碰用户正常数据库或浏览器存储。第一次覆盖 queued/completed/evidence/stale/revision/cancel/source 删除与零外网/零正文浏览器持久化；第二次复验 run/result/revision/stale/evidence、遗留 running 恢复、SQLite integrity 和全部合成数据/文件/profile/进程/端口清理。production dist 不得包含 harness。只有本 PR 由用户合并后，下一阶段才是 `feat/consent-data-core`。
 
 ### 8.5 Consent Data Core
 
@@ -498,6 +508,6 @@ Screenpipe 只能是可替换的可选 Capture Provider，不得成为核心强�
 
 ## 18. 当前下一步
 
-PR #1–#19 已合并；三模式路线、i18n、Help、中英文开发预览手册、Docling Worker Foundation、Transcript Data Core 和 Transcript Command API 已完成，Docling 尚未接入产品。当前阶段为 `feat/summary-mode-input-ui`：只交付首页三模式入口、总结模式粘贴/原生导入、来源与分页片段检查、正文/说话人修正和输入准备状态，不生成真实会议纪要。
+PR #1–#20 已合并；三模式路线、i18n、Help、中英文开发预览手册、Docling Worker Foundation、Transcript Data Core、Transcript Command API 和 Summary Mode Input UI 已完成，Docling 尚未接入产品。当前阶段为 `feat/summary-run-core`：只交付 schema v4、持久不可变 transcript snapshot、run/series/revision、Rust zero-network Mock、evidence allowlist、稳定状态/错误/恢复、删除协调和开发 API；普通用户的“生成会议纪要”仍禁用，真实 AI 与正式结果 UI 仍不可用。
 
-`feat/summary-mode-input-ui` 通过 CI 和 Windows 本机验收并由用户决定合并后，才能从最新 `main` 开始 `feat/summary-run-core`。不得同时启动外部 Provider、Docling、音频、翻译或屏幕功能。首个 transcript-only 纪要与编辑导出闭环完成后，必须先完成 `feat/document-parsing-orchestration` 和 `feat/document-evidence-index`，再进入实时采集与 ASR；Docling 仍不阻塞第一份纪要。未来 GitHub PR 编号只在实际创建后记录，不是计划契约。
+`feat/summary-run-core` 必须从已合并 PR #20 的最新 `main` 独立完成并停在待审 PR，不得同时启动 Consent、外部 Provider、Docling、音频、翻译或屏幕功能。只有该 PR 经用户审查并明确合并后，下一阶段才是 `feat/consent-data-core`；当前任务不得预先开始它。首个 transcript-only 纪要与编辑导出闭环完成后，必须先完成 `feat/document-parsing-orchestration` 和 `feat/document-evidence-index`，再进入实时采集与 ASR；Docling 仍不阻塞第一份纪要。未来 GitHub PR 编号只在实际创建后记录，不是计划契约。

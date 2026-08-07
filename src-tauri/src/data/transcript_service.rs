@@ -5,6 +5,7 @@ use super::database::Database;
 use super::error::DataError;
 use super::model::MeetingStatus;
 use super::repository;
+use super::summary_repository;
 use super::transcript_error::{TranscriptError, TranscriptResult};
 use super::transcript_model::{
     NewTranscriptSegment, NewTranscriptSource, SummaryInputSegment, TRANSCRIPT_MAX_SEGMENTS,
@@ -377,6 +378,13 @@ impl TranscriptService {
             &original_text,
             update.expected_revision,
         )?;
+        summary_repository::mark_stale_for_segment(
+            &transaction,
+            meeting_id,
+            segment_id,
+            updated.revision,
+        )
+        .map_err(|_| TranscriptError::PersistenceFailed)?;
         transaction.commit().map_err(TranscriptError::from)?;
         Ok(updated)
     }
@@ -408,6 +416,14 @@ impl TranscriptService {
             &speaker_label,
             speaker_name.as_deref(),
         )?;
+        if updated_count > 0 {
+            summary_repository::mark_stale_for_changed_source_segments(
+                &transaction,
+                meeting_id,
+                source_id,
+            )
+            .map_err(|_| TranscriptError::PersistenceFailed)?;
+        }
         transaction.commit().map_err(TranscriptError::from)?;
         Ok(updated_count)
     }
@@ -423,8 +439,13 @@ impl TranscriptService {
         ensure_meeting_accepts_mutation(&transaction, meeting_id)?;
         transcript_repository::get_source(&transaction, meeting_id, source_id)?;
 
-        // Before Summary runs are introduced, their migration must add an active-snapshot
-        // guard here. A source must never disappear from a run that has not frozen evidence.
+        if summary_repository::source_has_active_summary(&transaction, meeting_id, source_id)
+            .map_err(|_| TranscriptError::PersistenceFailed)?
+        {
+            return Err(TranscriptError::SourceInUse);
+        }
+        summary_repository::redact_terminal_source(&transaction, meeting_id, source_id)
+            .map_err(|_| TranscriptError::PersistenceFailed)?;
         transcript_repository::delete_source(&transaction, meeting_id, source_id)?;
         transaction.commit().map_err(TranscriptError::from)
     }

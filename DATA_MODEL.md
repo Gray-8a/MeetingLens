@@ -27,13 +27,12 @@ erDiagram
     MEETING ||--o{ SCREEN_EVENT : captures
     MEETING ||--o{ DOCUMENT : uploads
     DOCUMENT ||--o{ DOCUMENT_CHUNK : contains
-    MEETING ||--o{ EVIDENCE_ITEM : supports
     MEETING ||--o{ SUMMARY : has
+    SUMMARY ||--o{ SUMMARY_SOURCE : freezes
+    SUMMARY ||--o{ EVIDENCE_ITEM : owns
+    SUMMARY_SOURCE ||--o| EVIDENCE_ITEM : materializes
     SUMMARY ||--o{ DECISION : extracts
     SUMMARY ||--o{ ACTION_ITEM : extracts
-    TRANSCRIPT_SEGMENT }o--o{ SUMMARY_SOURCE : supports
-    TRANSCRIPT_SOURCE ||--o{ SUMMARY_SOURCE : selected
-    SUMMARY ||--o{ SUMMARY_SOURCE : cites
     SUMMARY ||--o{ SUMMARY_MANUAL_NOTE : includes
     MANUAL_NOTE ||--o{ SUMMARY_MANUAL_NOTE : snapshots
     MEETING ||--o{ PROCESSING_JOB : runs
@@ -80,7 +79,7 @@ schema v3 没有独立、可编辑的会议发生日期字段。`created_at` 只
 
 #### 模式提示
 
-当前 schema v3 不持久化模式，总结模式入口只是导航到共享 meeting/transcript 工作区。实时模式落地前，`feat/live-session-data-core` 可增加可空的 `workflow_mode = summary/translation/meeting` 作为历史列表和恢复布局的提示；旧会议保持 NULL。该字段不得决定权限、同意、数据保留或会议状态，实际已启用能力仍以来源、任务和 `consent_events` 为准。
+当前 schema v4 不持久化模式，总结模式入口只是导航到共享 meeting/transcript 工作区。实时模式落地前，`feat/live-session-data-core` 可增加可空的 `workflow_mode = summary/translation/meeting` 作为历史列表和恢复布局的提示；旧会议保持 NULL。该字段不得决定权限、同意、数据保留或会议状态，实际已启用能力仍以来源、任务和 `consent_events` 为准。
 
 ### `artifacts`
 
@@ -168,7 +167,7 @@ segment 列表必须由 SQLite 按稳定 `ordinal` 顺序分页，不允许先�
 
 去重哈希使用确定性规范化口径：去除 UTF-8 BOM、把 CRLF 统一为 LF，但不折叠大小写、不删除普通空白、不改写正文；SRT/VTT 对严格解析后的 cue 时间、speaker 与正文序列编码后计算 SHA-256。同一 meeting 的 `(meeting_id, content_sha256)` 唯一，跨 meeting 不去重。哈希只用于内容身份识别，不是信任、杀毒或安全扫描结论。
 
-删除 source 会在同一协调操作中处理其 segments，但不影响用户原始文件。若 source 正被非终态 Summary run 使用，删除请求必须稳定拒绝或进入明确 pending，不能在 run 中途直接移除；run 读取的不可变快照不受后续编辑影响。删除完成后已有 summary 保留最小 evidence snapshot 并把来源显示为已删除。修正 segment 增加 revision，并可把依赖旧 revision 的 summary 标记 stale；不得后台静默重新生成。
+删除 source 会在同一协调操作中处理其 segments，但不影响用户原始文件。若 source 被 queued/running Summary run 使用，删除稳定拒绝并返回 `transcript_source_in_use`；run 始终读取已持久化的不可变快照。terminal run 不阻塞删除：协调事务先把依赖结果标为 `source_deleted` stale，保留实际引用的 evidence excerpt/speaker/offset/ordinal/revision，再清空 `summary_sources` 中该 source 的完整正文和显示元数据并设置 `redacted_at`，最后删除 live source/segments。修正 segment 增加 revision，并把依赖旧 revision 的 summary 标记 `segment_revised` stale；不得后台静默重新生成。
 
 首版稳定错误包括：`transcript_invalid_input`、`transcript_empty`、`transcript_too_large`、`transcript_segment_too_large`、`transcript_segment_limit_exceeded`、`transcript_invalid_encoding`、`transcript_invalid_format`、`transcript_invalid_timestamp`、`transcript_source_not_found`、`transcript_segment_not_found`、`transcript_already_imported`、`transcript_invalid_state`、`transcript_input_insufficient`、`transcript_persistence_failed`、`transcript_revision_conflict`、`transcript_source_in_use` 和 `internal_error`。错误响应不得包含正文、源路径、文件名、说话人、parser 原始异常或用户目录。
 
@@ -253,26 +252,29 @@ schema v2 使用统一删除任务表协调 meeting/document 的文件清理：`
 
 ### `evidence_items`
 
-| 字段                    | 类型         | 说明                                              |
-| ----------------------- | ------------ | ------------------------------------------------- |
-| `id`                    | TEXT PK      | UUID                                              |
-| `meeting_id`            | TEXT FK      | 所属会议                                          |
-| `kind`                  | TEXT         | `transcript/document/screen/manual_note`          |
-| `source_id`             | TEXT NULL    | transcript source 或其他稳定来源 ID               |
-| `transcript_segment_id` | TEXT FK NULL | 转录来源                                          |
-| `segment_revision`      | INTEGER NULL | run 实际使用的 segment revision                   |
-| `document_chunk_id`     | TEXT FK NULL | 文档来源                                          |
-| `screen_event_id`       | TEXT FK NULL | 屏幕来源                                          |
-| `label`                 | TEXT         | 面向用户的证据标签                                |
-| `speaker_snapshot`      | TEXT NULL    | 当次 run 使用的安全 speaker 显示快照              |
-| `start_offset_ms`       | INTEGER NULL | 证据开始位置；无时间戳时为空                      |
-| `end_offset_ms`         | INTEGER NULL | 证据结束位置                                      |
-| `ordinal`               | INTEGER NULL | 无时间戳或排序定位                                |
-| `excerpt`               | TEXT         | 解释结果所需的最小安全摘录，不复制完整 transcript |
-| `source_deleted`        | INTEGER      | 0/1；来源删除后仍可解释已有纪要                   |
-| `created_at`            | TEXT         | 创建时间                                          |
+schema v4 首先只创建 transcript evidence；document、screen 和 manual note evidence 仍由各自后续阶段扩展，不能提前写入该表。
 
-具体 migration 由 Summary PR 冻结。证据必须指向当前 run 快照内已知 source/segment/revision；未知 evidence ID 不得接受，也不得根据模型自然语言生成不存在的引用。document 只证明材料内容，screen 只证明当时展示内容，manual note 是用户补充；除非 transcript 或人工确认明确支持，任何单一来源都不能自动证明会议已达成决定。
+| 字段                             | 类型         | 说明                                               |
+| -------------------------------- | ------------ | -------------------------------------------------- |
+| `id`                             | TEXT PK      | Provider 可引用的 evidence UUID                    |
+| `summary_id`                     | TEXT FK      | evidence 所属的唯一 Summary run                    |
+| `meeting_id`                     | TEXT FK      | 与 Summary/snapshot 一致的会议                     |
+| `summary_source_id`              | TEXT FK      | 当前 run 内的 `summary_sources.id`                 |
+| `kind`                           | TEXT         | schema v4 固定为 `transcript`                      |
+| `source_id_snapshot`             | TEXT         | 当次快照中的 source UUID 值；不是 live source FK   |
+| `transcript_segment_id_snapshot` | TEXT         | 当次快照中的 segment UUID 值；不是 live segment FK |
+| `segment_revision`               | INTEGER      | run 实际使用的 segment revision                    |
+| `label`                          | TEXT         | 面向用户的证据标签                                 |
+| `speaker_snapshot`               | TEXT NULL    | 当次 run 使用的安全 speaker 显示快照               |
+| `start_offset_ms`                | INTEGER NULL | 证据开始位置；无时间戳时为空                       |
+| `end_offset_ms`                  | INTEGER NULL | 证据结束位置                                       |
+| `ordinal`                        | INTEGER      | 原 source 内顺序                                   |
+| `global_ordinal`                 | INTEGER      | 当次多 source 输入的全局顺序                       |
+| `excerpt`                        | TEXT         | 最多 1,024 UTF-8 bytes 的必要摘录                  |
+| `source_deleted`                 | INTEGER      | 0/1；来源删除后仍可解释已有纪要                    |
+| `created_at`                     | TEXT         | 创建时间                                           |
+
+每条 `summary_sources` 快照行在冻结时获得稳定 UUID，并作为仅属于该 run 的 evidence allowlist。Rust Provider 输出必须先完成版本化结构、大小和 allowlist 校验；只有结果实际引用的 ID 才会在同一完成事务中物化为 `evidence_items`。`summary_id + summary_source_id` 唯一，复合外键同时绑定 run、meeting、source、segment、revision、segment ordinal 和 global ordinal，且 `evidence.id = summary_source_id`；因此原始 SQL 也不能伪造跨 run/meeting 或错 revision 的 evidence tuple。未知 ID 不得接受，也不得根据模型自然语言补造。document 只证明材料内容，screen 只证明当时展示内容，manual note 是用户补充；除非 transcript 或人工确认明确支持，任何单一来源都不能自动证明会议已达成决定。
 
 ### `translations`
 
@@ -324,41 +326,81 @@ schema v2 使用统一删除任务表协调 meeting/document 的文件清理：`
 
 ### `summaries`
 
-纪要拥有独立于 `meeting.status` 的运行与修订生命周期，状态至少区分 `queued/running/completed/failed/cancelled`。只要用户选择的输入可以原子冻结，`draft`、`recording` 或 `ready` 均可创建 Summary run；`deleting`、`delete_failed`、空输入或输入仍无法安全冻结时拒绝。不要新增 `content_ready`、`source_ready` 或 `summarized` meeting 状态。
+纪要拥有独立于 `meeting.status` 的运行与修订生命周期。schema v4 状态固定为 `queued/running/completed/failed/cancelled`；当前 Summary Run Core 只创建 `run_purpose=final`、`trigger_kind=manual`。只要用户选择的输入可以原子冻结，`draft`、`recording` 或 `ready` 均可创建 run；`deleting`、`delete_failed`、空输入或无法安全冻结的输入拒绝。不要新增 `content_ready`、`source_ready` 或 `summarized` meeting 状态。
 
-| 字段              | 类型    | 说明                                      |
-| ----------------- | ------- | ----------------------------------------- |
-| `id`              | TEXT PK | UUID                                      |
-| `meeting_id`      | TEXT FK | 所属会议                                  |
-| `run_purpose`     | TEXT    | `checkpoint/final`                        |
-| `trigger_kind`    | TEXT    | `manual/interval/topic/final`             |
-| `kind`            | TEXT    | `overview/decisions/actions/risks/custom` |
-| `content_json`    | TEXT    | 版本化结构化结果                          |
-| `provider`        | TEXT    | 例如 `deepseek` 或 `local`                |
-| `model`           | TEXT    | 实际模型标识                              |
-| `prompt_version`  | TEXT    | 提示模板版本                              |
-| `revision`        | INTEGER | 同一纪要序列的修订号                      |
-| `template`        | TEXT    | `detailed/concise/actions_decisions`      |
-| `output_language` | TEXT    | `zh/en/bilingual`                         |
-| `status`          | TEXT    | 独立于 meeting 的 run 状态                |
-| `is_stale`        | INTEGER | 输入后续变化后是否可能过期                |
-| `is_user_edited`  | INTEGER | 0/1                                       |
-| `created_at`      | TEXT    | 创建时间                                  |
+| 字段                                | 类型      | 说明                                                      |
+| ----------------------------------- | --------- | --------------------------------------------------------- |
+| `id`                                | TEXT PK   | run UUID                                                  |
+| `meeting_id`                        | TEXT FK   | 所属会议                                                  |
+| `series_id`                         | TEXT      | 同一纪要重生成序列的稳定 UUID                             |
+| `previous_summary_id`               | TEXT NULL | revision > 1 时的直接前一 run                             |
+| `revision`                          | INTEGER   | 同一 series 中从 1 开始的修订号                           |
+| `previous_revision`                 | INTEGER   | 由 `revision - 1` 生成的内部直接前驱约束列                |
+| `run_purpose`                       | TEXT      | `checkpoint/final`；当前 service 固定 `final`             |
+| `trigger_kind`                      | TEXT      | `manual/interval/topic/final`；当前 service 固定 `manual` |
+| `meeting_title_snapshot`            | TEXT      | 冻结的会议标题                                            |
+| `meeting_primary_language_snapshot` | TEXT      | 冻结的会议主语言                                          |
+| `template`                          | TEXT      | `detailed/concise/actions_decisions`                      |
+| `output_language`                   | TEXT      | `zh/en/bilingual`                                         |
+| `status`                            | TEXT      | 独立 Summary run 状态                                     |
+| `provider`                          | TEXT      | 当前固定 `deterministic_mock`                             |
+| `provider_mode`                     | TEXT      | 当前固定 `mock`；schema 预留 `local/external`             |
+| `model`                             | TEXT      | 实际 Mock 模型标识                                        |
+| `prompt_version`                    | TEXT      | 提示/结果契约版本                                         |
+| `content_json`                      | TEXT NULL | 完成后写入、最大 1 MiB 的版本化结构化结果                 |
+| `error_code`                        | TEXT NULL | 失败时的稳定安全错误码                                    |
+| `source_count`                      | INTEGER   | 冻结的来源数                                              |
+| `input_segment_count`               | INTEGER   | 冻结的 final segment 数，1–20,000                         |
+| `input_bytes`                       | INTEGER   | 冻结正文 UTF-8 bytes，1–10 MiB                            |
+| `is_stale`                          | INTEGER   | 0/1；live 输入后续变化                                    |
+| `stale_reason`                      | TEXT NULL | `segment_revised/source_deleted`                          |
+| `stale_at`                          | TEXT NULL | 首次标记 stale 的时间                                     |
+| `is_user_edited`                    | INTEGER   | 0/1；当前阶段始终为 0，留给编辑阶段                       |
+| `snapshot_created_at`               | TEXT      | 快照冻结完成时间                                          |
+| `created_at`                        | TEXT      | run 创建时间                                              |
+| `started_at`                        | TEXT NULL | 开始执行时间                                              |
+| `finished_at`                       | TEXT NULL | terminal 时间                                             |
+| `cancel_requested_at`               | TEXT NULL | 取消请求时间                                              |
+| `updated_at`                        | TEXT      | 最近状态更新时间                                          |
 
-简约版 checkpoint 首先只允许 `manual` 和 `interval`。`topic` 是后续可修正建议，不得仅由屏幕变化触发。checkpoint 只帮助会议中导航；`final` run 必须重新冻结原始转录片段，不能把 checkpoint 摘要当作唯一事实来源。固定时间触发在没有新增最终片段时必须去重。
+`(series_id, revision)` 唯一，同一 series 同时最多一个 queued/running run；revision 1 没有 previous，后续 revision 的四列复合自外键把 `previous_summary_id` 约束为同一会议、同一 series、恰好前一 revision。Rust Service 在 IMMEDIATE 事务内额外保证 parent 已终态且仍是 latest，并重新冻结当前 live revisions，不能覆盖旧结果。状态字段与 result/error/timestamp 使用组合 `CHECK`：只有 completed 可含 `content_json`，failed 必须含安全 `error_code`，terminal 必须有 `finished_at`。正常状态机是 `queued → running → completed/failed/cancelled` 和 `queued → cancelled`；启动恢复把遗留 `running` 原子转为 `failed + summary_interrupted`，不自动重放 Provider。
+
+Summary run 和 evidence 列表均使用有界 keyset 分页，默认 50、最大 100；run cursor 是上一页最后一个 run UUID，排序固定为 `created_at DESC, id ASC`，evidence cursor 是上一页最后一个 `global_ordinal`。Tauri wire DTO（包括嵌套结构化结果）统一 camelCase。并发 stale base 返回 `summary_revision_conflict`，未知、重复或跨 run evidence 返回 `summary_evidence_invalid`。
+
+未来 checkpoint 首先只允许 `manual` 和 `interval`。`topic` 是后续可修正建议，不得仅由屏幕变化触发。checkpoint 只帮助会议中导航；`final` run 必须重新冻结原始转录片段，不能把 checkpoint 摘要当作唯一事实来源。固定时间触发在没有新增最终片段时必须去重。
 
 ### `summary_sources`
 
-| 字段               | 类型    | 说明                           |
-| ------------------ | ------- | ------------------------------ |
-| `summary_id`       | TEXT FK | 摘要/run revision              |
-| `source_id`        | TEXT FK | 被用户选择的 transcript source |
-| `segment_id`       | TEXT FK | 快照包含的片段                 |
-| `segment_revision` | INTEGER | 快照使用的修订                 |
-| `ordinal`          | INTEGER | 当次输入顺序                   |
-| `relation`         | TEXT    | `supports/contradicts/context` |
+`summary_sources` 每行是一个真实持久化的 transcript segment snapshot，而不是指向会原位更新或删除的 live segment。`source_id_snapshot`/`segment_id_snapshot` 保留历史 UUID 值但不建立 live FK，避免 source 删除级联破坏历史 run。
 
-联合唯一键必须包含 summary、segment 和 revision。创建 Summary run 时冻结 source IDs、segment IDs/revisions/order、speaker、offsets、language、模板、输出语言和创建时间；模型运行期间后续编辑不影响当前 run。重新生成创建新的 summary revision，不能覆盖用户编辑。完整 transcript 不重复复制到每个 evidence item，仅保存稳定引用和必要摘录。
+| 字段                              | 类型         | 说明                                                     |
+| --------------------------------- | ------------ | -------------------------------------------------------- |
+| `id`                              | TEXT PK      | snapshot row UUID，也是当前 run 的 evidence allowlist ID |
+| `summary_id`                      | TEXT FK      | 所属 Summary run                                         |
+| `meeting_id`                      | TEXT FK      | 与 Summary 一致的会议                                    |
+| `source_id_snapshot`              | TEXT         | 冻结的 source UUID 值                                    |
+| `segment_id_snapshot`             | TEXT         | 冻结的 segment UUID 值                                   |
+| `segment_revision`                | INTEGER      | 快照使用的 revision                                      |
+| `source_ordinal`                  | INTEGER      | 用户选择来源的稳定顺序                                   |
+| `segment_ordinal`                 | INTEGER      | 原 source 内顺序                                         |
+| `global_ordinal`                  | INTEGER      | 多 source run 内顺序                                     |
+| `source_type_snapshot`            | TEXT         | 冻结的来源类型                                           |
+| `source_display_name_snapshot`    | TEXT NULL    | 冻结的安全显示名；显式 source 删除后清空                 |
+| `source_language_snapshot`        | TEXT NULL    | 冻结的 source language                                   |
+| `source_base_started_at_snapshot` | TEXT NULL    | 冻结的可选 source 时间基准                               |
+| `speaker_label_snapshot`          | TEXT NULL    | 来源原始 speaker label                                   |
+| `speaker_name_snapshot`           | TEXT NULL    | 当次用户确认的显示名称                                   |
+| `start_offset_ms_snapshot`        | INTEGER NULL | 冻结的开始 offset                                        |
+| `end_offset_ms_snapshot`          | INTEGER NULL | 冻结的结束 offset                                        |
+| `original_text_snapshot`          | TEXT NULL    | 实际复制的规范化正文；显式 source 删除后清空             |
+| `language_snapshot`               | TEXT NULL    | segment BCP 47 language                                  |
+| `confidence_snapshot`             | REAL NULL    | 0–1                                                      |
+| `is_final_snapshot`               | INTEGER      | schema v4 固定为 1                                       |
+| `snapshot_at`                     | TEXT         | 当次复制时间                                             |
+| `source_deleted`                  | INTEGER      | 0/1                                                      |
+| `redacted_at`                     | TEXT NULL    | 显式删除触发的安全清理时间                               |
+
+同一 run 的 `(segment_id_snapshot, segment_revision)` 与 `global_ordinal` 分别唯一。每个 run 最多冻结 20,000 个 final segments 和合计 10 MiB UTF-8 正文，超限整体拒绝、不截断。Rust Provider 只能从这些行重建请求，不能重新读取 `transcript_segments.original_text`。segment 后续修正只标记依赖旧 revision 的 summary stale；显式 source 删除是唯一允许清理 snapshot 正文和显示元数据的例外，已完成结果与实际引用的最小 evidence 不被静默改写。
 
 ### `summary_manual_notes`（会议重点阶段计划）
 
@@ -433,7 +475,8 @@ schema v2 使用统一删除任务表协调 meeting/document 的文件清理：`
 - 启用 `PRAGMA foreign_keys = ON`。
 - 使用 WAL 时，`.db-wal` 和 `.db-shm` 必须保持本地且被 Git 忽略。
 - schema v2 已建立 `idx_documents_meeting_status`、`idx_documents_meeting_sha256`、两个 deletion job partial unique indexes 和 `idx_deletion_jobs_status`。
-- 当前 schema v3 已建立 `transcript_sources`/`transcript_segments` 及同会议来源哈希、source ordinal、meeting/source 查询索引；其他计划表在所属 migration 中建立对应索引，原 Docling 编排 migration 顺延到 v4 或更高并按落地顺序递增。
+- schema v3 已建立 `transcript_sources`/`transcript_segments` 及同会议来源哈希、source ordinal、meeting/source 查询索引。
+- schema v4 在当前 Summary Run Core 中创建 `summaries`、`summary_sources` 和 transcript-only `evidence_items`。关键索引包括 `(series_id, revision)` 唯一约束、direct-previous lineage、每个 series 最多一个 active run 的 partial unique index、meeting/created、status/updated、meeting/stale、live source/segment snapshot 查询以及 evidence 的 summary/global ordinal 查询。
 - `documents(meeting_id, sha256)` 对非 NULL 哈希使用唯一约束，确保同一会议内容去重；跨会议不共享物理副本。
 - 状态字段使用 `CHECK` 约束或迁移层枚举校验。
 - 所有迁移在事务中执行，并在 schema 版本表中记录。
@@ -484,7 +527,7 @@ MVP 1A-2-1 的当前无文件删除状态契约固定如下：
 | 未知状态        | fail closed                                     |
 
 1. 接受请求时在事务中将会议设为 `deleting`、写入 `deleted_at` tombstone，并禁止编辑、开始、导入或生成纪要。
-2. 持久化协调状态必须能枚举原始文档，以及未来解析、音频、转写、译文、speaker aliases、manual notes、checkpoint、屏幕临时数据、纪要、证据、缓存和导出产物。
+2. 持久化协调状态必须能枚举原始文档、schema v4 summaries/snapshots/evidence，以及未来解析、音频、转写、译文、speaker aliases、manual notes、checkpoint、屏幕临时数据、缓存和导出产物。
 3. 取消或等待任务并关闭句柄后，将受控文件同卷移动至应用私有 `deletion-trash`，或采用具备同等恢复能力的设计。
 4. 只有文件和派生数据清理全部成功后，才最终删除数据库记录和 tombstone。
 5. 任何步骤失败时进入 `delete_failed`，保留稳定安全错误码，不伪装成功，也不把残留重新暴露为正常会议数据。
@@ -526,7 +569,7 @@ MVP 1B-1A 已同时迁移删除实现和测试；MVP 1B-1B 的 `delete_meeting` 
 ## 8. 数据模型版本化
 
 - `schema_migrations(version, applied_at, checksum)` 记录数据库迁移。
-- 当前 SQLite schema 版本为 3：v1 是 meeting 数据核心；v2 以事务方式保留既有 meeting 数据并扩展删除状态，同时创建 `documents`、`deletion_jobs` 和相关索引；v3 创建 `transcript_sources` 与 `transcript_segments`。重复启动按 checksum 幂等跳过，冲突或中途失败 fail closed。
-- 后续 Docling parsing、summary/evidence 或其他 migration 不得再使用 v3，必须基于合并时最新版本顺序递增。
+- 当前分支的 SQLite schema 版本为 4：v1 是 meeting 数据核心；v2 以事务方式保留既有 meeting 数据并扩展删除状态，同时创建 `documents`、`deletion_jobs` 和相关索引；v3 创建 `transcript_sources` 与 `transcript_segments`；v4 创建 Summary series/run、完整 transcript snapshot 与 run-owned evidence。重复启动按 checksum 幂等跳过，冲突或中途失败 fail closed。
+- 后续 Docling parsing 或其他 migration 不得复用 v4，必须基于合并时最新版本顺序递增。
 - Sidecar API 和 `content_json` 都包含独立 `api_version/schema_version`。
 - 破坏性迁移必须先备份并获得用户批准，不得自动丢弃未知字段。

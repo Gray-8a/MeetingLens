@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-summary-evidence"
+description = "Enables the list_summary_evidence command without any pre-configured scope."
+commands.allow = ["list_summary_evidence"]
+
+[[permission]]
+identifier = "deny-list-summary-evidence"
+description = "Denies the list_summary_evidence command without any pre-configured scope."
+commands.deny = ["list_summary_evidence"]

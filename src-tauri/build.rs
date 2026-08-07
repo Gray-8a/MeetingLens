@@ -22,6 +22,14 @@ const APP_COMMANDS: &[&str] = &[
     "update_transcript_segment",
     "delete_transcript_source",
     "get_transcript_import_policy",
+    "get_summary_policy",
+    "create_summary_run",
+    "create_summary_revision",
+    "execute_summary_run",
+    "get_summary_run",
+    "list_summary_runs",
+    "cancel_summary_run",
+    "list_summary_evidence",
 ];
 
 fn main() {

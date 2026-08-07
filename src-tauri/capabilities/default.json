@@ -10,6 +10,7 @@
     "meeting-data-commands",
     "sidecar-status-command",
     "secret-status-management",
+    "summary-run-commands",
     "transcript-management-commands"
   ]
 }
