@@ -83,7 +83,7 @@ Phase 0 已通过 PR #1 合并，并在 Windows 本机实际启动 Tauri 窗口�
 
 ### 5.3 简约版近期主线：先完成总结模式
 
-PR #1–#19 已合并。文档安全存储、原生导入 UI、Docling Worker Foundation、转录/纪要规格、zh-CN/en-US 界面、Help 页面、双语开发预览手册、Transcript Data Core 和安全 Transcript Command API 已完成；Docling 具备独立锁定环境、显式离线模型、stdio 协议、Windows Job Object、超时/取消和多格式本机 Smoke，但尚未接入 SQLite、Provider、Commands 或 UI。当前 SQLite schema 为 v3，真实转录可通过 Rust 原生选择器或有界粘贴 DTO 原子创建/添加、规范化并持久化，但普通用户输入与检查界面正在由 `feat/summary-mode-input-ui` 实现。DeepSeek key 可以安全保存但没有真实 Provider 消费，产品当前仍不能生成真实会议纪要。阶段名和分支名是未来计划的权威标识；PR 编号只记录实际历史。
+PR #1–#20 已合并。文档安全存储、原生导入 UI、Docling Worker Foundation、转录/纪要规格、zh-CN/en-US 界面、Help 页面、双语开发预览手册、Transcript Data Core、安全 Transcript Command API 和 Summary Mode Input UI 已完成；Docling 具备独立锁定环境、显式离线模型、stdio 协议、Windows Job Object、超时/取消和多格式本机 Smoke，但尚未接入 SQLite、Provider、Commands 或 UI。当前 `feat/summary-run-core` 正在加入 schema v4、不可变正文快照、run/series/revision、Rust zero-network Mock 与 evidence allowlist。DeepSeek key 可以安全保存但没有真实 Provider 消费，普通用户生成入口仍禁用，真实 AI 纪要和正式结果 UI 仍不可用。阶段名和分支名是未来计划的权威标识；PR 编号只记录实际历史。
 
 当前顺序不再使用未来 PR 编号作为计划契约：
 
@@ -92,8 +92,8 @@ PR #1–#19 已合并。文档安全存储、原生导入 UI、Docling Worker Fo
 3. **`docs/simplified-three-mode-spec`（已完成，PR #17）**：冻结三个入口、共享管线、隐私边界和新顺序，不实现功能。
 4. **`feat/transcript-data-core`（已完成，PR #18）**：schema v3、`transcript_sources`/`transcript_segments`、粘贴/TXT/SRT/VTT 同步解析、去重、修正和删除语义；不做 UI 或外部 Provider。
 5. **`feat/transcript-command-api`（已完成，PR #19）**：安全 Transcript Commands/API、Rust 原生选择器和原子 meeting + transcript 工作流；不实现正式页面。
-6. **`feat/summary-mode-input-ui`（当前）**：总结模式入口、粘贴与原生导入、来源和分页片段预览、基础说话人/正文修正；只消费已合并 API，不调用 DeepSeek。
-7. **`feat/summary-run-core`**：Summary run/revision、不可变输入快照、evidence 与稳定错误；只使用 Mock，不接外部 Provider 或结果 UI。
+6. **`feat/summary-mode-input-ui`（已完成，PR #20）**：总结模式入口、粘贴与原生导入、来源和分页片段预览、基础说话人/正文修正；只消费已合并 API，不调用 DeepSeek。
+7. **`feat/summary-run-core`（当前）**：schema v4、Summary run/series/revision、完整 transcript snapshot、evidence allowlist、稳定状态/恢复与 Rust zero-network Mock；不接外部 Provider 或结果 UI。
 8. **`feat/consent-data-core`**：通用 `consent_events`、会话失效和审计 API；不调用 Provider、不访问设备。
 9. **`feat/summary-provider-deepseek`**：Rust SecretStore 消费、外发同意和受限 DeepSeek adapter；不新增 schema 或正式页面。
 10. **`feat/summary-mode-minutes`**：选择输入/模板、外发预览、生成状态、结果、证据和 Markdown 复制/下载；不新增数据库或 Provider。
@@ -117,6 +117,8 @@ Docling 是参考文档解析增强，不是 transcript-only 纪要的强制前�
 
 限制固定为：粘贴内容最多 2 MiB、转录文件最多 10 MiB、每个 source 最多 20,000 个 segments、单 segment 正文最多 64 KiB。输入必须为严格 UTF-8，拒绝 NUL 和除 TAB/LF/CR 外的危险 C0 控制字符。文本中的 URL、代码和指令只作为数据，不执行、不访问网络、不写入普通日志。
 
+Summary run 的多来源聚合限制独立固定为：最多 20,000 个 final segments、规范化正文合计最多 10 MiB UTF-8 bytes。来源按用户选择顺序、片段按稳定 ordinal 冻结并产生全局 ordinal；空输入、重复/跨 meeting source、只有 partial segments 或任何超限都整体拒绝，不截断、不抽样。
+
 普通用户检查页面不得一次读取或渲染 20,000 个 segments。列表由后端按稳定 `ordinal` 顺序分页，生产单页上限为 200，并返回总数和后续页信息；不得在前端先取得全量再切片。同一 source 内相同 `speaker_label` 可由用户统一设置或清空 `speaker_name`，每条受影响 segment 的 revision 必须递增且 `corrected_at` 更新；原始 label 不变，映射不跨 source/meeting，也不推断真实身份。
 
 `platform_export` 是保留来源类型；Teams、Zoom、飞书、腾讯会议等平台专用 adapter 只有获得脱敏真实样例后才增加。首版不承诺 DOCX/CSV/JSON 平台模板、视频转录或音频文件转录。
@@ -128,6 +130,14 @@ Docling 是参考文档解析增强，不是 transcript-only 纪要的强制前�
 #### 5.3.2 纪要资格、模板与证据
 
 纪要资格取决于能否冻结至少一个用户选择的有效输入，而不是只允许 `ready`。架构允许 `draft/recording/ready` 搭配 transcript、manual notes、documents 或多来源混合，也允许 transcript-only、documents-only 和 manual-notes-only；近期 MVP 只实现 transcript 输入。`deleting`、`delete_failed`、没有输入或输入仍无法安全冻结时禁止。纪要任务拥有独立状态，不新增 `content_ready/source_ready/summarized` 等 meeting 状态。
+
+schema v4 为每个新纪要系列生成 `series_id` 和 revision 1；显式重新生成在事务中创建下一 revision、重新冻结当前 live segment revisions，不覆盖旧 run。快照实际复制正文、source/segment IDs、revision、source/segment/global ordinal、speaker、offset、language、confidence 与时间，Provider 不得回读 live segment。当前状态机是 `queued → running → completed/failed/cancelled` 和 `queued → cancelled`；启动后遗留 running 变为 `failed + summary_interrupted`。
+
+当前 Rust deterministic Mock 只消费本地快照，不访问 SecretStore、环境凭据、文件、Sidecar 或网络。每个 snapshot row 的 UUID 形成当前 run evidence allowlist；Rust 在原子写入结果前验证 output run ID、结构版本、大小/数量和全部 evidence，未知或跨 run 引用使 run 安全失败。只有结果实际引用的 transcript evidence 被持久化；document/screen/manual-note evidence 不属于本阶段。
+
+开发/API 边界包括 `get_summary_policy`、`create_summary_run`、`create_summary_revision`、`execute_summary_run`、`get_summary_run`、`list_summary_runs`、`cancel_summary_run` 和 `list_summary_evidence` 八个 commands，并由集中式 `summaryApi` 调用。它们不是正式生成页面；WebView 不能提交 Provider 结果、evidence、正文、路径或凭据。
+
+segment 修正把依赖旧 revision 的 run 标为 `segment_revised` stale，但旧快照/结果不变。queued/running run 使用的 source 删除稳定拒绝；terminal source 删除保留已引用、最多 1,024 UTF-8 bytes 的 evidence，清理完整正文快照并标 `source_deleted` stale。会议删除先取消 active runs，再由既有协调器清理 summaries、snapshots 和 evidence；任何路径都不得静默重生成。
 
 第一版模板固定为：详实会议纪要、简洁会议总结、行动项与决定清单；输出语言为中文、英文或双语。模型不得发明参会人、负责人、截止日期或会议结论；决定区分 `proposed/confirmed/superseded`，行动项区分明确分配、建议任务和未确认任务，冲突和“无法确定”必须保留。关键决定、行动项和争议必须引用当前 run 快照中的有效 evidence。
 
@@ -249,6 +259,8 @@ React 只接收 document ID、原始显示名称、安全类型、大小、状�
 - 外部依赖使用精确版本和 lockfile；模型、授权和系统要求在实现分支开始前复核。
 
 ## 10. DeepSeek 约定
+
+当前 Summary Run Core 不调用 DeepSeek：`deterministic_mock` 是零网络开发 Provider，普通用户生成入口与正式结果 UI 仍不可用。以下约定只对后续获批的真实 Provider 阶段生效。
 
 - 基础地址可配置，默认使用官方 `https://api.deepseek.com`。
 - 实时翻译模型为 `deepseek-v4-flash`。

@@ -2,7 +2,7 @@
 
 MeetingLens is a privacy-first Windows desktop assistant with three simple entry modes backed by one shared session engine: Summary, Translation, and Meeting. Its first real-value path turns pasted or imported meeting transcripts into detailed, editable, evidence-linked minutes; live audio, translation, and screen context extend the same transcript pipeline in later small releases.
 
-PR #1–#19 are merged. The meeting data/UI foundation, Provider mocks, authenticated Sidecar boundary, Windows SecretStore, secure document import, isolated Docling Worker, transcript/summary specification, packaged zh-CN/en-US UI, Help page, bilingual preview guides, schema-v3 Transcript Data Core, and safe Transcript Command API are complete. Docling is not connected to SQLite, Tauri commands, document state, or product UI; its product wiring is scheduled after the transcript-only editing/export loop and before realtime capture, without blocking the first minutes. The current `feat/summary-mode-input-ui` stage adds the three-mode Home entry, local paste/native TXT/SRT/VTT input, bounded transcript review, and corrections. Real summary generation remains unimplemented.
+PR #1–#20 are merged. The meeting data/UI foundation, Provider mocks, authenticated Sidecar boundary, Windows SecretStore, secure document import, isolated Docling Worker, transcript/summary specification, packaged zh-CN/en-US UI, Help page, bilingual preview guides, schema-v3 Transcript Data Core, safe Transcript Command API, and Summary Mode Input UI are complete. Docling is not connected to SQLite, Tauri commands, document state, or product UI; its product wiring remains after the transcript-only editing/export loop and before realtime capture. The current `feat/summary-run-core` stage adds schema v4, persistent transcript snapshots, Summary series/revisions, run-owned evidence, recovery, and a Rust zero-network deterministic Mock. The user-facing Generate action remains disabled; real AI minutes, outbound consent, DeepSeek, and the formal result workspace are not available.
 
 The Provider runtime defines Capture, Transcription, Translation, Summary, and DocumentParser capability boundaries. Current implementations are explicit deterministic in-memory mocks: they do not access devices, files, or networks, and can be replaced through an application-owned Registry without changing page business logic.
 
@@ -102,6 +102,12 @@ The Summary input workspace reads segments through stable ordinal pagination wit
 
 Transcript positions use optional relative millisecond offsets plus an optional source base time. Inputs without timestamps use a stable segment ordinal. Summary generation is eligible whenever the user has at least one valid input that can be frozen, including draft or in-progress meetings; it is not restricted to `ready`. Every run uses an immutable input snapshot so edits, source deletion, and regeneration cannot silently rewrite an existing or user-edited summary.
 
+Schema v4 groups regenerations by `series_id` and a unique revision. Each run copies source/segment IDs, revisions, source/segment/global ordinals, speaker metadata, offsets, normalized text, language, confidence, finality, and snapshot time. A run accepts at most 20,000 final segments and 10 MiB of UTF-8 transcript text. The Rust Provider reads only this snapshot; every row contributes a run-local evidence ID, and unknown or cross-run references fail before the structured result and cited evidence are atomically stored.
+
+The current core exposes eight minimal commands through the centralized `summaryApi`: `get_summary_policy`, `create_summary_run`, `create_summary_revision`, `execute_summary_run`, `get_summary_run`, `list_summary_runs`, `cancel_summary_run`, and `list_summary_evidence`. The deterministic Mock does not read SecretStore, environment credentials, files, the Sidecar, or the network. Runs follow queued/running/completed/failed/cancelled; startup converts an abandoned running run to `failed` with `summary_interrupted` rather than replaying it.
+
+Correcting a live segment marks dependent runs stale without changing their snapshots or results. Deleting a source used by a queued/running run is rejected; terminal-source deletion preserves only cited evidence, redacts full snapshot text and display metadata, and marks the result source-deleted/stale. Meeting deletion cancels active runs before the existing coordinator removes all summaries, snapshots, and evidence.
+
 The initial templates are detailed meeting minutes, concise meeting summary, and actions/decisions. Output can be Chinese, English, or bilingual. Before any DeepSeek request, the UI must preview selected sources, segment count, time range, speakers, template, output language, and outbound data type, and require explicit confirmation.
 
 ## Project documents
@@ -132,14 +138,15 @@ The initial templates are detailed meeting minutes, concise meeting summary, and
 14. **Direction alignment — complete:** freeze the three simple modes and shared pipeline (`docs/simplified-three-mode-spec`, PR #17).
 15. **Transcript data core — complete:** schema v3, paste/TXT/SRT/VTT normalization, revisions, and stable Summary input (`feat/transcript-data-core`, PR #18).
 16. **Transcript command boundary — complete:** secure commands, the Rust-native picker, and atomic meeting + transcript creation (`feat/transcript-command-api`, PR #19).
-17. **Current Summary input UI:** three-mode Home entry, paste/native import, paginated source review, and text/speaker corrections (`feat/summary-mode-input-ui`).
-18. **First real minutes:** separate summary data/snapshot core, consent data core, DeepSeek Provider, and result workspace PRs.
-19. **Complete the transcript-only loop:** editing, revision/stale handling, section regeneration, DOCX, and history (`feat/summary-editing-export`).
-20. **Reference enrichment:** connect the completed Docling Worker, then add document evidence indexing; neither stage blocks the first transcript-only minutes.
-21. **Realtime foundation:** live-session data, Sidecar supervisor, Windows audio capture, then realtime ASR into the same transcript segments.
-22. **Screen and speaker context:** user-confirmed window/accessibility/OCR stages, followed by speaker data, diarization, and naming.
-23. **Realtime translation:** translation Provider, checkpoint summaries, topic suggestions, and the optional overlay.
-24. **Mode integration:** Translation and Meeting workspaces reuse the shared transcript, screen, evidence, minutes, history, and export pipelines.
+17. **Summary input UI — complete:** three-mode Home entry, paste/native import, paginated source review, and text/speaker corrections (`feat/summary-mode-input-ui`, PR #20).
+18. **Current Summary run core:** schema v4, run/series/revision, immutable transcript snapshots, evidence allowlist, stable recovery, and Rust zero-network Mock (`feat/summary-run-core`).
+19. **First real minutes:** separate consent data core, DeepSeek Provider, and result workspace PRs.
+20. **Complete the transcript-only loop:** editing, revision/stale handling, section regeneration, DOCX, and history (`feat/summary-editing-export`).
+21. **Reference enrichment:** connect the completed Docling Worker, then add document evidence indexing; neither stage blocks the first transcript-only minutes.
+22. **Realtime foundation:** live-session data, Sidecar supervisor, Windows audio capture, then realtime ASR into the same transcript segments.
+23. **Screen and speaker context:** user-confirmed window/accessibility/OCR stages, followed by speaker data, diarization, and naming.
+24. **Realtime translation:** translation Provider, checkpoint summaries, topic suggestions, and the optional overlay.
+25. **Mode integration:** Translation and Meeting workspaces reuse the shared transcript, screen, evidence, minutes, history, and export pipelines.
 
 The authoritative branch mapping, exclusions, and acceptance criteria are in [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md). Database, UI, external Provider, audio, screen, and heavy-worker trust boundaries remain separate PRs. Screenpipe, if adopted, is an optional provider rather than a core dependency.
 

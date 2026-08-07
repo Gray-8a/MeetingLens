@@ -246,6 +246,228 @@ const MIGRATIONS: &[Migration] = &[
             ON transcript_segments(meeting_id, source_id, ordinal);
     "#,
     },
+    Migration {
+        version: 4,
+        sql: r#"
+        CREATE TABLE summaries (
+            id TEXT PRIMARY KEY NOT NULL CHECK(length(id) = 36),
+            meeting_id TEXT NOT NULL,
+            series_id TEXT NOT NULL CHECK(length(series_id) = 36),
+            previous_summary_id TEXT CHECK(
+                previous_summary_id IS NULL OR length(previous_summary_id) = 36
+            ),
+            revision INTEGER NOT NULL CHECK(revision >= 1),
+            run_purpose TEXT NOT NULL CHECK(run_purpose IN ('checkpoint', 'final')),
+            trigger_kind TEXT NOT NULL CHECK(trigger_kind IN ('manual', 'interval', 'topic', 'final')),
+            meeting_title_snapshot TEXT NOT NULL CHECK(
+                length(trim(meeting_title_snapshot)) BETWEEN 1 AND 200
+            ),
+            meeting_primary_language_snapshot TEXT NOT NULL CHECK(
+                length(trim(meeting_primary_language_snapshot)) BETWEEN 1 AND 35
+            ),
+            template TEXT NOT NULL CHECK(template IN ('detailed', 'concise', 'actions_decisions')),
+            output_language TEXT NOT NULL CHECK(output_language IN ('zh', 'en', 'bilingual')),
+            status TEXT NOT NULL CHECK(status IN (
+                'queued', 'running', 'completed', 'failed', 'cancelled'
+            )),
+            provider TEXT NOT NULL CHECK(
+                length(trim(provider)) > 0
+                AND length(CAST(provider AS BLOB)) <= 64
+            ),
+            model TEXT NOT NULL CHECK(
+                length(trim(model)) > 0
+                AND length(CAST(model AS BLOB)) <= 128
+            ),
+            prompt_version TEXT NOT NULL CHECK(
+                length(trim(prompt_version)) > 0
+                AND length(CAST(prompt_version AS BLOB)) <= 64
+            ),
+            content_json TEXT CHECK(
+                content_json IS NULL OR (
+                    length(trim(content_json)) > 0
+                    AND length(CAST(content_json AS BLOB)) <= 1048576
+                )
+            ),
+            error_code TEXT CHECK(
+                error_code IS NULL OR (
+                    length(trim(error_code)) > 0
+                    AND length(CAST(error_code AS BLOB)) <= 64
+                )
+            ),
+            source_count INTEGER NOT NULL CHECK(source_count BETWEEN 1 AND 20000),
+            input_segment_count INTEGER NOT NULL CHECK(input_segment_count BETWEEN 1 AND 20000),
+            input_bytes INTEGER NOT NULL CHECK(input_bytes BETWEEN 1 AND 10485760),
+            is_stale INTEGER NOT NULL DEFAULT 0 CHECK(is_stale IN (0, 1)),
+            stale_reason TEXT CHECK(stale_reason IN ('segment_revised', 'source_deleted')),
+            stale_at TEXT,
+            is_user_edited INTEGER NOT NULL DEFAULT 0 CHECK(is_user_edited IN (0, 1)),
+            snapshot_created_at TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            started_at TEXT,
+            finished_at TEXT,
+            cancel_requested_at TEXT,
+            updated_at TEXT NOT NULL,
+            UNIQUE(id, meeting_id),
+            UNIQUE(series_id, revision),
+            CHECK(
+                (revision = 1 AND previous_summary_id IS NULL)
+                OR (revision > 1 AND previous_summary_id IS NOT NULL)
+            ),
+            CHECK(
+                (is_stale = 0 AND stale_reason IS NULL AND stale_at IS NULL)
+                OR (is_stale = 1 AND stale_reason IS NOT NULL AND stale_at IS NOT NULL)
+            ),
+            CHECK(
+                (status = 'queued' AND content_json IS NULL AND error_code IS NULL
+                    AND started_at IS NULL AND finished_at IS NULL AND cancel_requested_at IS NULL)
+                OR (status = 'running' AND content_json IS NULL AND error_code IS NULL
+                    AND started_at IS NOT NULL AND finished_at IS NULL)
+                OR (status = 'completed' AND content_json IS NOT NULL AND error_code IS NULL
+                    AND started_at IS NOT NULL AND finished_at IS NOT NULL)
+                OR (status = 'failed' AND content_json IS NULL AND error_code IS NOT NULL
+                    AND started_at IS NOT NULL AND finished_at IS NOT NULL)
+                OR (status = 'cancelled' AND content_json IS NULL AND error_code IS NULL
+                    AND finished_at IS NOT NULL AND cancel_requested_at IS NOT NULL)
+            ),
+            FOREIGN KEY(meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX idx_summaries_meeting_created
+            ON summaries(meeting_id, created_at DESC, id);
+        CREATE INDEX idx_summaries_status_updated
+            ON summaries(status, updated_at, id);
+        CREATE INDEX idx_summaries_meeting_stale
+            ON summaries(meeting_id, stale_at, id)
+            WHERE is_stale = 1;
+        CREATE UNIQUE INDEX idx_summaries_series_active
+            ON summaries(series_id)
+            WHERE status IN ('queued', 'running');
+
+        CREATE TABLE summary_sources (
+            id TEXT PRIMARY KEY NOT NULL CHECK(length(id) = 36),
+            summary_id TEXT NOT NULL,
+            meeting_id TEXT NOT NULL,
+            source_id_snapshot TEXT NOT NULL CHECK(length(source_id_snapshot) = 36),
+            segment_id_snapshot TEXT NOT NULL CHECK(length(segment_id_snapshot) = 36),
+            segment_revision INTEGER NOT NULL CHECK(segment_revision >= 1),
+            source_ordinal INTEGER NOT NULL CHECK(source_ordinal BETWEEN 0 AND 19999),
+            segment_ordinal INTEGER NOT NULL CHECK(segment_ordinal BETWEEN 0 AND 19999),
+            global_ordinal INTEGER NOT NULL CHECK(global_ordinal BETWEEN 0 AND 19999),
+            source_type_snapshot TEXT NOT NULL CHECK(source_type_snapshot IN (
+                'pasted_text', 'imported_txt', 'imported_srt', 'imported_vtt',
+                'live_asr', 'platform_export'
+            )),
+            source_display_name_snapshot TEXT CHECK(
+                source_display_name_snapshot IS NULL OR (
+                    length(trim(source_display_name_snapshot)) > 0
+                    AND length(CAST(source_display_name_snapshot AS BLOB)) <= 255
+                )
+            ),
+            source_language_snapshot TEXT CHECK(
+                source_language_snapshot IS NULL OR length(trim(source_language_snapshot)) BETWEEN 1 AND 35
+            ),
+            source_base_started_at_snapshot TEXT,
+            speaker_label_snapshot TEXT CHECK(
+                speaker_label_snapshot IS NULL OR (
+                    length(trim(speaker_label_snapshot)) > 0
+                    AND length(CAST(speaker_label_snapshot AS BLOB)) <= 255
+                )
+            ),
+            speaker_name_snapshot TEXT CHECK(
+                speaker_name_snapshot IS NULL OR (
+                    length(trim(speaker_name_snapshot)) > 0
+                    AND length(CAST(speaker_name_snapshot AS BLOB)) <= 255
+                )
+            ),
+            start_offset_ms_snapshot INTEGER CHECK(
+                start_offset_ms_snapshot IS NULL OR start_offset_ms_snapshot >= 0
+            ),
+            end_offset_ms_snapshot INTEGER CHECK(
+                end_offset_ms_snapshot IS NULL OR (
+                    start_offset_ms_snapshot IS NOT NULL
+                    AND end_offset_ms_snapshot >= start_offset_ms_snapshot
+                )
+            ),
+            original_text_snapshot TEXT CHECK(
+                original_text_snapshot IS NULL OR (
+                    length(trim(original_text_snapshot)) > 0
+                    AND length(CAST(original_text_snapshot AS BLOB)) <= 65536
+                )
+            ),
+            language_snapshot TEXT CHECK(
+                language_snapshot IS NULL OR length(trim(language_snapshot)) BETWEEN 1 AND 35
+            ),
+            confidence_snapshot REAL CHECK(
+                confidence_snapshot IS NULL OR confidence_snapshot BETWEEN 0.0 AND 1.0
+            ),
+            is_final_snapshot INTEGER NOT NULL CHECK(is_final_snapshot = 1),
+            snapshot_at TEXT NOT NULL,
+            source_deleted INTEGER NOT NULL DEFAULT 0 CHECK(source_deleted IN (0, 1)),
+            redacted_at TEXT,
+            UNIQUE(id, summary_id, meeting_id),
+            UNIQUE(summary_id, segment_id_snapshot, segment_revision),
+            UNIQUE(summary_id, global_ordinal),
+            CHECK(
+                (source_deleted = 0 AND source_display_name_snapshot IS NOT NULL
+                    AND original_text_snapshot IS NOT NULL AND redacted_at IS NULL)
+                OR (source_deleted = 1 AND original_text_snapshot IS NULL AND redacted_at IS NOT NULL)
+            ),
+            FOREIGN KEY(summary_id, meeting_id)
+                REFERENCES summaries(id, meeting_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX idx_summary_sources_live_source
+            ON summary_sources(meeting_id, source_id_snapshot, summary_id);
+        CREATE INDEX idx_summary_sources_live_segment
+            ON summary_sources(meeting_id, segment_id_snapshot, segment_revision, summary_id);
+
+        CREATE TABLE evidence_items (
+            id TEXT PRIMARY KEY NOT NULL CHECK(length(id) = 36),
+            summary_id TEXT NOT NULL,
+            meeting_id TEXT NOT NULL,
+            summary_source_id TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK(kind = 'transcript'),
+            source_id_snapshot TEXT NOT NULL CHECK(length(source_id_snapshot) = 36),
+            transcript_segment_id_snapshot TEXT NOT NULL CHECK(
+                length(transcript_segment_id_snapshot) = 36
+            ),
+            segment_revision INTEGER NOT NULL CHECK(segment_revision >= 1),
+            label TEXT NOT NULL CHECK(
+                length(trim(label)) > 0 AND length(CAST(label AS BLOB)) <= 255
+            ),
+            speaker_snapshot TEXT CHECK(
+                speaker_snapshot IS NULL OR (
+                    length(trim(speaker_snapshot)) > 0
+                    AND length(CAST(speaker_snapshot AS BLOB)) <= 255
+                )
+            ),
+            start_offset_ms INTEGER CHECK(start_offset_ms IS NULL OR start_offset_ms >= 0),
+            end_offset_ms INTEGER CHECK(
+                end_offset_ms IS NULL OR (
+                    start_offset_ms IS NOT NULL AND end_offset_ms >= start_offset_ms
+                )
+            ),
+            ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 0 AND 19999),
+            global_ordinal INTEGER NOT NULL CHECK(global_ordinal BETWEEN 0 AND 19999),
+            excerpt TEXT NOT NULL CHECK(
+                length(trim(excerpt)) > 0
+                AND length(CAST(excerpt AS BLOB)) <= 1024
+            ),
+            source_deleted INTEGER NOT NULL DEFAULT 0 CHECK(source_deleted IN (0, 1)),
+            created_at TEXT NOT NULL,
+            UNIQUE(summary_id, summary_source_id),
+            FOREIGN KEY(summary_source_id, summary_id, meeting_id)
+                REFERENCES summary_sources(id, summary_id, meeting_id),
+            FOREIGN KEY(summary_id, meeting_id)
+                REFERENCES summaries(id, meeting_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX idx_evidence_items_summary_order
+            ON evidence_items(summary_id, global_ordinal, id);
+        CREATE INDEX idx_evidence_items_source
+            ON evidence_items(meeting_id, source_id_snapshot, summary_id);
+    "#,
+    },
 ];
 
 pub(crate) fn run(connection: &mut Connection) -> DataResult<()> {
@@ -255,6 +477,11 @@ pub(crate) fn run(connection: &mut Connection) -> DataResult<()> {
 #[cfg(debug_assertions)]
 pub(crate) fn run_through_v2(connection: &mut Connection) -> DataResult<()> {
     apply(connection, &MIGRATIONS[..2])
+}
+
+#[cfg(debug_assertions)]
+pub(crate) fn run_through_v3(connection: &mut Connection) -> DataResult<()> {
+    apply(connection, &MIGRATIONS[..3])
 }
 
 fn apply(connection: &mut Connection, migrations: &[Migration]) -> DataResult<()> {
@@ -335,7 +562,7 @@ mod tests {
                 row.get(0)
             })
             .expect("migration count should be readable");
-        assert_eq!(count, 3);
+        assert_eq!(count, 4);
     }
 
     #[test]
@@ -574,7 +801,7 @@ mod tests {
             )
             .expect("v2 data should insert");
 
-        apply(&mut connection, MIGRATIONS).expect("v3 should apply");
+        apply(&mut connection, MIGRATIONS).expect("current schema should apply");
 
         for table in ["meetings", "documents", "deletion_jobs"] {
             let count: i64 = connection
@@ -592,16 +819,100 @@ mod tests {
                 .expect("v3 table should be readable");
             assert_eq!(count, 0);
         }
+        for table in ["summaries", "summary_sources", "evidence_items"] {
+            let count: i64 = connection
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .expect("v4 table should be readable");
+            assert_eq!(count, 0);
+        }
         let migration_count: i64 = connection
             .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| {
                 row.get(0)
             })
             .expect("migration records should be readable");
-        assert_eq!(migration_count, 3);
+        assert_eq!(migration_count, 4);
         let integrity: String = connection
             .query_row("PRAGMA integrity_check", [], |row| row.get(0))
             .expect("integrity check should run");
         assert_eq!(integrity, "ok");
+    }
+
+    #[test]
+    fn upgrades_real_schema_v3_without_losing_transcript_data() {
+        let mut connection = Connection::open_in_memory().expect("in-memory database should open");
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
+            .expect("foreign keys should enable");
+        apply(&mut connection, &MIGRATIONS[..3]).expect("v3 should apply");
+        connection
+            .execute_batch(
+                "
+                INSERT INTO meetings(
+                    id, title, status, primary_language, created_at, updated_at
+                ) VALUES (
+                    '00000000-0000-4000-8000-000000000060',
+                    'Synthetic v3 summary upgrade', 'draft', 'en-AU',
+                    '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+                );
+                INSERT INTO transcript_sources(
+                    id, meeting_id, source_type, display_name, content_sha256,
+                    parser_name, parser_version, imported_at, created_at, updated_at
+                ) VALUES (
+                    '00000000-0000-4000-8000-000000000061',
+                    '00000000-0000-4000-8000-000000000060',
+                    'pasted_text', 'Synthetic source',
+                    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                    'plain_text', '1', '2026-01-01T00:00:00.000Z',
+                    '2026-01-01T00:00:00.000Z', '2026-01-01T00:00:00.000Z'
+                );
+                INSERT INTO transcript_segments(
+                    id, meeting_id, source_id, ordinal, original_text,
+                    is_final, revision, created_at
+                ) VALUES (
+                    '00000000-0000-4000-8000-000000000062',
+                    '00000000-0000-4000-8000-000000000060',
+                    '00000000-0000-4000-8000-000000000061', 0,
+                    'Synthetic legacy v3 transcript', 1, 1,
+                    '2026-01-01T00:00:00.000Z'
+                );
+                ",
+            )
+            .expect("v3 transcript should insert");
+
+        apply(&mut connection, MIGRATIONS).expect("v4 should apply");
+        let transcript_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM transcript_segments", [], |row| {
+                row.get(0)
+            })
+            .expect("transcript count should read");
+        let migration_count: i64 = connection
+            .query_row("SELECT COUNT(*) FROM schema_migrations", [], |row| {
+                row.get(0)
+            })
+            .expect("migration count should read");
+        let summary_table_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' \
+                 AND name IN ('summaries', 'summary_sources', 'evidence_items')",
+                [],
+                |row| row.get(0),
+            )
+            .expect("summary tables should inspect");
+        let integrity: String = connection
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .expect("integrity should check");
+        let foreign_key_violations: i64 = connection
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })
+            .expect("foreign keys should check");
+        assert_eq!(transcript_count, 1);
+        assert_eq!(migration_count, 4);
+        assert_eq!(summary_table_count, 3);
+        assert_eq!(integrity, "ok");
+        assert_eq!(foreign_key_violations, 0);
     }
 
     #[test]

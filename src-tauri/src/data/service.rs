@@ -9,6 +9,8 @@ use super::error::{DataError, DataResult};
 use super::model::{CreateMeeting, Meeting, MeetingStatus, UpdateMeeting};
 use super::paths::StoragePaths;
 use super::repository::{self, NewMeeting};
+use super::summary_repository;
+use super::summary_service::SummaryService;
 use super::transcript_service::TranscriptService;
 use super::transcript_workflow::TranscriptImportWorkflow;
 
@@ -32,6 +34,9 @@ impl MeetingService {
         let service = Self {
             database: Database::initialize(app_data_root)?,
         };
+        SummaryService::new(service.database.clone())
+            .recover_interrupted()
+            .map_err(|_| DataError::StorageUnavailable)?;
         DocumentService::new(service.database.clone())
             .reconcile()
             .map_err(|_| DataError::StorageUnavailable)?;
@@ -48,6 +53,10 @@ impl MeetingService {
 
     pub fn transcripts(&self) -> TranscriptService {
         TranscriptService::new(self.database.clone())
+    }
+
+    pub fn summaries(&self) -> SummaryService {
+        SummaryService::new(self.database.clone())
     }
 
     pub fn transcript_imports(&self) -> TranscriptImportWorkflow {
@@ -196,6 +205,8 @@ impl MeetingService {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(DataError::from)?;
+        summary_repository::cancel_active_for_meeting(&transaction, id)
+            .map_err(|_| DataError::Database)?;
         repository::begin_delete(&transaction, id, &Uuid::new_v4().to_string())?;
         transaction.commit().map_err(DataError::from)?;
         execute_meeting_delete(&self.database, id)

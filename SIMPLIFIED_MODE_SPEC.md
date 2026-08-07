@@ -47,9 +47,11 @@
 
 第一版不把 TXT/SRT/VTT 强制交给 Docling。参考文档与转录保持不同语义和信任边界；在 Docling 产品接线完成前，界面必须明确提示“参考材料尚未参与本次总结”。
 
-当前 `feat/summary-mode-input-ui` 只开放上述第 1–2 步：总结模式是首页唯一可进入的三模式入口，翻译模式和会议模式显示“即将推出”；用户可以粘贴或通过 Rust 原生选择器导入转录、查看来源、分页检查片段、修正正文和说话人显示名称。界面必须明确说明纪要生成尚未开放，不得让禁用按钮调用网络或暗示 DeepSeek 已运行。
+PR #20 已完成上述第 1–2 步：总结模式是首页唯一可进入的三模式入口，翻译模式和会议模式显示“即将推出”；用户可以粘贴或通过 Rust 原生选择器导入转录、查看来源、分页检查片段、修正正文和说话人显示名称。当前 `feat/summary-run-core` 只在开发/API 边界加入 schema v4、run/series/revision、完整正文快照、evidence allowlist 与 Rust zero-network Mock；普通用户生成按钮继续禁用，不调用网络，也不能暗示 DeepSeek 或真实 AI 已运行。
 
-单个来源最多允许 20,000 个 segments，检查页面必须使用后端稳定分页且单页不超过 200 条，不能在 React 中加载全量后切片。用户可以为当前 source 中相同 `speaker_label` 批量设置或清空 `speaker_name`；该操作保留原始 label、逐条递增 revision、不跨 source/meeting，也不是说话人分离、真实身份推断或跨会议声纹。
+当前 core 固定 `final/manual`，运行状态是 queued/running/completed/failed/cancelled；异常退出后遗留 running 以 `summary_interrupted` 失败恢复。八个 Summary commands 和集中式 `summaryApi` 只提供最小开发边界，不等于正式纪要页面、Consent 或真实 Provider 已开放。
+
+单个来源最多允许 20,000 个 segments，检查页面必须使用后端稳定分页且单页不超过 200 条，不能在 React 中加载全量后切片。单个 Summary run 跨来源最多冻结 20,000 个 final segments 和 10 MiB UTF-8 正文，超限、空输入、重复或跨 meeting source 整体拒绝，不截断。用户可以为当前 source 中相同 `speaker_label` 批量设置或清空 `speaker_name`；该操作保留原始 label、逐条递增 revision、不跨 source/meeting，也不是说话人分离、真实身份推断或跨会议声纹。
 
 ### 3.2 翻译模式
 
@@ -87,6 +89,8 @@ Windows 透明、置顶、点击穿透和多显示器浮窗由模式工作区之
 - **保存屏幕关键帧**：默认关闭；只有屏幕增强实现后才出现，且必须绑定用户确认的目标窗口、用途和保留期限。
 
 “不导出逐字稿文件”不等于完全不处理转录。规范化逐字稿默认只在本地保留，直到用户明确删除会话或执行其主动设置的保留策略；应用不得因纪要生成完毕而静默删除。若未来提供“不保存转录”的隐私模式，必须明确说明证据能力会降低，不能声称与完整模式等价。
+
+Summary run 的正文快照在普通编辑和重生成期间不可变；重新生成创建同一 series 的新 revision。segment 修正只把旧 run 标记 stale。queued/running run 使用的 source 不能删除；terminal source 删除只保留结果实际引用的最小 evidence，清理完整正文快照并显示来源已删除。整场会议删除则协调清理全部 runs、snapshots 和 evidence。
 
 ## 5. 阶段摘要与图表
 

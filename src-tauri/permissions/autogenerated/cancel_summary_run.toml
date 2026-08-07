@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-cancel-summary-run"
+description = "Enables the cancel_summary_run command without any pre-configured scope."
+commands.allow = ["cancel_summary_run"]
+
+[[permission]]
+identifier = "deny-cancel-summary-run"
+description = "Denies the cancel_summary_run command without any pre-configured scope."
+commands.deny = ["cancel_summary_run"]

@@ -80,6 +80,7 @@ flowchart LR
 - 文件导入通过应用私有 staging 目录流式复制并计算 SHA-256，校验成功后在同一卷原子 rename；失败时清理临时文件。
 - SQLite schema v2 已新增 `documents` 与统一 `deletion_jobs`；应用持有 `meeting-data/.meetinglens-storage.lock` 的生命周期独占锁，第二个写入实例 fail closed，进程内 mutation mutex 串行化导入、删除与恢复。
 - schema v3 已由 PR #18 引入 `transcript_sources` 与 `transcript_segments`。粘贴文本和 TXT/SRT/VTT 使用轻量同步解析器进入 SQLite，不经过 DocumentService、Docling 或 Python Sidecar；原始转录文件首版不长期复制。
+- 当前 `feat/summary-run-core` 追加 schema v4：`summaries` 保存 run/series/revision 与状态，`summary_sources` 保存真实复制的 transcript snapshot 正文和元数据，`evidence_items` 只保存当前 run 实际引用的 transcript evidence。snapshot source/segment UUID 是历史值而非 live FK，因此终态 source 删除不会级联破坏已有结果。
 
 ### 3.5 外部 AI 适配器
 
@@ -92,7 +93,7 @@ flowchart LR
 
 MVP 1A-3A 在 React/TypeScript 应用边界定义五类能力契约：Capture、Transcription、Translation、Summary 和 DocumentParser。每个契约明确输入、输出、统一状态、稳定错误、取消和清理行为；页面只通过应用拥有的 `ProviderRegistry` 获取能力，不直接实例化第三方实现。
 
-当前只有确定性的纯内存 Mock Provider：不访问设备、文件系统或网络，不持久化转录/翻译/摘要/文档结果，并在设置页明确标为 Mock/未启用。旧 `MockTranscriptSource` 已迁移为 `MockTranscriptionProvider`，避免两套模拟字幕架构并存。Registry 不是全局单例，可由测试注入或重置，并在应用页面关闭时统一 dispose。
+TypeScript Provider Registry 继续只有确定性的纯内存 Mock，用于页面能力预览，不是持久 Summary run 的执行者。当前 Summary Run Core 在 Rust 信任边界增加独立 `SummaryProvider` trait 和 `DeterministicMockSummaryProvider`：它只接收从 schema v4 snapshot 重建的有界 DTO，不访问 SecretStore、环境凭据、文件、SQLite、Sidecar 或网络，也不自行改变 run 状态。Summary service 独占快照、状态转换、输出校验和原子持久化；未来真实 Provider 复用该 Rust 边界而不是让 WebView 提交结果。
 
 `TranscriptionSegment` 契约和 schema v3 已统一使用可空 `startOffsetMs/endOffsetMs`，并在 source 上使用可空 `baseStartedAt`；SRT/VTT 与未来实时 ASR 都归一化为相对毫秒，没有时间戳时以稳定 ordinal 定位证据，不保存两套竞争的时间真相。现有内存 Mock 与持久化 DTO 使用同一时间语义。
 
@@ -185,14 +186,16 @@ sequenceDiagram
     Rust->>Sidecar: 创建转录任务
 ```
 
-### 6.2 外部摘要
+### 6.2 Summary run 与未来外部摘要
 
-1. 用户选择 transcript sources/segments、模板和输出语言，并查看发送预览。
-2. Rust 验证来源可用性并创建不可变输入快照；当前 meeting 是否为 `ready` 不是唯一门槛。
-3. 用户确认外发后，受信任的 Summary adapter 从 Rust SecretStore 取得 key，只发送快照中的规范化文本和必要元数据。
-4. 模型输出必须引用快照内已知 evidence ID；未知引用被拒绝或标记，不能由自然语言补造证据。
-5. 返回结果连同模型、提示模板版本、输入范围、revision 和 evidence snapshot 写入 SQLite。
-6. UI 将 AI 输出标记为可编辑草稿。输入变化可标记 stale；重新生成创建 revision，不能静默覆盖用户编辑。
+1. Rust 验证 meeting、按用户给定顺序排列的 transcript sources、模板和输出语言；资格允许 `draft/recording/ready`，但拒绝删除态、空输入和无法安全冻结的输入。
+2. 单个事务创建 series/revision 和 queued run，并实际复制最多 20,000 个 final segments、合计最多 10 MiB UTF-8 正文及 source/segment/global ordinal、speaker、offset、language、confidence 和快照时间。Provider 运行期间不再读取 live segment。
+3. 当前 Rust deterministic Mock 把 queued 原子转换为 running，只消费上述快照并执行零网络生成。未来 DeepSeek adapter 必须在独立 Consent/Provider 阶段取得本次外发确认后，才可从 SecretStore 取 key 并发送用户确认的最小快照文本。
+4. 每条 snapshot row 的 UUID 构成 run-local evidence allowlist。Rust 拒绝未知、重复、跨 run ID 及超出版本化 schema/大小/数量边界的输出；WebView 不能提交 Provider 输出或 evidence。
+5. 校验通过后，结构化 `content_json` 与实际引用的 evidence 在同一事务写入并转为 completed；失败写稳定安全错误，取消丢弃未提交结果，不产生部分 evidence。
+6. 重新生成创建同一 `series_id` 的下一 revision 并重新冻结当前输入，不覆盖旧 run。segment revision 漂移标 stale；启动恢复把遗留 running 标为 `failed + summary_interrupted`，不自动重放 Provider。
+
+正式 Summary 页面仍未实现；当前八个最小 commands 仅建立开发/API 边界：`get_summary_policy`、`create_summary_run`、`create_summary_revision`、`execute_summary_run`、`get_summary_run`、`list_summary_runs`、`cancel_summary_run` 和 `list_summary_evidence`。集中式 TypeScript `summaryApi` 是 WebView 的唯一调用入口，权限集不增加通用 HTTP、文件系统、shell 或 process 能力。
 
 ### 6.3 Meeting command 边界
 
@@ -250,7 +253,9 @@ sequenceDiagram
     Rust->>DB: summary revision + evidence snapshot
 ```
 
-转录 source 删除会处理其 segments，但不影响用户原始文件；进行中的 Summary run 继续使用已经冻结的快照。删除后已有 summary 不被静默改写，evidence 保留最小安全摘录、speaker、offset/ordinal 和 revision，并将源链接显示为已删除。segment 修正增加 revision，使依赖旧输入的 summary 可被标记 stale；后台不得静默重新生成。
+上图展示完整产品目标；当前 Summary Run Core 只实现 Rust/schema/command/Mock 部分，现有“生成会议纪要”按钮保持禁用，不执行外发。真实 Provider、外发同意、发送预览和正式结果页面分别留在后续独立阶段。
+
+转录 source 删除会处理其 segments，但不影响用户原始文件。queued/running Summary run 使用该 source 时删除稳定拒绝 `transcript_source_in_use`；terminal run 不阻塞删除。删除事务保留已实际引用的 evidence excerpt、speaker、offset/ordinal 和 revision并标 `source_deleted`，清理 `summary_sources` 中完整正文与非必要显示元数据，再删除 live source/segments；结果不会被静默改写。segment 修正增加 revision，并把依赖旧输入的 run 标为 `segment_revised` stale；运行中的 Mock 仍完成旧快照，后台不得静默重新生成。
 
 ```mermaid
 sequenceDiagram
@@ -288,7 +293,7 @@ stateDiagram-v2
     delete_failed --> deleting: 用户或启动恢复重试
 ```
 
-接受会议删除后立即进入 `deleting`，冻结编辑、开始、文件集合和纪要任务。协调器枚举原始文档及未来解析、音频、截图、转写、纪要和导出产物，将文件安全移动到应用私有 `deletion-trash`（或实现等价的可恢复边界），成功后才最终删除数据库记录。失败进入 `delete_failed`、保留安全错误码并允许重试；重复请求返回稳定 pending 状态。不得先删数据库再尽力删文件，也不得先删文件再尝试删除数据库。
+接受会议删除后先把该会议 queued/running Summary runs 原子转为 cancelled，再进入 `deleting`，冻结编辑、开始、文件集合和新纪要任务。协调器枚举原始文档、schema v4 summaries/snapshots/evidence 及未来解析、音频、截图、转写和导出产物，将文件安全移动到应用私有 `deletion-trash`（或实现等价的可恢复边界），成功后才最终删除数据库记录。失败进入 `delete_failed`、保留安全错误码并允许重试；重复请求返回稳定 pending 状态。不得先删数据库再尽力删文件，也不得先删文件再尝试删除数据库。
 
 单文档删除使用同样模式：先进入 `deleting`，成功清理文件和 artifacts 后才移除元数据，失败进入 `delete_failed`。处于 `importing`/`parsing` 的文档必须先取消或等待安全终止。删除永远不影响用户源文件。
 
@@ -348,8 +353,8 @@ Phase 0 不提前写入 `externalBin`，因为仓库尚无可验证的平台二�
 | `docs/simplified-three-mode-spec`               | 三模式预设、共享管线、权限和小 PR 边界                                                           | 产品代码                          |
 | `feat/transcript-data-core`（PR #18，已完成）   | schema v3、转录来源/片段、同步 parser、修正/删除                                                 | UI、外部 Provider                 |
 | `feat/transcript-command-api`（PR #19，已完成） | Transcript commands/API、Rust 原生选择器、原子 meeting + transcript 工作流                       | 正式 UI、Summary schema、DeepSeek |
-| `feat/summary-mode-input-ui`（当前）            | 总结模式入口、粘贴/导入、来源/分页片段预览、正文和 source-scoped speaker 修正                    | Summary schema、DeepSeek          |
-| `feat/summary-run-core`                         | Summary run/revision、不可变快照、evidence 与 Mock                                               | SecretStore 消费、网络、正式 UI   |
+| `feat/summary-mode-input-ui`（PR #20，已完成）  | 总结模式入口、粘贴/导入、来源/分页片段预览、正文和 source-scoped speaker 修正                    | Summary schema、DeepSeek          |
+| `feat/summary-run-core`（当前）                 | schema v4、run/series/revision、正文快照、evidence allowlist 与 Rust zero-network Mock           | SecretStore 消费、网络、正式 UI   |
 | `feat/consent-data-core`                        | 通用 consent events、会话失效、grant/revoke 与审计 API                                           | 设备、Provider、正式 UI           |
 | `feat/summary-provider-deepseek`                | SecretStore、外发同意、受限 adapter、超时/取消                                                   | schema、正式 UI、Docling          |
 | `feat/summary-mode-minutes`                     | 输入/模板选择、外发预览、结果、evidence 导航和 Markdown                                          | schema、Provider、持久编辑        |

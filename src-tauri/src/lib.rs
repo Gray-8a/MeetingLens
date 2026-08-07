@@ -5,6 +5,7 @@ mod meeting_commands;
 mod secret_commands;
 pub mod secret_store;
 mod sidecar;
+mod summary_commands;
 mod transcript_commands;
 
 use tauri::Manager;
@@ -56,6 +57,14 @@ pub fn run() {
             transcript_commands::update_transcript_segment,
             transcript_commands::delete_transcript_source,
             transcript_commands::get_transcript_import_policy,
+            summary_commands::get_summary_policy,
+            summary_commands::create_summary_run,
+            summary_commands::create_summary_revision,
+            summary_commands::execute_summary_run,
+            summary_commands::get_summary_run,
+            summary_commands::list_summary_runs,
+            summary_commands::cancel_summary_run,
+            summary_commands::list_summary_evidence,
         ])
         .run(tauri::generate_context!())
         .expect("error while running MeetingLens");

@@ -1,10 +1,10 @@
 # MeetingLens Development Preview User Guide
 
-> Development Preview: this guide describes the local desktop workflows that the current repository actually provides. It is not a production manual; existing transcripts can be imported, reviewed, and corrected, but real AI minutes are not available.
+> Development Preview: this guide describes the local desktop workflows that the current repository actually provides. It is not a production manual; existing transcripts can be imported, reviewed, and corrected, while the current Summary Run Core remains a developer-only zero-network foundation and real AI minutes are not available.
 
 ## 1. Introduction to MeetingLens
 
-MeetingLens is a local-first meeting workspace for Windows 11. Its product goal is to turn pasted or imported meeting transcripts into detailed, editable, traceable minutes. The current development preview can safely accept, persist, review, and correct transcripts, but it does not generate real minutes yet.
+MeetingLens is a local-first meeting workspace for Windows 11. Its product goal is to turn pasted or imported meeting transcripts into detailed, editable, traceable minutes. The current development preview can safely accept, persist, review, and correct transcripts. The current feature branch also builds the persistent Summary run/snapshot boundary for development validation, but it does not expose real minutes to ordinary users.
 
 The same application includes Simplified Chinese (`zh-CN`) and English (`en-US`); two installations are not required.
 
@@ -21,8 +21,9 @@ The current version is a development preview. Available capabilities include:
 - viewing Mock Provider, local Sidecar, and database status;
 - storing a DeepSeek API key in Windows Credential Manager without allowing the WebView to read it back;
 - running development validation of the isolated offline Docling Worker, which is not connected to the product UI.
+- on the current feature branch, validating schema-v4 Summary series/revisions, immutable transcript snapshots, run-owned evidence, and a deterministic Rust Mock through development-only APIs and synthetic data.
 
-The application cannot currently generate real meeting minutes, call DeepSeek, process real recordings, or run realtime transcription. Translation and Meeting mode display Coming soon only.
+The user-facing application cannot currently generate real AI meeting minutes, call DeepSeek, process real recordings, or run realtime transcription. Generate meeting minutes remains disabled; Translation and Meeting mode display Coming soon only. The Rust Mock makes no network request and is not a production AI result.
 
 ## 3. System requirements
 
@@ -90,6 +91,7 @@ Transcript review shows the meeting title, transcript sources, segment totals, a
 - Text and speaker-name edits use revision conflict protection. If content changed elsewhere, reload it; MeetingLens does not overwrite silently.
 - A display name can be set or cleared for matching speaker labels in the selected source. Original labels remain unchanged, names do not carry across sources or meetings, and AI does not infer identity.
 - Source deletion requires confirmation. Deleting the final source shows no usable input; it never deletes the user's source file or changes the meeting-file area.
+- A source used by a queued or running development Summary run cannot be deleted until that run is terminal. Deleting it afterwards keeps only cited evidence, redacts the full snapshot text, and marks the historical result stale/source deleted.
 
 Generate meeting minutes remains disabled with an explicit later-stage notice and makes no network request.
 
@@ -167,6 +169,7 @@ Deletion is irreversible. Confirm that the selected meeting and files are correc
 
 - Meeting metadata is stored in the private application SQLite database.
 - Submitted transcript sources and normalized segments are stored in the same private database.
+- On the current feature branch, schema v4 stores developer Summary runs and immutable transcript snapshots locally. A run is limited to 20,000 final segments and 10 MiB of UTF-8 text; explicit source deletion redacts terminal full-text snapshots while retaining only cited evidence.
 - Unsubmitted pasted text exists only briefly in React memory and is cleared after save, cancel, or navigation away.
 - Transcript bodies, speakers, and source paths are not written to localStorage, sessionStorage, IndexedDB, or console.
 - Imported copies are stored in private application storage; React does not receive absolute paths.
@@ -181,7 +184,7 @@ See [SECURITY.md](../SECURITY.md) for the detailed boundaries.
 
 The following features are not implemented:
 
-- real meeting-minutes generation;
+- user-facing real AI meeting-minutes generation and a formal result workspace;
 - the DeepSeek Summary Provider and outbound confirmation;
 - real audio recording;
 - realtime transcription;
@@ -196,11 +199,11 @@ The following features are not implemented:
 
 ### Why can I not generate minutes after saving a DeepSeek key?
 
-Only secure credential storage is complete. The real Summary Provider, immutable input snapshot, sending preview, and evidence validation belong to a later independent stage.
+Secure credential storage and the zero-network Summary core are separate. The current Rust Mock validates immutable local snapshots and evidence without reading the key. The real Summary Provider, outbound consent/preview, and formal result workspace remain later independent stages.
 
 ### Why is Generate meeting minutes unavailable when the transcript is ready?
 
-This stage covers input, persistence, paginated review, and manual correction only. The next stages add immutable Summary runs and Mock behavior, consent data, the bounded DeepSeek Provider, and the minutes result workspace. The disabled action does not call AI.
+PR #20 completed input, persistence, paginated review, and manual correction. The current branch adds developer-only immutable Summary runs, `series_id + revision`, a 20,000-segment/10-MiB snapshot policy, evidence allowlisting, cancellation, stale/delete handling, and interrupted-run recovery through eight minimal commands. Consent data, the bounded DeepSeek Provider, and the minutes result workspace still follow separately; the disabled action does not call AI.
 
 ### Does transcript import copy or delete the source file?
 
@@ -235,8 +238,8 @@ The completed and current delivery path is:
 
 1. `feat/transcript-data-core` (PR #18 merged): schema v3, transcript sources and segments, and local paste/TXT/SRT/VTT parsing;
 2. `feat/transcript-command-api` (PR #19 merged): secure transcript commands, the Rust-native picker, and atomic meeting + transcript creation;
-3. `feat/summary-mode-input-ui` (current): the Summary entry point, paste, native import, paginated review, and basic speaker/text correction;
-4. `feat/summary-run-core`: immutable snapshots, runs/revisions, evidence, and Mock behavior;
+3. `feat/summary-mode-input-ui` (PR #20 merged): the Summary entry point, paste, native import, paginated review, and basic speaker/text correction;
+4. `feat/summary-run-core` (current): schema v4, immutable full-text snapshots, series/revisions, evidence allowlisting, recovery, and the Rust zero-network Mock;
 5. `feat/consent-data-core`: shared consent records, session expiry, and audit behavior;
 6. `feat/summary-provider-deepseek`: the bounded DeepSeek adapter, SecretStore use, and outbound consent;
 7. `feat/summary-mode-minutes`: templates, run state, evidence navigation, and Markdown view, copy, and download;

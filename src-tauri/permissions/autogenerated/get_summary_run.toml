@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-summary-run"
+description = "Enables the get_summary_run command without any pre-configured scope."
+commands.allow = ["get_summary_run"]
+
+[[permission]]
+identifier = "deny-get-summary-run"
+description = "Denies the get_summary_run command without any pre-configured scope."
+commands.deny = ["get_summary_run"]

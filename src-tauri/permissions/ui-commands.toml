@@ -54,3 +54,17 @@ permissions = [
   "allow-delete-transcript-source",
   "allow-get-transcript-import-policy",
 ]
+
+[[set]]
+identifier = "summary-run-commands"
+description = "Allows the local main window to create, execute, inspect, list, cancel, and cite local summary runs through the Rust trust boundary."
+permissions = [
+  "allow-get-summary-policy",
+  "allow-create-summary-run",
+  "allow-create-summary-revision",
+  "allow-execute-summary-run",
+  "allow-get-summary-run",
+  "allow-list-summary-runs",
+  "allow-cancel-summary-run",
+  "allow-list-summary-evidence",
+]

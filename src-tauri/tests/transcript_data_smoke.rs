@@ -64,7 +64,7 @@ fn native_transcript_data_lifecycle_smoke() {
     let txt_source_path = workspace.write_source("synthetic-transcript.txt", txt_content);
 
     let meetings =
-        MeetingService::initialize(&workspace.app_data).expect("schema v2 should upgrade to v3");
+        MeetingService::initialize(&workspace.app_data).expect("schema v2 should upgrade to v4");
     assert_eq!(
         meetings
             .get(&v2_seed.meeting_id)
@@ -72,7 +72,7 @@ fn native_transcript_data_lifecycle_smoke() {
             .title,
         "Synthetic transcript smoke upgrade"
     );
-    assert_schema_and_integrity(&meetings, 3);
+    assert_schema_and_integrity(&meetings, 4);
 
     let transcripts = meetings.transcripts();
     let (pasted, pasted_count) = imported(
@@ -275,7 +275,7 @@ fn native_transcript_data_lifecycle_smoke() {
         std::fs::read(&txt_source_path).expect("original TXT source should remain"),
         txt_content
     );
-    assert_schema_and_integrity(&reopened, 3);
+    assert_schema_and_integrity(&reopened, 4);
 
     drop(transcripts);
     drop(reopened);

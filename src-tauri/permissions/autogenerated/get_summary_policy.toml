@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-get-summary-policy"
+description = "Enables the get_summary_policy command without any pre-configured scope."
+commands.allow = ["get_summary_policy"]
+
+[[permission]]
+identifier = "deny-get-summary-policy"
+description = "Denies the get_summary_policy command without any pre-configured scope."
+commands.deny = ["get_summary_policy"]
