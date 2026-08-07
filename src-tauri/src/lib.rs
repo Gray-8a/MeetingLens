@@ -51,6 +51,8 @@ pub fn run() {
             transcript_commands::list_transcript_sources,
             transcript_commands::get_transcript_source,
             transcript_commands::list_transcript_segments,
+            transcript_commands::list_transcript_speaker_groups,
+            transcript_commands::rename_speaker_in_source,
             transcript_commands::update_transcript_segment,
             transcript_commands::delete_transcript_source,
             transcript_commands::get_transcript_import_policy,

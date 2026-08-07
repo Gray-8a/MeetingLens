@@ -5,6 +5,7 @@ import {
   type InvokeArguments,
   type MeetingResponse,
 } from "./meeting";
+import { compareSqliteBinaryText } from "../lib/sqliteBinary";
 
 export const transcriptCommandNames = {
   createMeetingFromPaste: "create_meeting_from_pasted_transcript",
@@ -14,7 +15,9 @@ export const transcriptCommandNames = {
   listSources: "list_transcript_sources",
   getSource: "get_transcript_source",
   listSegments: "list_transcript_segments",
+  listSpeakerGroups: "list_transcript_speaker_groups",
   updateSegment: "update_transcript_segment",
+  renameSpeakerInSource: "rename_speaker_in_source",
   deleteSource: "delete_transcript_source",
   getImportPolicy: "get_transcript_import_policy",
 } as const;
@@ -71,6 +74,23 @@ export interface UpdateTranscriptSegmentRequest {
   expectedRevision: number;
 }
 
+export interface TranscriptPageOptions {
+  cursor?: number | null;
+  limit?: number;
+}
+
+export interface TranscriptSpeakerPageOptions {
+  cursor?: string | null;
+  limit?: number;
+}
+
+export interface RenameSpeakerInSourceRequest {
+  meetingId: string;
+  sourceId: string;
+  speakerLabel: string;
+  speakerName: string | null;
+}
+
 export interface TranscriptSourceResponse {
   id: string;
   meetingId: string;
@@ -80,6 +100,9 @@ export interface TranscriptSourceResponse {
   language: string | null;
   baseStartedAt: string | null;
   segmentCount: number;
+  startOffsetMs: number | null;
+  endOffsetMs: number | null;
+  speakerCount: number;
   importedAt: string;
   createdAt: string;
   updatedAt: string;
@@ -108,7 +131,30 @@ export interface ListTranscriptSourcesResponse {
 }
 
 export interface ListTranscriptSegmentsResponse {
-  segments: TranscriptSegmentResponse[];
+  items: TranscriptSegmentResponse[];
+  nextCursor: number | null;
+  hasMore: boolean;
+  totalCount: number;
+}
+
+export interface TranscriptSpeakerGroupResponse {
+  speakerLabel: string;
+  speakerName: string | null;
+  hasMixedNames: boolean;
+  segmentCount: number;
+}
+
+export interface ListTranscriptSpeakerGroupsResponse {
+  sourceId: string;
+  items: TranscriptSpeakerGroupResponse[];
+  nextCursor: string | null;
+  hasMore: boolean;
+  totalCount: number;
+}
+
+export interface RenameSpeakerInSourceResponse {
+  sourceId: string;
+  updatedCount: number;
 }
 
 export interface CancelledTranscriptImportResult {
@@ -217,6 +263,10 @@ const frozenPolicyLimits = {
   maxSegmentsPerSource: 20_000,
   maxSegmentBytes: 64 * 1024,
 } as const;
+export const transcriptPageLimits = {
+  default: 100,
+  maximum: 200,
+} as const;
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const utcIsoPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
@@ -258,10 +308,19 @@ export interface TranscriptApi {
   listSegments(
     meetingId: string,
     sourceId: string,
+    options?: TranscriptPageOptions,
   ): Promise<ListTranscriptSegmentsResponse>;
+  listSpeakerGroups(
+    meetingId: string,
+    sourceId: string,
+    options?: TranscriptSpeakerPageOptions,
+  ): Promise<ListTranscriptSpeakerGroupsResponse>;
   updateSegment(
     request: UpdateTranscriptSegmentRequest,
   ): Promise<TranscriptSegmentResponse>;
+  renameSpeakerInSource(
+    request: RenameSpeakerInSourceRequest,
+  ): Promise<RenameSpeakerInSourceResponse>;
   deleteSource(
     meetingId: string,
     sourceId: string,
@@ -351,13 +410,38 @@ export function createTranscriptApi(
           return source;
         },
       ),
-    listSegments: (meetingId, sourceId) =>
-      invokeAndParse(
+    listSegments: async (meetingId, sourceId, options) => {
+      const page = normalizeSegmentPageOptions(options);
+      return invokeAndParse(
         adapter,
         transcriptCommandNames.listSegments,
-        { request: { meetingId, sourceId } },
-        (value) => parseSegmentList(value, meetingId, sourceId),
-      ),
+        {
+          request: {
+            meetingId,
+            sourceId,
+            ...(page.cursor !== null ? { cursor: page.cursor } : {}),
+            ...(options?.limit !== undefined ? { limit: page.limit } : {}),
+          },
+        },
+        (value) => parseSegmentPage(value, meetingId, sourceId, page),
+      );
+    },
+    listSpeakerGroups: async (meetingId, sourceId, options) => {
+      const page = normalizeSpeakerPageOptions(options);
+      return invokeAndParse(
+        adapter,
+        transcriptCommandNames.listSpeakerGroups,
+        {
+          request: {
+            meetingId,
+            sourceId,
+            ...(page.cursor !== null ? { cursor: page.cursor } : {}),
+            ...(options?.limit !== undefined ? { limit: page.limit } : {}),
+          },
+        },
+        (value) => parseSpeakerPage(value, sourceId, page),
+      );
+    },
     updateSegment: (request) =>
       invokeAndParse(
         adapter,
@@ -385,6 +469,20 @@ export function createTranscriptApi(
           }
           return segment;
         },
+      ),
+    renameSpeakerInSource: (request) =>
+      invokeAndParse(
+        adapter,
+        transcriptCommandNames.renameSpeakerInSource,
+        {
+          request: {
+            meetingId: request.meetingId,
+            sourceId: request.sourceId,
+            speakerLabel: request.speakerLabel,
+            speakerName: request.speakerName,
+          },
+        },
+        (value) => parseRenameSpeaker(value, request.sourceId),
       ),
     deleteSource: (meetingId, sourceId) =>
       invokeAndParse(
@@ -445,6 +543,46 @@ function withSelectedMetadata(
       ? { baseStartedAt: metadata.baseStartedAt }
       : {}),
   };
+}
+
+interface NormalizedSegmentPage {
+  cursor: number | null;
+  limit: number;
+}
+
+interface NormalizedSpeakerPage {
+  cursor: string | null;
+  limit: number;
+}
+
+function normalizeSegmentPageOptions(
+  options: TranscriptPageOptions | undefined,
+): NormalizedSegmentPage {
+  const cursor = options?.cursor ?? null;
+  const limit = options?.limit ?? transcriptPageLimits.default;
+  if (
+    (cursor !== null && !isNonNegativeSafeInteger(cursor)) ||
+    !isPositiveSafeInteger(limit) ||
+    limit > transcriptPageLimits.maximum
+  ) {
+    throw new TranscriptApiError("transcript_invalid_input", false);
+  }
+  return { cursor, limit };
+}
+
+function normalizeSpeakerPageOptions(
+  options: TranscriptSpeakerPageOptions | undefined,
+): NormalizedSpeakerPage {
+  const cursor = options?.cursor ?? null;
+  const limit = options?.limit ?? transcriptPageLimits.default;
+  if (
+    (cursor !== null && !isSpeakerLabel(cursor)) ||
+    !isPositiveSafeInteger(limit) ||
+    limit > transcriptPageLimits.maximum
+  ) {
+    throw new TranscriptApiError("transcript_invalid_input", false);
+  }
+  return { cursor, limit };
 }
 
 function parseImportResult(
@@ -522,6 +660,9 @@ function parseSource(value: unknown): TranscriptSourceResponse {
       "language",
       "baseStartedAt",
       "segmentCount",
+      "startOffsetMs",
+      "endOffsetMs",
+      "speakerCount",
       "importedAt",
       "createdAt",
       "updatedAt",
@@ -535,6 +676,13 @@ function parseSource(value: unknown): TranscriptSourceResponse {
     !isNullableString(value.language) ||
     !isNullableUtcIso(value.baseStartedAt) ||
     !isNonNegativeSafeInteger(value.segmentCount) ||
+    !isNullableNonNegativeSafeInteger(value.startOffsetMs) ||
+    !isNullableNonNegativeSafeInteger(value.endOffsetMs) ||
+    (value.startOffsetMs !== null &&
+      value.endOffsetMs !== null &&
+      value.endOffsetMs < value.startOffsetMs) ||
+    !isNonNegativeSafeInteger(value.speakerCount) ||
+    value.speakerCount > value.segmentCount ||
     !isUtcIso(value.importedAt) ||
     !isUtcIso(value.createdAt) ||
     !isUtcIso(value.updatedAt)
@@ -550,6 +698,9 @@ function parseSource(value: unknown): TranscriptSourceResponse {
     language: value.language,
     baseStartedAt: value.baseStartedAt,
     segmentCount: value.segmentCount,
+    startOffsetMs: value.startOffsetMs,
+    endOffsetMs: value.endOffsetMs,
+    speakerCount: value.speakerCount,
     importedAt: value.importedAt,
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
@@ -598,8 +749,8 @@ function parseSegment(value: unknown): TranscriptSegmentResponse {
     !isUuid(value.sourceId) ||
     !isUuid(value.meetingId) ||
     !isNonNegativeSafeInteger(value.ordinal) ||
-    !isNullableString(value.speakerLabel) ||
-    !isNullableString(value.speakerName) ||
+    !(value.speakerLabel === null || isSpeakerLabel(value.speakerLabel)) ||
+    !(value.speakerName === null || isSpeakerName(value.speakerName)) ||
     !isNullableNonNegativeSafeInteger(value.startOffsetMs) ||
     !isNullableNonNegativeSafeInteger(value.endOffsetMs) ||
     (value.startOffsetMs !== null &&
@@ -635,29 +786,143 @@ function parseSegment(value: unknown): TranscriptSegmentResponse {
   };
 }
 
-function parseSegmentList(
+function parseSegmentPage(
   value: unknown,
   expectedMeetingId: string,
   expectedSourceId: string,
+  page: NormalizedSegmentPage,
 ): ListTranscriptSegmentsResponse {
   if (
     !isRecord(value) ||
-    !hasOnlyKeys(value, ["segments"]) ||
-    !Array.isArray(value.segments)
+    !hasOnlyKeys(value, ["items", "nextCursor", "hasMore", "totalCount"]) ||
+    !Array.isArray(value.items) ||
+    !isNullableNonNegativeSafeInteger(value.nextCursor) ||
+    typeof value.hasMore !== "boolean" ||
+    !isNonNegativeSafeInteger(value.totalCount)
   ) {
     throw internalError();
   }
-  const segments = value.segments.map(parseSegment);
+  const items = value.items.map(parseSegment);
   if (
-    segments.some(
+    items.length > page.limit ||
+    value.totalCount < items.length ||
+    items.some(
       (segment) =>
         segment.meetingId !== expectedMeetingId ||
-        segment.sourceId !== expectedSourceId,
-    )
+        segment.sourceId !== expectedSourceId ||
+        (page.cursor !== null && segment.ordinal <= page.cursor),
+    ) ||
+    !isStrictlyIncreasing(items.map((segment) => segment.ordinal)) ||
+    (value.hasMore &&
+      (items.length === 0 ||
+        value.nextCursor !== items[items.length - 1]?.ordinal)) ||
+    (!value.hasMore && value.nextCursor !== null)
   ) {
     throw internalError();
   }
-  return { segments };
+  return {
+    items,
+    nextCursor: value.nextCursor,
+    hasMore: value.hasMore,
+    totalCount: value.totalCount,
+  };
+}
+
+function parseSpeakerPage(
+  value: unknown,
+  expectedSourceId: string,
+  page: NormalizedSpeakerPage,
+): ListTranscriptSpeakerGroupsResponse {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, [
+      "sourceId",
+      "items",
+      "nextCursor",
+      "hasMore",
+      "totalCount",
+    ]) ||
+    value.sourceId !== expectedSourceId ||
+    !Array.isArray(value.items) ||
+    !(value.nextCursor === null || isSpeakerLabel(value.nextCursor)) ||
+    typeof value.hasMore !== "boolean" ||
+    !isNonNegativeSafeInteger(value.totalCount)
+  ) {
+    throw internalError();
+  }
+  const items = value.items.map(parseSpeakerGroup);
+  const labels = items.map((item) => item.speakerLabel);
+  if (
+    items.length > page.limit ||
+    value.totalCount < items.length ||
+    new Set(labels).size !== items.length ||
+    (page.cursor !== null &&
+      labels.some(
+        (speakerLabel) =>
+          compareSqliteBinaryText(speakerLabel, page.cursor as string) <= 0,
+      )) ||
+    !isStrictlyIncreasingText(labels) ||
+    (value.hasMore &&
+      (items.length === 0 ||
+        value.nextCursor !== items[items.length - 1]?.speakerLabel)) ||
+    (!value.hasMore && value.nextCursor !== null)
+  ) {
+    throw internalError();
+  }
+  return {
+    sourceId: value.sourceId,
+    items,
+    nextCursor: value.nextCursor,
+    hasMore: value.hasMore,
+    totalCount: value.totalCount,
+  };
+}
+
+function isStrictlyIncreasingText(values: string[]): boolean {
+  return values.every(
+    (value, index) =>
+      index === 0 || compareSqliteBinaryText(values[index - 1], value) < 0,
+  );
+}
+
+function parseSpeakerGroup(value: unknown): TranscriptSpeakerGroupResponse {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, [
+      "speakerLabel",
+      "speakerName",
+      "hasMixedNames",
+      "segmentCount",
+    ]) ||
+    !isSpeakerLabel(value.speakerLabel) ||
+    !(value.speakerName === null || isSpeakerName(value.speakerName)) ||
+    typeof value.hasMixedNames !== "boolean" ||
+    (value.hasMixedNames && value.speakerName !== null) ||
+    !isPositiveSafeInteger(value.segmentCount)
+  ) {
+    throw internalError();
+  }
+  return {
+    speakerLabel: value.speakerLabel,
+    speakerName: value.speakerName,
+    hasMixedNames: value.hasMixedNames,
+    segmentCount: value.segmentCount,
+  };
+}
+
+function parseRenameSpeaker(
+  value: unknown,
+  expectedSourceId: string,
+): RenameSpeakerInSourceResponse {
+  if (
+    !isRecord(value) ||
+    !hasOnlyKeys(value, ["sourceId", "updatedCount"]) ||
+    value.sourceId !== expectedSourceId ||
+    !isNonNegativeSafeInteger(value.updatedCount)
+  ) {
+    throw internalError();
+  }
+  return { sourceId: value.sourceId, updatedCount: value.updatedCount };
 }
 
 function parseDelete(value: unknown): DeleteTranscriptSourceResponse {
@@ -759,6 +1024,26 @@ function isSafeDisplayString(value: unknown): value is string {
       const codePoint = character.codePointAt(0) ?? 0;
       return codePoint <= 0x1f || (codePoint >= 0x7f && codePoint <= 0x9f);
     })
+  );
+}
+
+function isSpeakerLabel(value: unknown): value is string {
+  return isBoundedSpeakerString(value);
+}
+
+function isSpeakerName(value: unknown): value is string {
+  return isBoundedSpeakerString(value);
+}
+
+function isBoundedSpeakerString(value: unknown): value is string {
+  return (
+    isSafeDisplayString(value) && new TextEncoder().encode(value).length <= 255
+  );
+}
+
+function isStrictlyIncreasing(values: readonly number[]): boolean {
+  return values.every(
+    (value, index) => index === 0 || value > values[index - 1]!,
   );
 }
 

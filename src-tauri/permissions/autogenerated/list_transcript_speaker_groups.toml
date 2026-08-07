@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-list-transcript-speaker-groups"
+description = "Enables the list_transcript_speaker_groups command without any pre-configured scope."
+commands.allow = ["list_transcript_speaker_groups"]
+
+[[permission]]
+identifier = "deny-list-transcript-speaker-groups"
+description = "Denies the list_transcript_speaker_groups command without any pre-configured scope."
+commands.deny = ["list_transcript_speaker_groups"]

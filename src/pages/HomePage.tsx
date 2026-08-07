@@ -57,12 +57,76 @@ export function HomePage({
     <div className="page-stack">
       <section className="welcome-panel">
         <div>
-          <p className="eyebrow">{t("home.eyebrow")}</p>
-          <h1>{t("home.title")}</h1>
-          <p>{t("home.description")}</p>
+          <p className="eyebrow">{t("modes.eyebrow")}</p>
+          <h1>{t("modes.title")}</h1>
+          <p>{t("modes.description")}</p>
         </div>
-        <AppLink className="button button--primary button--large" to="/new">
-          {t("home.newMeeting")}
+        <AppLink
+          className="button button--primary button--large"
+          data-acceptance="open-summary-mode"
+          to="/summary"
+        >
+          {t("modes.summaryAction")}
+        </AppLink>
+      </section>
+
+      <section className="mode-grid" aria-label={t("modes.title")}>
+        <article className="mode-card mode-card--available">
+          <div className="mode-card__header">
+            <span className="mode-card__mark" aria-hidden="true">
+              SM
+            </span>
+            <span className="mode-card__status">
+              {t("modes.summaryAvailable")}
+            </span>
+          </div>
+          <h2>{t("modes.summaryTitle")}</h2>
+          <p>{t("modes.summaryBody")}</p>
+          <AppLink
+            className="button button--primary"
+            data-acceptance="summary-mode-card-action"
+            to="/summary"
+          >
+            {t("modes.summaryAction")}
+          </AppLink>
+        </article>
+
+        <article className="mode-card mode-card--coming-soon">
+          <div className="mode-card__header">
+            <span className="mode-card__mark" aria-hidden="true">
+              TR
+            </span>
+            <span className="mode-card__status">{t("modes.comingSoon")}</span>
+          </div>
+          <h2>{t("modes.translationTitle")}</h2>
+          <p>{t("modes.translationBody")}</p>
+          <button className="button button--secondary" disabled type="button">
+            {t("modes.comingSoon")}
+          </button>
+        </article>
+
+        <article className="mode-card mode-card--coming-soon">
+          <div className="mode-card__header">
+            <span className="mode-card__mark" aria-hidden="true">
+              MT
+            </span>
+            <span className="mode-card__status">{t("modes.comingSoon")}</span>
+          </div>
+          <h2>{t("modes.meetingTitle")}</h2>
+          <p>{t("modes.meetingBody")}</p>
+          <button className="button button--secondary" disabled type="button">
+            {t("modes.comingSoon")}
+          </button>
+        </article>
+      </section>
+
+      <section className="advanced-entry">
+        <div>
+          <h2>{t("modes.advancedTitle")}</h2>
+          <p>{t("modes.advancedBody")}</p>
+        </div>
+        <AppLink className="button button--ghost" to="/new">
+          {t("modes.advancedAction")}
         </AppLink>
       </section>
 

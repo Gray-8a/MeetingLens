@@ -12,7 +12,7 @@ import App from "./App";
 import { DocumentApiError } from "./api/document";
 import { MeetingApiError } from "./api/meeting";
 import { SecretApiError } from "./api/secret";
-import { transcriptApi } from "./api/transcript";
+import type { TranscriptApi } from "./api/transcript";
 import type { AppServices } from "./app/services";
 import { formatLocalDate } from "./lib/presentation";
 import i18n, { changeUiLocale, UI_LOCALE_STORAGE_KEY } from "./i18n";
@@ -36,6 +36,7 @@ import {
   syntheticMeeting,
 } from "./test/fakeMeetingApi";
 import { FakeSecretApi } from "./test/fakeSecretApi";
+import { FakeTranscriptApi } from "./test/fakeTranscriptApi";
 import {
   documentIds,
   FakeDocumentApi,
@@ -149,6 +150,7 @@ function appServices(
   api: FakeMeetingApi,
   transcriptionProvider: TranscriptionProvider = new ManualTranscriptionProvider(),
   documentApi: FakeDocumentApi = new FakeDocumentApi(),
+  transcriptApi: TranscriptApi = new FakeTranscriptApi(api),
 ): AppServices {
   return {
     documentApi,
@@ -1280,7 +1282,7 @@ describe("MeetingLens desktop UI", () => {
     expect(handler).not.toBeNull();
 
     await user.click(screen.getByRole("link", { name: "Home" }));
-    await screen.findByText("Turn the next conversation into clear action.");
+    await screen.findByText("What would you like to do?");
     act(() => {
       handler?.({
         batchId: "77777777-7777-4777-8777-777777777777",
@@ -1421,7 +1423,7 @@ describe("MeetingLens desktop UI", () => {
     await screen.findByRole("heading", { name: "What is not available yet" });
 
     expect(
-      screen.getByText(/Real recording, realtime transcription/),
+      screen.getByText(/Real AI minutes, DeepSeek calls, recording/),
     ).toBeInTheDocument();
     expect(
       screen.getByText(/Docling is not connected to this UI yet/),

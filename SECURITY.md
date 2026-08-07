@@ -107,6 +107,7 @@ DeepSeek 生产适配器必须使用当前模型名 `deepseek-v4-flash` / `deeps
 - `src-tauri/capabilities` 采用最小权限；不授予任意 shell 或全文件系统访问。
 - 自定义应用 commands 登记进 Tauri `AppManifest`；Secret permission set 只授予本地 `main` 窗口 status/set/delete，不包含 get/reveal，也不授予 remote WebView。
 - Document permission set 只授予本地 `main` 窗口 select/import、list/get、delete/retry 和 policy 六个自定义 commands；不授予 WebView dialog、fs、shell、process 或 HTTP permission。
+- Transcript permission set 只授予本地 `main` 窗口原子粘贴/原生选择、source/segment 查询、revision 修正、source 删除、导入 policy，以及当前总结输入 UI 所需的有界分页和 source-scoped speaker 命名 commands；不接受源路径，不授予 WebView dialog、fs、shell、process 或 HTTP permission。
 - 文件对话框只由 Rust 打开；返回路径继续留在 Rust 并再次校验，不能由前端传入、拼接或读回任意路径。
 - Sidecar 通过固定名称 allowlist 启动，不向前端暴露通用命令执行。
 - Rust commands 对长度、枚举、UUID、路径、文件大小和超时做边界校验。
@@ -140,6 +141,9 @@ DeepSeek 生产适配器必须使用当前模型名 `deepseek-v4-flash` / `deeps
 - 输入中的 URL、HTML、Markdown、代码、命令和提示词全部只作为不可信文本数据；不得访问、执行、shell-open 或交给 WebView 做不安全渲染。
 - 正文、说话人、文件名、解析失败上下文和 prompt 不进入普通日志；稳定错误只包含 code、retryable 与安全 ID。
 - 规范化 segments、来源类型、显示文件名和 SHA-256 可持久化；首版不长期复制原始转录文件，不影响用户源文件。哈希只用于来源识别/去重，不是信任或恶意软件证明。
+- 未提交的粘贴正文只能短暂存在于 React 组件内存；成功、取消和页面卸载时清理。正文、segment 数组、speaker 名称、文件名和路径不得写入 localStorage、sessionStorage、IndexedDB、console、遥测或错误对象；唯一允许的 WebView 持久偏好仍是受限 UI locale。开发 Smoke 如需跨重启，只能暂存合成记录的 UUID/阶段，结束后删除。
+- segment 查询由后端按稳定 ordinal 提供有界分页，production 单页上限 200；不得将 20,000 条全量 DTO 发送给 WebView 后再切片。文件名、speaker 和正文只用 React 文本节点显示，禁止 `dangerouslySetInnerHTML`。
+- source-level speaker 命名必须后端验证 meeting/source/label 归属，在单事务中只更新 `speaker_name`、revision 与 `corrected_at`，保留原始 `speaker_label`；清空使用明确 NULL，空名称拒绝。操作不得跨 source、建立身份档案、写入正文日志或使用 AI 猜测姓名。
 
 删除 source 时同时处理其 segments。非终态 Summary run 正在使用的 source 不得在运行中直接移除，删除必须稳定拒绝或进入明确 pending；运行继续读取已冻结输入快照。删除后不得静默改变已生成结果；evidence 只保留可解释结果所需的最小摘录、speaker、offset/ordinal 和 revision，并将原链接标为已删除。segment 修正产生新 revision，旧 summary 可标记 stale；不得后台静默重新生成或覆盖用户编辑。
 
@@ -236,8 +240,9 @@ SecretStore command 不记录请求 DTO、凭据值、长度、首尾字符、Cr
 | 转录规格    | 转录输入、纪要快照、外部发送和证据的安全规格（PR #15 已完成）                                |
 | 国际化基础  | 仅保存允许的 UI locale 枚举、打包语言资源、无动态 HTML、稳定状态/错误本地化（PR #16 已完成） |
 | 三模式对齐  | 独立 capability 同意、权限降级、屏幕最小化和三类输出保留规则                                 |
-| 转录数据    | 严格 UTF-8、大小/片段上限、同步 parser、source/segment 修正删除与 schema v3                  |
-| 总结入口    | Rust 原生转录选择器、无路径 DTO、粘贴/导入预览和安全错误                                     |
+| 转录数据    | 严格 UTF-8、大小/片段上限、同步 parser、source/segment 修正删除与 schema v3（PR #18 已完成） |
+| 转录接口    | Rust 原生转录选择器、原子工作流、无路径 DTO、revision 和最小 capability（PR #19 已完成）     |
+| 总结入口    | 内存粘贴、后端有界分页、纯文本预览、source-scoped speaker 修正和无正文/路径浏览器持久化      |
 | 纪要数据    | 不可变快照、revision、evidence allowlist、无输入和未知引用 fail closed                       |
 | 同意数据    | capability allowlist、grant/revoke、重启失效、最小 scope、审计和无正文/凭据                  |
 | 纪要服务    | SecretStore key、独立外发同意、HTTPS、超时/取消、响应 schema 和日志脱敏                      |

@@ -83,7 +83,7 @@ Phase 0 已通过 PR #1 合并，并在 Windows 本机实际启动 Tauri 窗口�
 
 ### 5.3 简约版近期主线：先完成总结模式
 
-PR #1–#18 已合并。文档安全存储、原生导入 UI、Docling Worker Foundation、转录/纪要规格、zh-CN/en-US 界面、Help 页面、双语开发预览手册和 Transcript Data Core 已完成；Docling 具备独立锁定环境、显式离线模型、stdio 协议、Windows Job Object、超时/取消和多格式本机 Smoke，但尚未接入 SQLite、Provider、Commands 或 UI。当前 SQLite schema 为 v3，真实转录可以在 Rust 数据层规范化和持久化，但普通用户尚无转录输入界面，DeepSeek key 可以安全保存但没有真实 Provider 消费，产品当前不能生成真实会议纪要。阶段名和分支名是未来计划的权威标识；PR 编号只记录实际历史。
+PR #1–#19 已合并。文档安全存储、原生导入 UI、Docling Worker Foundation、转录/纪要规格、zh-CN/en-US 界面、Help 页面、双语开发预览手册、Transcript Data Core 和安全 Transcript Command API 已完成；Docling 具备独立锁定环境、显式离线模型、stdio 协议、Windows Job Object、超时/取消和多格式本机 Smoke，但尚未接入 SQLite、Provider、Commands 或 UI。当前 SQLite schema 为 v3，真实转录可通过 Rust 原生选择器或有界粘贴 DTO 原子创建/添加、规范化并持久化，但普通用户输入与检查界面正在由 `feat/summary-mode-input-ui` 实现。DeepSeek key 可以安全保存但没有真实 Provider 消费，产品当前仍不能生成真实会议纪要。阶段名和分支名是未来计划的权威标识；PR 编号只记录实际历史。
 
 当前顺序不再使用未来 PR 编号作为计划契约：
 
@@ -91,8 +91,8 @@ PR #1–#18 已合并。文档安全存储、原生导入 UI、Docling Worker Fo
 2. **`feat/i18n-user-guide-foundation`（已完成，PR #16）**：打包 zh-CN/en-US、界面语言偏好、Help 与双语开发预览手册；后续产品文案必须同步维护。
 3. **`docs/simplified-three-mode-spec`（已完成，PR #17）**：冻结三个入口、共享管线、隐私边界和新顺序，不实现功能。
 4. **`feat/transcript-data-core`（已完成，PR #18）**：schema v3、`transcript_sources`/`transcript_segments`、粘贴/TXT/SRT/VTT 同步解析、去重、修正和删除语义；不做 UI 或外部 Provider。
-5. **`feat/transcript-command-api`（当前）**：安全 Transcript Commands/API、Rust 原生选择器和原子 meeting + transcript 工作流；不实现正式页面。
-6. **`feat/summary-mode-input-ui`**：总结模式入口、粘贴与原生导入、片段预览和基础说话人/正文修正；只消费已合并 API，不调用 DeepSeek。
+5. **`feat/transcript-command-api`（已完成，PR #19）**：安全 Transcript Commands/API、Rust 原生选择器和原子 meeting + transcript 工作流；不实现正式页面。
+6. **`feat/summary-mode-input-ui`（当前）**：总结模式入口、粘贴与原生导入、来源和分页片段预览、基础说话人/正文修正；只消费已合并 API，不调用 DeepSeek。
 7. **`feat/summary-run-core`**：Summary run/revision、不可变输入快照、evidence 与稳定错误；只使用 Mock，不接外部 Provider 或结果 UI。
 8. **`feat/consent-data-core`**：通用 `consent_events`、会话失效和审计 API；不调用 Provider、不访问设备。
 9. **`feat/summary-provider-deepseek`**：Rust SecretStore 消费、外发同意和受限 DeepSeek adapter；不新增 schema 或正式页面。
@@ -117,9 +117,13 @@ Docling 是参考文档解析增强，不是 transcript-only 纪要的强制前�
 
 限制固定为：粘贴内容最多 2 MiB、转录文件最多 10 MiB、每个 source 最多 20,000 个 segments、单 segment 正文最多 64 KiB。输入必须为严格 UTF-8，拒绝 NUL 和除 TAB/LF/CR 外的危险 C0 控制字符。文本中的 URL、代码和指令只作为数据，不执行、不访问网络、不写入普通日志。
 
+普通用户检查页面不得一次读取或渲染 20,000 个 segments。列表由后端按稳定 `ordinal` 顺序分页，生产单页上限为 200，并返回总数和后续页信息；不得在前端先取得全量再切片。同一 source 内相同 `speaker_label` 可由用户统一设置或清空 `speaker_name`，每条受影响 segment 的 revision 必须递增且 `corrected_at` 更新；原始 label 不变，映射不跨 source/meeting，也不推断真实身份。
+
 `platform_export` 是保留来源类型；Teams、Zoom、飞书、腾讯会议等平台专用 adapter 只有获得脱敏真实样例后才增加。首版不承诺 DOCX/CSV/JSON 平台模板、视频转录或音频文件转录。
 
 解析后持久化规范化 segments、原始显示文件名、来源类型和内容 SHA-256，但不长期复制原始转录文件；源文件不被修改或删除。重新解析需要用户再次选择源文件。该哈希用于来源识别和同会议重复检测，不代表可信或防病毒。
+
+当前 meeting 模型没有独立、可编辑的会议发生日期。总结模式只能将 `created_at` 明确展示为“创建时间”，不得把它冒充会议发生日期，也不得在没有数据模型与 migration 先行批准时提供无法持久化的日期输入。
 
 #### 5.3.2 纪要资格、模板与证据
 
