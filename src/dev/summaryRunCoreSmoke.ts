@@ -3,7 +3,11 @@ import {
   meetingApi,
   type MeetingResponse,
 } from "../api/meeting";
-import { summaryApi, SummaryApiError } from "../api/summary";
+import {
+  summaryApi,
+  SummaryApiError,
+  type SummaryContent,
+} from "../api/summary";
 import {
   TranscriptApiError,
   transcriptApi,
@@ -22,16 +26,25 @@ interface SmokeState {
   runId: string;
   phase: "running" | "restart";
   meetingId: string | null;
+  completedSummaryId: string | null;
+  revisionSummaryId: string | null;
+  cancelledSummaryId: string | null;
   interruptedSummaryId: string | null;
   queuedSummaryId: string | null;
 }
 
 export async function runSummaryRunCoreSmoke(): Promise<void> {
-  let state = readState();
+  const networkMonitor = installExternalNetworkMonitor();
+  let state: SmokeState | null = null;
   try {
+    requireCondition(
+      import.meta.env.VITE_SUMMARY_RUN_CORE_SMOKE_ISOLATED === "1",
+      "summary_smoke_isolation_required",
+    );
+    state = readState();
     if (state?.phase === "restart") {
       smokeCheckpoint = "restart-verification";
-      await verifyRestartAndCleanUp(state);
+      await verifyRestartAndCleanUp(state, networkMonitor);
       clearState();
       mark("passed");
       return;
@@ -45,11 +58,14 @@ export async function runSummaryRunCoreSmoke(): Promise<void> {
       runId: crypto.randomUUID(),
       phase: "running",
       meetingId: null,
+      completedSummaryId: null,
+      revisionSummaryId: null,
+      cancelledSummaryId: null,
       interruptedSummaryId: null,
       queuedSummaryId: null,
     };
     writeState(state);
-    await runFirstPass(state);
+    await runFirstPass(state, networkMonitor);
   } catch (error: unknown) {
     if (state !== null) {
       try {
@@ -60,10 +76,15 @@ export async function runSummaryRunCoreSmoke(): Promise<void> {
       }
     }
     mark(`failed:${safeErrorCode(error)}`);
+  } finally {
+    networkMonitor.restore();
   }
 }
 
-async function runFirstPass(state: SmokeState): Promise<void> {
+async function runFirstPass(
+  state: SmokeState,
+  networkMonitor: ExternalNetworkMonitor,
+): Promise<void> {
   smokeCheckpoint = "policy";
   const policy = await summaryApi.getPolicy();
   requireCondition(policy.provider === "deterministic_mock");
@@ -100,6 +121,7 @@ async function runFirstPass(state: SmokeState): Promise<void> {
   });
   requireCondition(completed.status === "completed");
   requireCondition(completed.content !== null);
+  state.completedSummaryId = first.id;
   const frozenContent = JSON.stringify(completed.content);
   const evidence = await summaryApi.listEvidence({
     meetingId: imported.meeting.id,
@@ -153,6 +175,8 @@ async function runFirstPass(state: SmokeState): Promise<void> {
     summaryId: second.id,
   });
   requireCondition(completedRevision.status === "completed");
+  requireCondition(completedRevision.content !== null);
+  state.revisionSummaryId = second.id;
   requireCondition(
     (
       await summaryApi.listEvidence({
@@ -174,6 +198,7 @@ async function runFirstPass(state: SmokeState): Promise<void> {
       })
     ).status === "cancelled",
   );
+  state.cancelledSummaryId = cancelledRevision.id;
 
   smokeCheckpoint = "source-redaction";
   const activeSourceConsumer = await summaryApi.createRun({
@@ -213,7 +238,7 @@ async function runFirstPass(state: SmokeState): Promise<void> {
   requireCondition(sourceDeletedRun.staleReason === "source_deleted");
   requireCondition(JSON.stringify(sourceDeletedRun.content) === frozenContent);
 
-  smokeCheckpoint = "prepare-interruption";
+  smokeCheckpoint = "prepare-recovery-source";
   const recoverySource = requireCompleted(
     await transcriptApi.addPasteToMeeting({
       meetingId: imported.meeting.id,
@@ -223,16 +248,19 @@ async function runFirstPass(state: SmokeState): Promise<void> {
       baseStartedAt: null,
     }),
   ).source;
+  smokeCheckpoint = "prepare-interruption-title";
   await meetingApi.update({
     id: imported.meeting.id,
     title: interruptionTitle(state.runId),
   });
+  smokeCheckpoint = "prepare-interrupted-run";
   const interrupted = await summaryApi.createRun({
     meetingId: imported.meeting.id,
     sourceIds: [recoverySource.id],
     template: "concise",
     outputLanguage: "en",
   });
+  smokeCheckpoint = "prepare-queued-run";
   const queued = await summaryApi.createRun({
     meetingId: imported.meeting.id,
     sourceIds: [recoverySource.id],
@@ -242,23 +270,92 @@ async function runFirstPass(state: SmokeState): Promise<void> {
   state.interruptedSummaryId = interrupted.id;
   state.queuedSummaryId = queued.id;
 
+  smokeCheckpoint = "prepare-interrupted-execution";
   const execution = summaryApi.executeRun({
     meetingId: imported.meeting.id,
     summaryId: interrupted.id,
   });
   void execution.catch(() => undefined);
+  smokeCheckpoint = "prepare-running-wait";
   await waitForRunning(imported.meeting.id, interrupted.id);
+  smokeCheckpoint = "prepare-restart-state";
   state.phase = "restart";
   writeState(state);
+  smokeCheckpoint = "prepare-browser-storage";
+  await assertBrowserStorageContainsNoMeetingData([
+    "Synthetic opening point",
+    "Synthetic follow-up point",
+    frozenExcerpt,
+    "Synthetic corrected summary smoke point",
+    "Synthetic recovery point",
+    ...summaryContentStorageProbes(completed.content),
+    ...summaryContentStorageProbes(completedRevision.content),
+  ]);
+  smokeCheckpoint = "prepare-network-count";
+  requireCondition(networkMonitor.externalCount() === 0);
   mark("restart-running");
 }
 
-async function verifyRestartAndCleanUp(state: SmokeState): Promise<void> {
+async function verifyRestartAndCleanUp(
+  state: SmokeState,
+  networkMonitor: ExternalNetworkMonitor,
+): Promise<void> {
   requireCondition(state.meetingId !== null);
+  requireCondition(state.completedSummaryId !== null);
+  requireCondition(state.revisionSummaryId !== null);
+  requireCondition(state.cancelledSummaryId !== null);
   requireCondition(state.interruptedSummaryId !== null);
   requireCondition(state.queuedSummaryId !== null);
   const meeting = await meetingApi.get(state.meetingId);
   requireCondition(meeting.title === interruptionTitle(state.runId));
+
+  const completed = await summaryApi.getRun({
+    meetingId: state.meetingId,
+    summaryId: state.completedSummaryId,
+  });
+  requireCondition(completed.status === "completed");
+  requireCondition(completed.content?.schemaVersion === 1);
+  requireCondition(completed.isStale);
+  requireCondition(completed.staleReason === "source_deleted");
+  const completedEvidence = await summaryApi.listEvidence({
+    meetingId: state.meetingId,
+    summaryId: state.completedSummaryId,
+    limit: 100,
+  });
+  requireCondition(completedEvidence.items.length > 0);
+  requireCondition(completedEvidence.items.every((item) => item.sourceDeleted));
+  requireCondition(
+    completed.content.overview.evidenceIds.every((id) =>
+      completedEvidence.items.some((item) => item.id === id),
+    ),
+  );
+
+  const revision = await summaryApi.getRun({
+    meetingId: state.meetingId,
+    summaryId: state.revisionSummaryId,
+  });
+  requireCondition(revision.status === "completed");
+  requireCondition(revision.revision === 2);
+  requireCondition(revision.previousSummaryId === state.completedSummaryId);
+  requireCondition(revision.content !== null);
+  requireCondition(revision.content.schemaVersion === 1);
+  const revisionEvidence = await summaryApi.listEvidence({
+    meetingId: state.meetingId,
+    summaryId: state.revisionSummaryId,
+    limit: 100,
+  });
+  requireCondition(revisionEvidence.items.length > 0);
+  requireCondition(revisionEvidence.items.every((item) => item.sourceDeleted));
+
+  const cancelledRevision = await summaryApi.getRun({
+    meetingId: state.meetingId,
+    summaryId: state.cancelledSummaryId,
+  });
+  requireCondition(cancelledRevision.status === "cancelled");
+  requireCondition(cancelledRevision.revision === 3);
+  requireCondition(
+    cancelledRevision.previousSummaryId === state.revisionSummaryId,
+  );
 
   const interrupted = await summaryApi.getRun({
     meetingId: state.meetingId,
@@ -284,6 +381,16 @@ async function verifyRestartAndCleanUp(state: SmokeState): Promise<void> {
   );
   const page = await summaryApi.listRuns({ meetingId: state.meetingId });
   requireCondition(page.totalCount >= 5);
+  await assertBrowserStorageContainsNoMeetingData([
+    "Synthetic opening point",
+    "Synthetic follow-up point",
+    "Synthetic corrected summary smoke point",
+    "Synthetic recovery point",
+    ...summaryContentStorageProbes(completed.content),
+    ...summaryContentStorageProbes(revision.content),
+    ...completedEvidence.items.map((item) => item.excerpt),
+    ...revisionEvidence.items.map((item) => item.excerpt),
+  ]);
 
   await deleteOwnedMeetingResponse(meeting, interruptionTitle(state.runId));
   await expectMeetingMissing(state.meetingId);
@@ -292,6 +399,7 @@ async function verifyRestartAndCleanUp(state: SmokeState): Promise<void> {
       candidate.title.includes(state.runId),
     ),
   );
+  requireCondition(networkMonitor.externalCount() === 0);
 }
 
 async function expectSourceInUse(
@@ -393,6 +501,9 @@ function readState(): SmokeState | null {
       !uuidPattern.test(value.runId) ||
       (value.phase !== "running" && value.phase !== "restart") ||
       !isNullableUuid(value.meetingId) ||
+      !isNullableUuid(value.completedSummaryId) ||
+      !isNullableUuid(value.revisionSummaryId) ||
+      !isNullableUuid(value.cancelledSummaryId) ||
       !isNullableUuid(value.interruptedSummaryId) ||
       !isNullableUuid(value.queuedSummaryId)
     ) {
@@ -418,6 +529,129 @@ function writeState(state: SmokeState): void {
 
 function clearState(): void {
   window.localStorage.removeItem(smokeStateKey);
+}
+
+interface ExternalNetworkMonitor {
+  externalCount(): number;
+  restore(): void;
+}
+
+function installExternalNetworkMonitor(): ExternalNetworkMonitor {
+  let externalCount = 0;
+  const originalFetch = window.fetch;
+  const originalXhrOpen = window.XMLHttpRequest.prototype.open;
+  const originalWebSocket = window.WebSocket;
+
+  window.fetch = new Proxy(originalFetch, {
+    apply(target, thisArgument, argumentsList) {
+      if (isExternalNetworkTarget(argumentsList[0])) externalCount += 1;
+      return Reflect.apply(target, thisArgument, argumentsList);
+    },
+  });
+  window.XMLHttpRequest.prototype.open = new Proxy(originalXhrOpen, {
+    apply(target, thisArgument, argumentsList) {
+      if (isExternalNetworkTarget(argumentsList[1])) externalCount += 1;
+      return Reflect.apply(target, thisArgument, argumentsList);
+    },
+  });
+  window.WebSocket = new Proxy(originalWebSocket, {
+    construct(target, argumentsList, newTarget) {
+      if (isExternalNetworkTarget(argumentsList[0])) externalCount += 1;
+      return Reflect.construct(target, argumentsList, newTarget);
+    },
+  });
+
+  return {
+    externalCount: () => externalCount,
+    restore: () => {
+      window.fetch = originalFetch;
+      window.XMLHttpRequest.prototype.open = originalXhrOpen;
+      window.WebSocket = originalWebSocket;
+    },
+  };
+}
+
+export function isExternalNetworkTarget(value: unknown): boolean {
+  let raw: string;
+  if (typeof value === "string") {
+    raw = value;
+  } else if (value instanceof URL) {
+    raw = value.href;
+  } else if (value instanceof Request) {
+    raw = value.url;
+  } else {
+    return false;
+  }
+  try {
+    const target = new URL(raw, window.location.href);
+    if (!["http:", "https:", "ws:", "wss:"].includes(target.protocol)) {
+      return false;
+    }
+    const hostname = target.hostname.toLowerCase();
+    return !(
+      hostname === "localhost" ||
+      hostname.endsWith(".localhost") ||
+      ["127.0.0.1", "::1", "[::1]"].includes(hostname)
+    );
+  } catch {
+    return true;
+  }
+}
+
+async function assertBrowserStorageContainsNoMeetingData(
+  forbiddenValues: readonly string[],
+): Promise<void> {
+  requireCondition(
+    !browserStorageContainsForbiddenValue(
+      window.localStorage,
+      forbiddenValues,
+    ) &&
+      !browserStorageContainsForbiddenValue(
+        window.sessionStorage,
+        forbiddenValues,
+      ),
+    "summary_smoke_browser_storage_contains_meeting_data",
+  );
+  requireCondition(
+    (await window.indexedDB.databases()).length === 0,
+    "summary_smoke_indexeddb_not_empty",
+  );
+}
+
+export function browserStorageContainsForbiddenValue(
+  storage: Pick<Storage, "length" | "key" | "getItem">,
+  forbiddenValues: readonly string[],
+): boolean {
+  const probes = [...new Set(forbiddenValues)].filter(
+    (value) => value.length > 0,
+  );
+  for (let index = 0; index < storage.length; index += 1) {
+    const key = storage.key(index);
+    if (key === null) continue;
+    const stored = storage.getItem(key) ?? "";
+    if (
+      probes.some(
+        (forbidden) => key.includes(forbidden) || stored.includes(forbidden),
+      )
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export function summaryContentStorageProbes(content: SummaryContent): string[] {
+  return [
+    content.overview.text,
+    ...content.decisions.map((item) => item.text),
+    ...content.actionItems.flatMap((item) => [
+      item.text,
+      item.owner ?? "",
+      item.dueDate ?? "",
+    ]),
+    ...content.risks.map((item) => item.text),
+    ...content.openQuestions.map((item) => item.text),
+  ].filter((value) => value.length > 0);
 }
 
 function mark(status: string): void {

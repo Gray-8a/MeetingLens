@@ -10,7 +10,7 @@ use super::summary_model::{
 
 const SUMMARY_COLUMNS: &str = "
     id, meeting_id, series_id, previous_summary_id, revision, run_purpose, trigger_kind,
-    template, output_language, status, provider, model, prompt_version, content_json,
+    template, output_language, status, provider, provider_mode, model, prompt_version, content_json,
     error_code, source_count, input_segment_count, input_bytes, is_stale, stale_reason,
     stale_at, is_user_edited, snapshot_created_at, created_at, started_at, finished_at,
     cancel_requested_at, updated_at
@@ -43,6 +43,7 @@ pub(crate) struct NewSummary<'a> {
     pub(crate) template: SummaryTemplate,
     pub(crate) output_language: SummaryOutputLanguage,
     pub(crate) provider: &'a str,
+    pub(crate) provider_mode: &'a str,
     pub(crate) model: &'a str,
     pub(crate) prompt_version: &'a str,
     pub(crate) source_count: usize,
@@ -61,12 +62,12 @@ pub(crate) fn insert_summary(
                 id, meeting_id, series_id, previous_summary_id, revision,
                 run_purpose, trigger_kind, meeting_title_snapshot,
                 meeting_primary_language_snapshot, template, output_language, status,
-                provider, model, prompt_version, source_count,
+                provider, provider_mode, model, prompt_version, source_count,
                 input_segment_count, input_bytes, snapshot_created_at,
                 created_at, updated_at
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, 'final', 'manual', ?6, ?7, ?8, ?9, 'queued',
-                ?10, ?11, ?12, ?13, ?14, ?15,
+                ?10, ?11, ?12, ?13, ?14, ?15, ?16,
                 strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
                 strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
                 strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
@@ -83,6 +84,7 @@ pub(crate) fn insert_summary(
                 summary.template.as_str(),
                 summary.output_language.as_str(),
                 summary.provider,
+                summary.provider_mode,
                 summary.model,
                 summary.prompt_version,
                 sqlite_usize(summary.source_count)?,
@@ -415,7 +417,7 @@ pub(crate) fn recover_interrupted(transaction: &Transaction<'_>) -> SummaryResul
 pub(crate) fn list_summaries(
     connection: &Connection,
     meeting_id: &str,
-    offset: u64,
+    cursor: Option<&str>,
     limit: u64,
 ) -> SummaryResult<SummaryRunPage> {
     let total: i64 = connection
@@ -425,23 +427,53 @@ pub(crate) fn list_summaries(
             |row| row.get(0),
         )
         .map_err(SummaryError::from)?;
+    let anchor_created_at = match cursor {
+        Some(cursor) => Some(
+            connection
+                .query_row(
+                    "SELECT created_at FROM summaries WHERE meeting_id = ?1 AND id = ?2",
+                    params![meeting_id, cursor],
+                    |row| row.get::<_, String>(0),
+                )
+                .optional()
+                .map_err(SummaryError::from)?
+                .ok_or(SummaryError::InvalidInput)?,
+        ),
+        None => None,
+    };
     let sql = format!(
         "SELECT {SUMMARY_COLUMNS} FROM summaries WHERE meeting_id = ?1 \
-         ORDER BY created_at DESC, id LIMIT ?2 OFFSET ?3"
+         AND (?2 IS NULL OR created_at < ?3 OR (created_at = ?3 AND id > ?2)) \
+         ORDER BY created_at DESC, id LIMIT ?4"
     );
+    let fetch_limit = limit.checked_add(1).ok_or(SummaryError::InvalidInput)?;
     let mut statement = connection.prepare(&sql).map_err(SummaryError::from)?;
-    let items = statement
+    let mut items = statement
         .query_map(
-            params![meeting_id, sqlite_integer(limit)?, sqlite_integer(offset)?],
+            params![
+                meeting_id,
+                cursor,
+                anchor_created_at.as_deref(),
+                sqlite_integer(fetch_limit)?
+            ],
             summary_from_row,
         )
         .map_err(SummaryError::from)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(SummaryError::from)?;
+    let has_more = items.len() > usize::try_from(limit).map_err(|_| SummaryError::InvalidInput)?;
+    if has_more {
+        items.pop();
+    }
+    let next_cursor = if has_more {
+        items.last().map(|item| item.id.clone())
+    } else {
+        None
+    };
     Ok(SummaryRunPage {
         items,
-        offset,
-        limit,
+        next_cursor,
+        has_more,
         total_count: u64::try_from(total).map_err(|_| SummaryError::PersistenceFailed)?,
     })
 }
@@ -648,8 +680,19 @@ pub(crate) fn redact_terminal_source(
 pub(crate) fn cancel_active_for_meeting(
     transaction: &Transaction<'_>,
     meeting_id: &str,
-) -> SummaryResult<u64> {
-    let changed = transaction
+) -> SummaryResult<Vec<String>> {
+    let mut statement = transaction
+        .prepare(
+            "SELECT id FROM summaries WHERE meeting_id = ?1 AND status = 'running' ORDER BY id",
+        )
+        .map_err(SummaryError::from)?;
+    let running_ids = statement
+        .query_map([meeting_id], |row| row.get(0))
+        .map_err(SummaryError::from)?
+        .collect::<Result<Vec<String>, _>>()
+        .map_err(SummaryError::from)?;
+    drop(statement);
+    transaction
         .execute(
             "
             UPDATE summaries
@@ -662,7 +705,7 @@ pub(crate) fn cancel_active_for_meeting(
             [meeting_id],
         )
         .map_err(SummaryError::from)?;
-    u64::try_from(changed).map_err(|_| SummaryError::PersistenceFailed)
+    Ok(running_ids)
 }
 
 pub(crate) fn referenced_evidence_ids(content: &SummaryContent) -> Vec<String> {
@@ -689,13 +732,13 @@ fn summary_from_row(row: &Row<'_>) -> rusqlite::Result<SummaryRun> {
     let template_value: String = row.get(7)?;
     let output_language_value: String = row.get(8)?;
     let status_value: String = row.get(9)?;
-    let content_json: Option<String> = row.get(13)?;
+    let content_json: Option<String> = row.get(14)?;
     let content = content_json
         .map(|value| serde_json::from_str::<SummaryContent>(&value))
         .transpose()
         .map_err(|error| {
             rusqlite::Error::FromSqlConversionFailure(
-                13,
+                14,
                 rusqlite::types::Type::Text,
                 Box::new(error),
             )
@@ -732,23 +775,24 @@ fn summary_from_row(row: &Row<'_>) -> rusqlite::Result<SummaryRun> {
             )
         })?,
         provider: row.get(10)?,
-        model: row.get(11)?,
-        prompt_version: row.get(12)?,
+        provider_mode: row.get(11)?,
+        model: row.get(12)?,
+        prompt_version: row.get(13)?,
         content,
-        error_code: row.get(14)?,
-        source_count: nonnegative_integer(row, 15)?,
-        input_segment_count: nonnegative_integer(row, 16)?,
-        input_bytes: nonnegative_integer(row, 17)?,
-        is_stale: row.get::<_, i64>(18)? == 1,
-        stale_reason: row.get(19)?,
-        stale_at: row.get(20)?,
-        is_user_edited: row.get::<_, i64>(21)? == 1,
-        snapshot_created_at: row.get(22)?,
-        created_at: row.get(23)?,
-        started_at: row.get(24)?,
-        finished_at: row.get(25)?,
-        cancel_requested_at: row.get(26)?,
-        updated_at: row.get(27)?,
+        error_code: row.get(15)?,
+        source_count: nonnegative_integer(row, 16)?,
+        input_segment_count: nonnegative_integer(row, 17)?,
+        input_bytes: nonnegative_integer(row, 18)?,
+        is_stale: row.get::<_, i64>(19)? == 1,
+        stale_reason: row.get(20)?,
+        stale_at: row.get(21)?,
+        is_user_edited: row.get::<_, i64>(22)? == 1,
+        snapshot_created_at: row.get(23)?,
+        created_at: row.get(24)?,
+        started_at: row.get(25)?,
+        finished_at: row.get(26)?,
+        cancel_requested_at: row.get(27)?,
+        updated_at: row.get(28)?,
     })
 }
 

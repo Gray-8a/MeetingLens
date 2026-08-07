@@ -10,7 +10,7 @@ use super::model::{CreateMeeting, Meeting, MeetingStatus, UpdateMeeting};
 use super::paths::StoragePaths;
 use super::repository::{self, NewMeeting};
 use super::summary_repository;
-use super::summary_service::SummaryService;
+use super::summary_service::{SummaryService, cancel_active_providers};
 use super::transcript_service::TranscriptService;
 use super::transcript_workflow::TranscriptImportWorkflow;
 
@@ -205,10 +205,13 @@ impl MeetingService {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(DataError::from)?;
-        summary_repository::cancel_active_for_meeting(&transaction, id)
+        let running_summary_ids = summary_repository::cancel_active_for_meeting(&transaction, id)
             .map_err(|_| DataError::Database)?;
         repository::begin_delete(&transaction, id, &Uuid::new_v4().to_string())?;
         transaction.commit().map_err(DataError::from)?;
+        drop(connection);
+        drop(_guard);
+        cancel_active_providers(&running_summary_ids);
         execute_meeting_delete(&self.database, id)
     }
 }

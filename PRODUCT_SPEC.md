@@ -135,7 +135,7 @@ schema v4 为每个新纪要系列生成 `series_id` 和 revision 1；显式重�
 
 当前 Rust deterministic Mock 只消费本地快照，不访问 SecretStore、环境凭据、文件、Sidecar 或网络。每个 snapshot row 的 UUID 形成当前 run evidence allowlist；Rust 在原子写入结果前验证 output run ID、结构版本、大小/数量和全部 evidence，未知或跨 run 引用使 run 安全失败。只有结果实际引用的 transcript evidence 被持久化；document/screen/manual-note evidence 不属于本阶段。
 
-开发/API 边界包括 `get_summary_policy`、`create_summary_run`、`create_summary_revision`、`execute_summary_run`、`get_summary_run`、`list_summary_runs`、`cancel_summary_run` 和 `list_summary_evidence` 八个 commands，并由集中式 `summaryApi` 调用。它们不是正式生成页面；WebView 不能提交 Provider 结果、evidence、正文、路径或凭据。
+开发/API 边界包括 `get_summary_policy`、`create_summary_run`、`create_summary_revision`、`execute_summary_run`、`get_summary_run`、`list_summary_runs`、`cancel_summary_run` 和 `list_summary_evidence` 八个 commands，并由集中式 `summaryApi` 调用。DTO（含嵌套结果）统一 camelCase；run/evidence 列表采用默认 50、最大 100 的 keyset 分页。持久 provenance 分开记录 provider/mode/model/prompt version，当前 mode 只能执行 `mock`。它们不是正式生成页面；WebView 不能提交 Provider 结果、evidence、正文、路径或凭据。
 
 segment 修正把依赖旧 revision 的 run 标为 `segment_revised` stale，但旧快照/结果不变。queued/running run 使用的 source 删除稳定拒绝；terminal source 删除保留已引用、最多 1,024 UTF-8 bytes 的 evidence，清理完整正文快照并标 `source_deleted` stale。会议删除先取消 active runs，再由既有协调器清理 summaries、snapshots 和 evidence；任何路径都不得静默重生成。
 

@@ -149,8 +149,12 @@ DeepSeek 生产适配器必须使用当前模型名 `deepseek-v4-flash` / `deeps
 - source-level speaker 命名必须后端验证 meeting/source/label 归属，在单事务中只更新 `speaker_name`、revision 与 `corrected_at`，保留原始 `speaker_label`；清空使用明确 NULL，空名称拒绝。操作不得跨 source、建立身份档案、写入正文日志或使用 AI 猜测姓名。
 - 单个 Summary run 只冻结用户选择 source 中的 final segments，合计最多 20,000 条和 10 MiB UTF-8 `original_text`；超限、空输入、跨 meeting source、重复 source 和无法原子冻结的输入全部 fail closed，不截断、不抽样。快照复制 source/segment IDs、三个层级 ordinal、revision、speaker、offset、正文、language、confidence 与创建时间；Rust Provider 只能读取这些 snapshot rows，不能在执行期间回读 live segment。
 - 每个 snapshot row 的随机 UUID 是当前 run 专用 evidence allowlist。Provider 输出必须在 Rust 内验证 run ID、schema version、结果大小/数量、必要 evidence 非空、ID 无重复且全部属于该 run；未知或跨 run ID 返回稳定错误，未完成完整验证前不得写入任何 `content_json` 或 evidence。
+- Summary run/evidence 查询只允许默认 50、最大 100 的 keyset 分页；wire DTO 包括嵌套 result 都使用 camelCase 并拒绝未知字段。revision 竞态和 evidence tuple 失败使用固定的 `summary_revision_conflict` / `summary_evidence_invalid`，不得返回 SQL、路径或 Provider wording。
+- schema v4 独立持久化 `provider_mode`；当前 Service 只能写/执行 `mock`，schema 只为已规划且必须经过 Consent 的 `local/external` 后续 adapter 保留值，`disabled` 或未知 mode 不能代表一次 run。
 
 删除 source 时同时处理其 segments。queued/running Summary run 使用该 source 时稳定拒绝 `transcript_source_in_use`；不采用隐式 pending，也不在 run 中途移除输入。terminal run 不阻塞删除：同一事务先把依赖结果标记 `source_deleted` stale，保留实际引用且最多 1,024 UTF-8 bytes 的 evidence excerpt、speaker、offset/ordinal 和 revision，清空完整 snapshot 正文与非必要显示元数据，再删除 live source/segments。segment 修正产生新 revision，并把依赖旧 revision 的 run 标记 `segment_revised` stale；旧快照和结果保持不变，不得后台静默重新生成或覆盖用户编辑。
+
+Summary Run Core 的 development-only Windows harness 必须使用 Rust 校验过的系统 Temp 直属隔离 app-data 根，并让两次启动合并 UUID 相同的 `com.gray.meetinglens.summarysmoke.<uuid>` 合成 Tauri identifier；Rust 对根目录与 identifier 失配 fail closed，SQLite 和 WebView2 profile 都不得落入用户正常 MeetingLens 位置。跨启动状态只保存合成 UUID/阶段；harness 必须把 `*.localhost` Tauri IPC 视为本机通信、计数真实外网 fetch/XHR/WebSocket 为 0，并复验 completed result、revision、stale、evidence、running recovery 和最终清理。release 不包含前端 harness 或 debug app-data override。
 
 ### 10.2 参考文档上传
 

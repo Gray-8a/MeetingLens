@@ -1,4 +1,8 @@
+use std::collections::HashSet;
 use std::fmt;
+use std::sync::{Arc, Mutex};
+#[cfg(debug_assertions)]
+use std::time::Duration;
 
 use super::summary_error::{SummaryError, SummaryResult};
 use super::summary_model::{
@@ -7,6 +11,7 @@ use super::summary_model::{
 };
 
 pub const MOCK_SUMMARY_PROVIDER: &str = "deterministic_mock";
+pub const MOCK_SUMMARY_PROVIDER_MODE: &str = "mock";
 pub const MOCK_SUMMARY_MODEL: &str = "meetinglens-deterministic-mock-v1";
 pub const MOCK_SUMMARY_PROMPT_VERSION: &str = "summary-core-mock-v1";
 
@@ -47,6 +52,7 @@ pub struct SummaryProviderOutput {
 
 pub trait SummaryProvider: Send + Sync {
     fn provider_name(&self) -> &'static str;
+    fn provider_mode(&self) -> &'static str;
     fn model_name(&self) -> &'static str;
     fn prompt_version(&self) -> &'static str;
     fn generate(&self, request: &SummaryProviderRequest) -> SummaryResult<SummaryProviderOutput>;
@@ -56,12 +62,61 @@ pub trait SummaryProvider: Send + Sync {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct DeterministicMockSummaryProvider;
+#[derive(Clone, Default)]
+pub struct DeterministicMockSummaryProvider {
+    cancelled_runs: Arc<Mutex<HashSet<String>>>,
+    fail_generation: bool,
+}
+
+impl fmt::Debug for DeterministicMockSummaryProvider {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DeterministicMockSummaryProvider")
+            .field("fail_generation", &self.fail_generation)
+            .finish_non_exhaustive()
+    }
+}
+
+impl DeterministicMockSummaryProvider {
+    #[cfg(test)]
+    pub(crate) fn failing() -> Self {
+        Self {
+            cancelled_runs: Arc::default(),
+            fail_generation: true,
+        }
+    }
+
+    fn take_cancelled(&self, run_id: &str) -> SummaryResult<bool> {
+        self.cancelled_runs
+            .lock()
+            .map(|mut cancelled| cancelled.remove(run_id))
+            .map_err(|_| SummaryError::Internal)
+    }
+
+    fn wait_for_interruption_smoke(&self, _request: &SummaryProviderRequest) -> SummaryResult<()> {
+        #[cfg(debug_assertions)]
+        if _request
+            .meeting_title
+            .starts_with(INTERRUPTION_SMOKE_TITLE_PREFIX)
+        {
+            for _ in 0..300 {
+                if self.take_cancelled(&_request.run_id)? {
+                    return Err(SummaryError::InvalidState);
+                }
+                std::thread::sleep(Duration::from_millis(100));
+            }
+        }
+        Ok(())
+    }
+}
 
 impl SummaryProvider for DeterministicMockSummaryProvider {
     fn provider_name(&self) -> &'static str {
         MOCK_SUMMARY_PROVIDER
+    }
+
+    fn provider_mode(&self) -> &'static str {
+        MOCK_SUMMARY_PROVIDER_MODE
     }
 
     fn model_name(&self) -> &'static str {
@@ -73,7 +128,16 @@ impl SummaryProvider for DeterministicMockSummaryProvider {
     }
 
     fn generate(&self, request: &SummaryProviderRequest) -> SummaryResult<SummaryProviderOutput> {
-        pause_for_development_interruption_smoke(request);
+        if self.fail_generation {
+            return Err(SummaryError::ProviderFailed);
+        }
+        if self.take_cancelled(&request.run_id)? {
+            return Err(SummaryError::InvalidState);
+        }
+        self.wait_for_interruption_smoke(request)?;
+        if self.take_cancelled(&request.run_id)? {
+            return Err(SummaryError::InvalidState);
+        }
         let first = request
             .segments
             .first()
@@ -115,20 +179,15 @@ impl SummaryProvider for DeterministicMockSummaryProvider {
             },
         })
     }
-}
 
-#[cfg(debug_assertions)]
-fn pause_for_development_interruption_smoke(request: &SummaryProviderRequest) {
-    if request
-        .meeting_title
-        .starts_with(INTERRUPTION_SMOKE_TITLE_PREFIX)
-    {
-        std::thread::sleep(std::time::Duration::from_secs(30));
+    fn cancel(&self, run_id: &str) -> SummaryResult<()> {
+        self.cancelled_runs
+            .lock()
+            .map_err(|_| SummaryError::Internal)?
+            .insert(run_id.to_string());
+        Ok(())
     }
 }
-
-#[cfg(not(debug_assertions))]
-fn pause_for_development_interruption_smoke(_request: &SummaryProviderRequest) {}
 
 #[cfg(test)]
 mod tests {
@@ -176,10 +235,9 @@ mod tests {
             ],
         };
 
-        let first = DeterministicMockSummaryProvider
-            .generate(&request)
-            .expect("mock should generate");
-        let second = DeterministicMockSummaryProvider
+        let provider = DeterministicMockSummaryProvider::default();
+        let first = provider.generate(&request).expect("mock should generate");
+        let second = provider
             .generate(&request)
             .expect("mock should remain deterministic");
         assert_eq!(first, second);
@@ -204,8 +262,32 @@ mod tests {
         };
 
         assert_eq!(
-            DeterministicMockSummaryProvider.generate(&request),
+            DeterministicMockSummaryProvider::default().generate(&request),
             Err(SummaryError::SnapshotMissing)
         );
+    }
+
+    #[test]
+    fn deterministic_mock_supports_test_failure_and_cooperative_cancel() {
+        let request = SummaryProviderRequest {
+            run_id: "00000000-0000-4000-8000-000000000010".to_string(),
+            meeting_id: "00000000-0000-4000-8000-000000000001".to_string(),
+            meeting_title: "Synthetic title".to_string(),
+            meeting_primary_language: "en-AU".to_string(),
+            template: SummaryTemplate::Detailed,
+            output_language: SummaryOutputLanguage::En,
+            segments: vec![segment("00000000-0000-4000-8000-000000000011", 0)],
+        };
+
+        assert_eq!(
+            DeterministicMockSummaryProvider::failing().generate(&request),
+            Err(SummaryError::ProviderFailed)
+        );
+
+        let provider = DeterministicMockSummaryProvider::default();
+        provider
+            .cancel(&request.run_id)
+            .expect("mock cancellation should register");
+        assert_eq!(provider.generate(&request), Err(SummaryError::InvalidState));
     }
 }

@@ -203,7 +203,7 @@ Secure credential storage and the zero-network Summary core are separate. The cu
 
 ### Why is Generate meeting minutes unavailable when the transcript is ready?
 
-PR #20 completed input, persistence, paginated review, and manual correction. The current branch adds developer-only immutable Summary runs, `series_id + revision`, a 20,000-segment/10-MiB snapshot policy, evidence allowlisting, cancellation, stale/delete handling, and interrupted-run recovery through eight minimal commands. Consent data, the bounded DeepSeek Provider, and the minutes result workspace still follow separately; the disabled action does not call AI.
+PR #20 completed input, persistence, paginated review, and manual correction. The current branch adds developer-only immutable Summary runs, `series_id + revision`, a 20,000-segment/10-MiB snapshot policy, evidence allowlisting, cancellation delivered to the running Mock, stale/delete handling, and interrupted-run recovery through eight minimal commands. Development acceptance uses an isolated operating-system temporary data root and a matching synthetic WebView2 profile rather than the user's normal MeetingLens data locations. Consent data, the bounded DeepSeek Provider, and the minutes result workspace still follow separately; the disabled action does not call AI.
 
 ### Does transcript import copy or delete the source file?
 

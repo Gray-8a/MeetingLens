@@ -38,7 +38,7 @@ export interface SummaryRunReferenceRequest {
 
 export interface ListSummaryRunsRequest {
   meetingId: string;
-  offset?: number;
+  cursor?: string | null;
   limit?: number;
 }
 
@@ -51,7 +51,7 @@ export interface ListSummaryEvidenceRequest {
 
 export interface SummaryClaim {
   text: string;
-  evidence_ids: string[];
+  evidenceIds: string[];
 }
 
 export interface SummaryDecision extends SummaryClaim {
@@ -60,17 +60,17 @@ export interface SummaryDecision extends SummaryClaim {
 
 export interface SummaryActionItem extends SummaryClaim {
   owner: string | null;
-  due_date: string | null;
+  dueDate: string | null;
   status: SummaryActionStatus;
 }
 
 export interface SummaryContent {
-  schema_version: 1;
+  schemaVersion: 1;
   overview: SummaryClaim;
   decisions: SummaryDecision[];
-  action_items: SummaryActionItem[];
+  actionItems: SummaryActionItem[];
   risks: SummaryClaim[];
-  open_questions: SummaryClaim[];
+  openQuestions: SummaryClaim[];
 }
 
 export type SummaryRunFailureCode =
@@ -80,16 +80,17 @@ export type SummaryRunFailureCode =
   | "summary_input_insufficient"
   | "summary_input_too_large"
   | "summary_interrupted"
+  | "summary_evidence_invalid"
   | "summary_invalid_input"
   | "summary_invalid_state"
   | "summary_persistence_failed"
   | "summary_provider_failed"
   | "summary_provider_output_invalid"
+  | "summary_revision_conflict"
   | "summary_run_not_found"
   | "summary_segment_limit_exceeded"
   | "summary_snapshot_missing"
-  | "summary_source_not_found"
-  | "summary_unknown_evidence";
+  | "summary_source_not_found";
 
 export interface SummaryRunResponse {
   id: string;
@@ -103,6 +104,7 @@ export interface SummaryRunResponse {
   outputLanguage: SummaryOutputLanguage;
   status: SummaryStatus;
   provider: "deterministic_mock";
+  providerMode: "mock";
   model: string;
   promptVersion: string;
   content: SummaryContent | null;
@@ -143,8 +145,8 @@ export interface SummaryEvidenceResponse {
 
 export interface ListSummaryRunsResponse {
   items: SummaryRunResponse[];
-  offset: number;
-  limit: number;
+  nextCursor: string | null;
+  hasMore: boolean;
   totalCount: number;
 }
 
@@ -173,6 +175,7 @@ export interface SummaryPolicyResponse {
 export type SummaryErrorCode =
   | "summary_input_insufficient"
   | "summary_input_too_large"
+  | "summary_evidence_invalid"
   | "internal_error"
   | "summary_invalid_input"
   | "summary_invalid_state"
@@ -181,16 +184,18 @@ export type SummaryErrorCode =
   | "summary_persistence_failed"
   | "summary_provider_failed"
   | "summary_provider_output_invalid"
+  | "summary_revision_conflict"
   | "summary_run_not_found"
   | "summary_segment_limit_exceeded"
   | "summary_snapshot_missing"
-  | "summary_source_not_found"
-  | "summary_unknown_evidence";
+  | "summary_source_not_found";
 
 const safeMessages: Record<SummaryErrorCode, string> = {
   summary_input_insufficient:
     "The selected sources do not contain usable final transcript segments.",
   summary_input_too_large: "The selected summary input is too large.",
+  summary_evidence_invalid:
+    "The summary result contains invalid evidence references.",
   internal_error: "An internal error occurred.",
   summary_invalid_input: "The summary request is invalid.",
   summary_invalid_state:
@@ -202,12 +207,12 @@ const safeMessages: Record<SummaryErrorCode, string> = {
   summary_provider_failed: "The summary provider could not complete the run.",
   summary_provider_output_invalid:
     "The summary provider returned an invalid result.",
+  summary_revision_conflict: "The summary revision is no longer current.",
   summary_run_not_found: "The summary run was not found.",
   summary_segment_limit_exceeded:
     "The selected summary input contains too many segments.",
   summary_snapshot_missing: "The summary input snapshot is unavailable.",
   summary_source_not_found: "A selected transcript source was not found.",
-  summary_unknown_evidence: "The summary result referenced unknown evidence.",
 };
 
 const errorCodes = new Set<SummaryErrorCode>(
@@ -276,8 +281,8 @@ export const summaryRunPageLimits = {
 } as const;
 
 export const summaryEvidencePageLimits = {
-  default: 100,
-  maximum: 200,
+  default: 50,
+  maximum: 100,
 } as const;
 
 const uuidPattern =
@@ -383,7 +388,7 @@ export function createSummaryApi(
         {
           request: {
             meetingId: request.meetingId,
-            ...(request.offset !== undefined ? { offset: page.offset } : {}),
+            ...(page.cursor !== null ? { cursor: page.cursor } : {}),
             ...(request.limit !== undefined ? { limit: page.limit } : {}),
           },
         },
@@ -470,23 +475,23 @@ function validateReferenceRequest(request: SummaryRunReferenceRequest): void {
 }
 
 interface NormalizedRunPage {
-  offset: number;
+  cursor: string | null;
   limit: number;
 }
 
 function normalizeRunPage(request: ListSummaryRunsRequest): NormalizedRunPage {
   if (!isRecord(request) || !isUuid(request.meetingId)) throw invalidInput();
-  const offset = request.offset === undefined ? 0 : request.offset;
+  const cursor = request.cursor === undefined ? null : request.cursor;
   const limit =
     request.limit === undefined ? summaryRunPageLimits.default : request.limit;
   if (
-    !isNonNegativeSafeInteger(offset) ||
+    (cursor !== null && !isUuid(cursor)) ||
     !isPositiveSafeInteger(limit) ||
     limit > summaryRunPageLimits.maximum
   ) {
     throw invalidInput();
   }
-  return { offset, limit };
+  return { cursor, limit };
 }
 
 interface NormalizedEvidencePage {
@@ -578,6 +583,7 @@ function parseRun(value: unknown): SummaryRunResponse {
     "outputLanguage",
     "status",
     "provider",
+    "providerMode",
     "model",
     "promptVersion",
     "content",
@@ -613,6 +619,7 @@ function parseRun(value: unknown): SummaryRunResponse {
     typeof value.status !== "string" ||
     !summaryStatuses.has(value.status as SummaryStatus) ||
     value.provider !== "deterministic_mock" ||
+    value.providerMode !== "mock" ||
     !isSafeBoundedText(value.model, summaryLimits.maxResultMetadataBytes) ||
     !isSafeBoundedText(
       value.promptVersion,
@@ -662,6 +669,7 @@ function parseRun(value: unknown): SummaryRunResponse {
     outputLanguage: value.outputLanguage as SummaryOutputLanguage,
     status,
     provider: "deterministic_mock",
+    providerMode: "mock",
     model: value.model,
     promptVersion: value.promptVersion,
     content,
@@ -732,37 +740,37 @@ function hasValidRunState(
 function parseContent(value: Record<string, unknown>): SummaryContent {
   if (
     !hasExactlyKeys(value, [
-      "schema_version",
+      "schemaVersion",
       "overview",
       "decisions",
-      "action_items",
+      "actionItems",
       "risks",
-      "open_questions",
+      "openQuestions",
     ]) ||
-    value.schema_version !== 1 ||
+    value.schemaVersion !== 1 ||
     !Array.isArray(value.decisions) ||
-    !Array.isArray(value.action_items) ||
+    !Array.isArray(value.actionItems) ||
     !Array.isArray(value.risks) ||
-    !Array.isArray(value.open_questions) ||
+    !Array.isArray(value.openQuestions) ||
     value.decisions.length > summaryLimits.maxResultItemsPerSection ||
-    value.action_items.length > summaryLimits.maxResultItemsPerSection ||
+    value.actionItems.length > summaryLimits.maxResultItemsPerSection ||
     value.risks.length > summaryLimits.maxResultItemsPerSection ||
-    value.open_questions.length > summaryLimits.maxResultItemsPerSection ||
+    value.openQuestions.length > summaryLimits.maxResultItemsPerSection ||
     value.decisions.length +
-      value.action_items.length +
+      value.actionItems.length +
       value.risks.length +
-      value.open_questions.length >
+      value.openQuestions.length >
       summaryLimits.maxResultItems
   ) {
     throw internalError();
   }
   const content: SummaryContent = {
-    schema_version: 1,
+    schemaVersion: 1,
     overview: parseClaim(value.overview),
     decisions: value.decisions.map(parseDecision),
-    action_items: value.action_items.map(parseActionItem),
+    actionItems: value.actionItems.map(parseActionItem),
     risks: value.risks.map(parseClaim),
-    open_questions: value.open_questions.map(parseClaim),
+    openQuestions: value.openQuestions.map(parseClaim),
   };
   if (utf8Length(JSON.stringify(content)) > summaryLimits.maxResultBytes) {
     throw internalError();
@@ -773,21 +781,21 @@ function parseContent(value: Record<string, unknown>): SummaryContent {
 function parseClaim(value: unknown): SummaryClaim {
   if (
     !isRecord(value) ||
-    !hasExactlyKeys(value, ["text", "evidence_ids"]) ||
+    !hasExactlyKeys(value, ["text", "evidenceIds"]) ||
     !isSafeBoundedText(value.text, summaryLimits.maxResultTextBytes)
   ) {
     throw internalError();
   }
   return {
     text: value.text,
-    evidence_ids: parseEvidenceIds(value.evidence_ids),
+    evidenceIds: parseEvidenceIds(value.evidenceIds),
   };
 }
 
 function parseDecision(value: unknown): SummaryDecision {
   if (
     !isRecord(value) ||
-    !hasExactlyKeys(value, ["text", "status", "evidence_ids"]) ||
+    !hasExactlyKeys(value, ["text", "status", "evidenceIds"]) ||
     !isSafeBoundedText(value.text, summaryLimits.maxResultTextBytes) ||
     typeof value.status !== "string" ||
     !decisionStatuses.has(value.status as SummaryDecisionStatus)
@@ -797,7 +805,7 @@ function parseDecision(value: unknown): SummaryDecision {
   return {
     text: value.text,
     status: value.status as SummaryDecisionStatus,
-    evidence_ids: parseEvidenceIds(value.evidence_ids),
+    evidenceIds: parseEvidenceIds(value.evidenceIds),
   };
 }
 
@@ -807,9 +815,9 @@ function parseActionItem(value: unknown): SummaryActionItem {
     !hasExactlyKeys(value, [
       "text",
       "owner",
-      "due_date",
+      "dueDate",
       "status",
-      "evidence_ids",
+      "evidenceIds",
     ]) ||
     !isSafeBoundedText(value.text, summaryLimits.maxResultTextBytes) ||
     !isNullableSafeBoundedText(
@@ -817,7 +825,7 @@ function parseActionItem(value: unknown): SummaryActionItem {
       summaryLimits.maxResultMetadataBytes,
     ) ||
     !isNullableSafeBoundedText(
-      value.due_date,
+      value.dueDate,
       summaryLimits.maxResultMetadataBytes,
     ) ||
     typeof value.status !== "string" ||
@@ -828,9 +836,9 @@ function parseActionItem(value: unknown): SummaryActionItem {
   return {
     text: value.text,
     owner: value.owner,
-    due_date: value.due_date,
+    dueDate: value.dueDate,
     status: value.status as SummaryActionStatus,
-    evidence_ids: parseEvidenceIds(value.evidence_ids),
+    evidenceIds: parseEvidenceIds(value.evidenceIds),
   };
 }
 
@@ -854,10 +862,10 @@ function parseRunPage(
 ): ListSummaryRunsResponse {
   if (
     !isRecord(value) ||
-    !hasExactlyKeys(value, ["items", "offset", "limit", "totalCount"]) ||
+    !hasExactlyKeys(value, ["items", "nextCursor", "hasMore", "totalCount"]) ||
     !Array.isArray(value.items) ||
-    value.offset !== page.offset ||
-    value.limit !== page.limit ||
+    (value.nextCursor !== null && !isUuid(value.nextCursor)) ||
+    typeof value.hasMore !== "boolean" ||
     !isNonNegativeSafeInteger(value.totalCount)
   ) {
     throw internalError();
@@ -868,17 +876,40 @@ function parseRunPage(
     items.length > page.limit ||
     new Set(ids).size !== ids.length ||
     items.some((run) => run.meetingId !== expectedMeetingId) ||
-    (items.length > 0 && value.totalCount < page.offset + items.length) ||
-    (value.totalCount > page.offset && items.length === 0)
+    (page.cursor !== null && ids.includes(page.cursor)) ||
+    !isRunPageOrder(items) ||
+    value.totalCount < items.length ||
+    (page.cursor === null && value.totalCount > 0 && items.length === 0) ||
+    (value.hasMore &&
+      (items.length === 0 ||
+        value.nextCursor !== items[items.length - 1]?.id)) ||
+    (!value.hasMore && value.nextCursor !== null)
   ) {
     throw internalError();
   }
   return {
     items,
-    offset: value.offset,
-    limit: value.limit,
+    nextCursor: value.nextCursor,
+    hasMore: value.hasMore,
     totalCount: value.totalCount,
   };
+}
+
+function isRunPageOrder(items: readonly SummaryRunResponse[]): boolean {
+  for (let index = 1; index < items.length; index += 1) {
+    const previous = items[index - 1];
+    const current = items[index];
+    if (previous === undefined || current === undefined) return false;
+    const previousTime = Date.parse(previous.createdAt);
+    const currentTime = Date.parse(current.createdAt);
+    if (
+      previousTime < currentTime ||
+      (previousTime === currentTime && previous.id >= current.id)
+    ) {
+      return false;
+    }
+  }
+  return true;
 }
 
 function parseEvidencePage(

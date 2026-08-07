@@ -79,7 +79,7 @@ schema v3 没有独立、可编辑的会议发生日期字段。`created_at` 只
 
 #### 模式提示
 
-当前 schema v3 不持久化模式，总结模式入口只是导航到共享 meeting/transcript 工作区。实时模式落地前，`feat/live-session-data-core` 可增加可空的 `workflow_mode = summary/translation/meeting` 作为历史列表和恢复布局的提示；旧会议保持 NULL。该字段不得决定权限、同意、数据保留或会议状态，实际已启用能力仍以来源、任务和 `consent_events` 为准。
+当前 schema v4 不持久化模式，总结模式入口只是导航到共享 meeting/transcript 工作区。实时模式落地前，`feat/live-session-data-core` 可增加可空的 `workflow_mode = summary/translation/meeting` 作为历史列表和恢复布局的提示；旧会议保持 NULL。该字段不得决定权限、同意、数据保留或会议状态，实际已启用能力仍以来源、任务和 `consent_events` 为准。
 
 ### `artifacts`
 
@@ -274,7 +274,7 @@ schema v4 首先只创建 transcript evidence；document、screen 和 manual not
 | `source_deleted`                 | INTEGER      | 0/1；来源删除后仍可解释已有纪要                    |
 | `created_at`                     | TEXT         | 创建时间                                           |
 
-每条 `summary_sources` 快照行在冻结时获得稳定 UUID，并作为仅属于该 run 的 evidence allowlist。Rust Provider 输出必须先完成版本化结构、大小和 allowlist 校验；只有结果实际引用的 ID 才会在同一完成事务中物化为 `evidence_items`。`summary_id + summary_source_id` 唯一，复合外键保证 evidence 不能跨 run/meeting 引用；未知 ID 不得接受，也不得根据模型自然语言补造。document 只证明材料内容，screen 只证明当时展示内容，manual note 是用户补充；除非 transcript 或人工确认明确支持，任何单一来源都不能自动证明会议已达成决定。
+每条 `summary_sources` 快照行在冻结时获得稳定 UUID，并作为仅属于该 run 的 evidence allowlist。Rust Provider 输出必须先完成版本化结构、大小和 allowlist 校验；只有结果实际引用的 ID 才会在同一完成事务中物化为 `evidence_items`。`summary_id + summary_source_id` 唯一，复合外键同时绑定 run、meeting、source、segment、revision、segment ordinal 和 global ordinal，且 `evidence.id = summary_source_id`；因此原始 SQL 也不能伪造跨 run/meeting 或错 revision 的 evidence tuple。未知 ID 不得接受，也不得根据模型自然语言补造。document 只证明材料内容，screen 只证明当时展示内容，manual note 是用户补充；除非 transcript 或人工确认明确支持，任何单一来源都不能自动证明会议已达成决定。
 
 ### `translations`
 
@@ -335,6 +335,7 @@ schema v4 首先只创建 transcript evidence；document、screen 和 manual not
 | `series_id`                         | TEXT      | 同一纪要重生成序列的稳定 UUID                             |
 | `previous_summary_id`               | TEXT NULL | revision > 1 时的直接前一 run                             |
 | `revision`                          | INTEGER   | 同一 series 中从 1 开始的修订号                           |
+| `previous_revision`                 | INTEGER   | 由 `revision - 1` 生成的内部直接前驱约束列                |
 | `run_purpose`                       | TEXT      | `checkpoint/final`；当前 service 固定 `final`             |
 | `trigger_kind`                      | TEXT      | `manual/interval/topic/final`；当前 service 固定 `manual` |
 | `meeting_title_snapshot`            | TEXT      | 冻结的会议标题                                            |
@@ -343,6 +344,7 @@ schema v4 首先只创建 transcript evidence；document、screen 和 manual not
 | `output_language`                   | TEXT      | `zh/en/bilingual`                                         |
 | `status`                            | TEXT      | 独立 Summary run 状态                                     |
 | `provider`                          | TEXT      | 当前固定 `deterministic_mock`                             |
+| `provider_mode`                     | TEXT      | 当前固定 `mock`；schema 预留 `local/external`             |
 | `model`                             | TEXT      | 实际 Mock 模型标识                                        |
 | `prompt_version`                    | TEXT      | 提示/结果契约版本                                         |
 | `content_json`                      | TEXT NULL | 完成后写入、最大 1 MiB 的版本化结构化结果                 |
@@ -361,7 +363,9 @@ schema v4 首先只创建 transcript evidence；document、screen 和 manual not
 | `cancel_requested_at`               | TEXT NULL | 取消请求时间                                              |
 | `updated_at`                        | TEXT      | 最近状态更新时间                                          |
 
-`(series_id, revision)` 唯一，同一 series 同时最多一个 queued/running run；revision 1 没有 previous，后续 revision 必须引用前一 terminal run 并重新冻结当前 live revisions，不能覆盖旧结果。状态字段与 result/error/timestamp 使用组合 `CHECK`：只有 completed 可含 `content_json`，failed 必须含安全 `error_code`，terminal 必须有 `finished_at`。正常状态机是 `queued → running → completed/failed/cancelled` 和 `queued → cancelled`；启动恢复把遗留 `running` 原子转为 `failed + summary_interrupted`，不自动重放 Provider。
+`(series_id, revision)` 唯一，同一 series 同时最多一个 queued/running run；revision 1 没有 previous，后续 revision 的四列复合自外键把 `previous_summary_id` 约束为同一会议、同一 series、恰好前一 revision。Rust Service 在 IMMEDIATE 事务内额外保证 parent 已终态且仍是 latest，并重新冻结当前 live revisions，不能覆盖旧结果。状态字段与 result/error/timestamp 使用组合 `CHECK`：只有 completed 可含 `content_json`，failed 必须含安全 `error_code`，terminal 必须有 `finished_at`。正常状态机是 `queued → running → completed/failed/cancelled` 和 `queued → cancelled`；启动恢复把遗留 `running` 原子转为 `failed + summary_interrupted`，不自动重放 Provider。
+
+Summary run 和 evidence 列表均使用有界 keyset 分页，默认 50、最大 100；run cursor 是上一页最后一个 run UUID，排序固定为 `created_at DESC, id ASC`，evidence cursor 是上一页最后一个 `global_ordinal`。Tauri wire DTO（包括嵌套结构化结果）统一 camelCase。并发 stale base 返回 `summary_revision_conflict`，未知、重复或跨 run evidence 返回 `summary_evidence_invalid`。
 
 未来 checkpoint 首先只允许 `manual` 和 `interval`。`topic` 是后续可修正建议，不得仅由屏幕变化触发。checkpoint 只帮助会议中导航；`final` run 必须重新冻结原始转录片段，不能把 checkpoint 摘要当作唯一事实来源。固定时间触发在没有新增最终片段时必须去重。
 
@@ -472,7 +476,7 @@ schema v4 首先只创建 transcript evidence；document、screen 和 manual not
 - 使用 WAL 时，`.db-wal` 和 `.db-shm` 必须保持本地且被 Git 忽略。
 - schema v2 已建立 `idx_documents_meeting_status`、`idx_documents_meeting_sha256`、两个 deletion job partial unique indexes 和 `idx_deletion_jobs_status`。
 - schema v3 已建立 `transcript_sources`/`transcript_segments` 及同会议来源哈希、source ordinal、meeting/source 查询索引。
-- schema v4 在当前 Summary Run Core 中创建 `summaries`、`summary_sources` 和 transcript-only `evidence_items`。关键索引包括 `(series_id, revision)` 唯一约束、每个 series 最多一个 active run 的 partial unique index、meeting/created、status/updated、meeting/stale、live source/segment snapshot 查询以及 evidence 的 summary/global ordinal 查询。
+- schema v4 在当前 Summary Run Core 中创建 `summaries`、`summary_sources` 和 transcript-only `evidence_items`。关键索引包括 `(series_id, revision)` 唯一约束、direct-previous lineage、每个 series 最多一个 active run 的 partial unique index、meeting/created、status/updated、meeting/stale、live source/segment snapshot 查询以及 evidence 的 summary/global ordinal 查询。
 - `documents(meeting_id, sha256)` 对非 NULL 哈希使用唯一约束，确保同一会议内容去重；跨会议不共享物理副本。
 - 状态字段使用 `CHECK` 约束或迁移层枚举校验。
 - 所有迁移在事务中执行，并在 schema 版本表中记录。

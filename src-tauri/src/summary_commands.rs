@@ -42,7 +42,7 @@ pub struct SummaryRunRequest {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct ListSummaryRunsRequest {
     pub meeting_id: String,
-    pub offset: Option<u64>,
+    pub cursor: Option<String>,
     pub limit: Option<u64>,
 }
 
@@ -92,6 +92,7 @@ impl From<SummaryPolicy> for SummaryPolicyResponse {
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SummaryClaimResponse {
     pub text: String,
     pub evidence_ids: Vec<String>,
@@ -117,6 +118,7 @@ impl From<SummaryClaim> for SummaryClaimResponse {
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SummaryDecisionResponse {
     pub text: String,
     pub status: SummaryDecisionStatus,
@@ -145,6 +147,7 @@ impl From<SummaryDecision> for SummaryDecisionResponse {
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SummaryActionItemResponse {
     pub text: String,
     pub owner: Option<String>,
@@ -179,6 +182,7 @@ impl From<SummaryActionItem> for SummaryActionItemResponse {
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
 pub struct SummaryContentResponse {
     pub schema_version: u32,
     pub overview: SummaryClaimResponse,
@@ -245,6 +249,7 @@ pub struct SummaryRunResponse {
     pub output_language: SummaryOutputLanguage,
     pub status: SummaryStatus,
     pub provider: String,
+    pub provider_mode: String,
     pub model: String,
     pub prompt_version: String,
     pub content: Option<SummaryContentResponse>,
@@ -279,6 +284,7 @@ impl fmt::Debug for SummaryRunResponse {
             .field("output_language", &self.output_language)
             .field("status", &self.status)
             .field("provider", &self.provider)
+            .field("provider_mode", &self.provider_mode)
             .field("model", &self.model)
             .field("prompt_version", &self.prompt_version)
             .field("content", &self.content.as_ref().map(|_| "[REDACTED]"))
@@ -314,6 +320,7 @@ impl From<SummaryRun> for SummaryRunResponse {
             output_language: run.output_language,
             status: run.status,
             provider: run.provider,
+            provider_mode: run.provider_mode,
             model: run.model,
             prompt_version: run.prompt_version,
             content: run.content.map(SummaryContentResponse::from),
@@ -410,8 +417,8 @@ impl From<SummaryEvidence> for SummaryEvidenceResponse {
 #[serde(rename_all = "camelCase")]
 pub struct ListSummaryRunsResponse {
     pub items: Vec<SummaryRunResponse>,
-    pub offset: u64,
-    pub limit: u64,
+    pub next_cursor: Option<String>,
+    pub has_more: bool,
     pub total_count: u64,
 }
 
@@ -420,8 +427,8 @@ impl fmt::Debug for ListSummaryRunsResponse {
         formatter
             .debug_struct("ListSummaryRunsResponse")
             .field("item_count", &self.items.len())
-            .field("offset", &self.offset)
-            .field("limit", &self.limit)
+            .field("next_cursor", &self.next_cursor)
+            .field("has_more", &self.has_more)
             .field("total_count", &self.total_count)
             .finish()
     }
@@ -435,8 +442,8 @@ impl From<SummaryRunPage> for ListSummaryRunsResponse {
                 .into_iter()
                 .map(SummaryRunResponse::from)
                 .collect(),
-            offset: page.offset,
-            limit: page.limit,
+            next_cursor: page.next_cursor,
+            has_more: page.has_more,
             total_count: page.total_count,
         }
     }
@@ -622,7 +629,11 @@ fn list_summary_runs_with_service(
 ) -> CommandResult<ListSummaryRunsResponse> {
     service
         .summaries()
-        .list(&request.meeting_id, request.offset, request.limit)
+        .list(
+            &request.meeting_id,
+            request.cursor.as_deref(),
+            request.limit,
+        )
         .map(ListSummaryRunsResponse::from)
         .map_err(SummaryCommandError::from)
 }
@@ -722,6 +733,7 @@ mod tests {
             output_language: SummaryOutputLanguage::En,
             status: SummaryStatus::Completed,
             provider: "deterministic_mock".to_string(),
+            provider_mode: "mock".to_string(),
             model: "deterministic-mock-v1".to_string(),
             prompt_version: "summary-v1".to_string(),
             content,
@@ -755,6 +767,13 @@ mod tests {
         }))
         .expect("camelCase create request should deserialize");
         assert_eq!(request.template, SummaryTemplate::Detailed);
+        let list_request: ListSummaryRunsRequest = serde_json::from_value(json!({
+            "meetingId": meeting_id,
+            "cursor": summary_id,
+            "limit": 50
+        }))
+        .expect("camelCase keyset request should deserialize");
+        assert_eq!(list_request.cursor.as_deref(), Some(summary_id.as_str()));
 
         for forbidden in [
             json!({
@@ -816,11 +835,12 @@ mod tests {
         assert!(serialized.get("meetingId").is_some());
         assert!(serialized.get("outputLanguage").is_some());
         assert!(serialized.get("snapshotCreatedAt").is_some());
-        assert_eq!(serialized["content"]["schema_version"], 1);
-        assert!(serialized["content"].get("action_items").is_some());
+        assert_eq!(serialized["providerMode"], "mock");
+        assert_eq!(serialized["content"]["schemaVersion"], 1);
+        assert!(serialized["content"].get("actionItems").is_some());
         assert!(
             serialized["content"]["overview"]
-                .get("evidence_ids")
+                .get("evidenceIds")
                 .is_some()
         );
         for forbidden in [
@@ -983,7 +1003,7 @@ mod tests {
             &service,
             ListSummaryRunsRequest {
                 meeting_id: meeting.id,
-                offset: None,
+                cursor: None,
                 limit: None,
             },
         )
@@ -995,6 +1015,7 @@ mod tests {
     #[test]
     fn error_registration_and_minimum_capability_are_safe_and_stable() {
         let errors = [
+            SummaryError::EvidenceInvalid,
             SummaryError::InputInsufficient,
             SummaryError::InputTooLarge,
             SummaryError::Internal,
@@ -1005,11 +1026,11 @@ mod tests {
             SummaryError::PersistenceFailed,
             SummaryError::ProviderFailed,
             SummaryError::ProviderOutputInvalid,
+            SummaryError::RevisionConflict,
             SummaryError::RunNotFound,
             SummaryError::SegmentLimitExceeded,
             SummaryError::SnapshotMissing,
             SummaryError::SourceNotFound,
-            SummaryError::UnknownEvidence,
         ];
         for source_error in errors {
             let error = SummaryCommandError::from(source_error);

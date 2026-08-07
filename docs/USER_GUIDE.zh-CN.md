@@ -203,7 +203,7 @@ Key 保存在当前 Windows 用户的 Credential Manager 中，而不是 SQLite�
 
 ### 为什么转录已准备好，“生成会议纪要”仍不可用？
 
-PR #20 已完成输入、持久化、分页检查和人工修正。当前分支通过八个最小 Commands 增加仅供开发的不可变 Summary run、`series_id + revision`、20,000 segments/10 MiB 快照策略、evidence allowlist、取消、stale/删除协调和遗留运行恢复。随后仍分别实现同意数据、受限 DeepSeek Provider 和纪要结果页；禁用按钮不会调用 AI。
+PR #20 已完成输入、持久化、分页检查和人工修正。当前分支通过八个最小 Commands 增加仅供开发的不可变 Summary run、`series_id + revision`、20,000 segments/10 MiB 快照策略、evidence allowlist、可传递到运行中 Mock 的取消、stale/删除协调和遗留运行恢复。开发验收使用隔离的系统临时数据目录及匹配的合成 WebView2 profile，不会写入用户正常 MeetingLens 数据位置。随后仍分别实现同意数据、受限 DeepSeek Provider 和纪要结果页；禁用按钮不会调用 AI。
 
 ### 导入转录会复制或删除原文件吗？
 

@@ -190,12 +190,12 @@ sequenceDiagram
 
 1. Rust 验证 meeting、按用户给定顺序排列的 transcript sources、模板和输出语言；资格允许 `draft/recording/ready`，但拒绝删除态、空输入和无法安全冻结的输入。
 2. 单个事务创建 series/revision 和 queued run，并实际复制最多 20,000 个 final segments、合计最多 10 MiB UTF-8 正文及 source/segment/global ordinal、speaker、offset、language、confidence 和快照时间。Provider 运行期间不再读取 live segment。
-3. 当前 Rust deterministic Mock 把 queued 原子转换为 running，只消费上述快照并执行零网络生成。未来 DeepSeek adapter 必须在独立 Consent/Provider 阶段取得本次外发确认后，才可从 SecretStore 取 key 并发送用户确认的最小快照文本。
+3. 当前 Rust deterministic Mock 以 `provider_mode=mock` 把 queued 原子转换为 running，只消费上述快照并执行零网络生成；运行中取消通过进程内 active-provider registry 通知实际执行实例。未来 DeepSeek adapter 必须在独立 Consent/Provider 阶段取得本次外发确认后，才可从 SecretStore 取 key 并发送用户确认的最小快照文本。
 4. 每条 snapshot row 的 UUID 构成 run-local evidence allowlist。Rust 拒绝未知、重复、跨 run ID 及超出版本化 schema/大小/数量边界的输出；WebView 不能提交 Provider 输出或 evidence。
 5. 校验通过后，结构化 `content_json` 与实际引用的 evidence 在同一事务写入并转为 completed；失败写稳定安全错误，取消丢弃未提交结果，不产生部分 evidence。
 6. 重新生成创建同一 `series_id` 的下一 revision 并重新冻结当前输入，不覆盖旧 run。segment revision 漂移标 stale；启动恢复把遗留 running 标为 `failed + summary_interrupted`，不自动重放 Provider。
 
-正式 Summary 页面仍未实现；当前八个最小 commands 仅建立开发/API 边界：`get_summary_policy`、`create_summary_run`、`create_summary_revision`、`execute_summary_run`、`get_summary_run`、`list_summary_runs`、`cancel_summary_run` 和 `list_summary_evidence`。集中式 TypeScript `summaryApi` 是 WebView 的唯一调用入口，权限集不增加通用 HTTP、文件系统、shell 或 process 能力。
+正式 Summary 页面仍未实现；当前八个最小 commands 仅建立开发/API 边界：`get_summary_policy`、`create_summary_run`、`create_summary_revision`、`execute_summary_run`、`get_summary_run`、`list_summary_runs`、`cancel_summary_run` 和 `list_summary_evidence`。集中式 TypeScript `summaryApi` 是 WebView 的唯一调用入口，所有 wire DTO（含嵌套结果）统一 camelCase。run/evidence 列表使用默认 50、最大 100 的 keyset 分页；revision 竞态与无效 evidence 分别使用 `summary_revision_conflict`、`summary_evidence_invalid`。权限集不增加通用 HTTP、文件系统、shell 或 process 能力。
 
 ### 6.3 Meeting command 边界
 
@@ -238,19 +238,19 @@ sequenceDiagram
     participant User as 用户
     participant UI as React
     participant Rust as Tauri/Rust
-    participant DB as SQLite schema v3
+    participant DB as SQLite schema v4
     participant Summary as Summary Provider
     User->>UI: 粘贴文本或请求原生导入
     UI->>Rust: bounded transcript request
     Rust->>Rust: UTF-8/控制字符/大小/格式校验与同步解析
     Rust->>DB: transcript source + ordered segments
     Rust-->>UI: 无路径的解析预览
-    User->>UI: 选择来源、模板、语言并确认外发
-    UI->>Rust: create summary from selected source IDs
-    Rust->>DB: 冻结 source/segment revisions 与顺序
-    Rust->>Summary: 用户确认的规范化快照
-    Summary-->>Rust: 带已知 evidence IDs 的结构化结果
-    Rust->>DB: summary revision + evidence snapshot
+    User->>UI: 选择来源、模板和输出语言
+    UI->>Rust: 仅提交 meeting/source IDs 与安全选项
+    Rust->>DB: 原子创建 run 并复制完整正文与显示元数据快照
+    Rust->>Summary: 有界、不可变的 transcript snapshot DTO
+    Summary-->>Rust: 带 allowlisted evidence IDs 的 Mock 结构化结果
+    Rust->>DB: 原子提交 content_json 与实际引用的 evidence
 ```
 
 上图展示完整产品目标；当前 Summary Run Core 只实现 Rust/schema/command/Mock 部分，现有“生成会议纪要”按钮保持禁用，不执行外发。真实 Provider、外发同意、发送预览和正式结果页面分别留在后续独立阶段。
@@ -424,7 +424,7 @@ worker 之间只交换受控文件引用和版本化 JSON，不共享 site-packa
 
 ### 11.3 Windows 本地验收门槛
 
-CI 负责自动化构建与测试，但不能证明 WebView2 窗口、凭据库、文件对话框、音频设备、权限或进程回收在用户机器上可用。任何涉及上述能力的 PR 必须记录本机 `npm run tauri dev` 及阶段专用验收结果；没有本地证据时只能报告“CI 通过，本地验收待完成”。
+CI 负责自动化构建与测试，但不能证明 WebView2 窗口、凭据库、文件对话框、音频设备、权限或进程回收在用户机器上可用。任何涉及上述能力的 PR 必须记录本机 `npm run tauri dev` 及阶段专用验收结果；没有本地证据时只能报告“CI 通过，本地验收待完成”。Summary Run Core 的 development-only 双启动 harness 必须同时设置 `VITE_SUMMARY_RUN_CORE_SMOKE=1`、`MEETINGLENS_SUMMARY_RUN_CORE_SMOKE_ROOT`（系统 Temp 的直属、专用前缀目录）与 `VITE_SUMMARY_RUN_CORE_SMOKE_ISOLATED=1`，并让两次 Tauri 启动合并 UUID 相同的 `com.gray.meetinglens.summarysmoke.<uuid>` identifier；Rust debug 构建要求 smoke flag、隔离根与合成 identifier 匹配，release 构建不编译此 override。验收还需证明零外网 fetch/XHR/WebSocket、浏览器存储无正文、SQLite 完整且退出后无合成数据库/profile、sidecar、临时文件、进程或端口残留。
 
 ## 12. 参考
 

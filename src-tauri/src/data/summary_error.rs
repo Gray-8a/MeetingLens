@@ -2,6 +2,7 @@ use std::fmt;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SummaryError {
+    EvidenceInvalid,
     InputInsufficient,
     InputTooLarge,
     Internal,
@@ -12,16 +13,17 @@ pub enum SummaryError {
     PersistenceFailed,
     ProviderFailed,
     ProviderOutputInvalid,
+    RevisionConflict,
     RunNotFound,
     SegmentLimitExceeded,
     SnapshotMissing,
     SourceNotFound,
-    UnknownEvidence,
 }
 
 impl SummaryError {
     pub const fn code(self) -> &'static str {
         match self {
+            Self::EvidenceInvalid => "summary_evidence_invalid",
             Self::InputInsufficient => "summary_input_insufficient",
             Self::InputTooLarge => "summary_input_too_large",
             Self::Internal => "internal_error",
@@ -32,16 +34,17 @@ impl SummaryError {
             Self::PersistenceFailed => "summary_persistence_failed",
             Self::ProviderFailed => "summary_provider_failed",
             Self::ProviderOutputInvalid => "summary_provider_output_invalid",
+            Self::RevisionConflict => "summary_revision_conflict",
             Self::RunNotFound => "summary_run_not_found",
             Self::SegmentLimitExceeded => "summary_segment_limit_exceeded",
             Self::SnapshotMissing => "summary_snapshot_missing",
             Self::SourceNotFound => "summary_source_not_found",
-            Self::UnknownEvidence => "summary_unknown_evidence",
         }
     }
 
     pub const fn safe_message(self) -> &'static str {
         match self {
+            Self::EvidenceInvalid => "The summary result contains invalid evidence references.",
             Self::InputInsufficient => {
                 "The selected sources do not contain usable final transcript segments."
             }
@@ -54,11 +57,11 @@ impl SummaryError {
             Self::PersistenceFailed => "The summary run could not be saved.",
             Self::ProviderFailed => "The summary provider could not complete the run.",
             Self::ProviderOutputInvalid => "The summary provider returned an invalid result.",
+            Self::RevisionConflict => "The summary revision is no longer current.",
             Self::RunNotFound => "The summary run was not found.",
             Self::SegmentLimitExceeded => "The selected summary input contains too many segments.",
             Self::SnapshotMissing => "The summary input snapshot is unavailable.",
             Self::SourceNotFound => "A selected transcript source was not found.",
-            Self::UnknownEvidence => "The summary result referenced unknown evidence.",
         }
     }
 
@@ -101,6 +104,7 @@ mod tests {
     #[test]
     fn summary_errors_have_unique_safe_protocol_codes() {
         let errors = [
+            SummaryError::EvidenceInvalid,
             SummaryError::InputInsufficient,
             SummaryError::InputTooLarge,
             SummaryError::Internal,
@@ -111,11 +115,11 @@ mod tests {
             SummaryError::PersistenceFailed,
             SummaryError::ProviderFailed,
             SummaryError::ProviderOutputInvalid,
+            SummaryError::RevisionConflict,
             SummaryError::RunNotFound,
             SummaryError::SegmentLimitExceeded,
             SummaryError::SnapshotMissing,
             SummaryError::SourceNotFound,
-            SummaryError::UnknownEvidence,
         ];
         let mut codes = HashSet::new();
 

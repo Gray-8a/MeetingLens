@@ -34,35 +34,35 @@ const policy = {
   maxEvidenceExcerptBytes: 1_024,
   listDefaultLimit: 50,
   listMaxLimit: 100,
-  evidenceDefaultLimit: 100,
-  evidenceMaxLimit: 200,
+  evidenceDefaultLimit: 50,
+  evidenceMaxLimit: 100,
 };
 
 function content(overrides: Record<string, unknown> = {}): SummaryContent {
   return {
-    schema_version: 1,
+    schemaVersion: 1,
     overview: {
       text: "Synthetic overview",
-      evidence_ids: [evidenceId],
+      evidenceIds: [evidenceId],
     },
     decisions: [
       {
         text: "Synthetic decision",
         status: "confirmed",
-        evidence_ids: [evidenceId],
+        evidenceIds: [evidenceId],
       },
     ],
-    action_items: [
+    actionItems: [
       {
         text: "Synthetic action",
         owner: "Synthetic owner",
-        due_date: null,
+        dueDate: null,
         status: "unconfirmed",
-        evidence_ids: [evidenceId],
+        evidenceIds: [evidenceId],
       },
     ],
     risks: [],
-    open_questions: [],
+    openQuestions: [],
     ...overrides,
   } as SummaryContent;
 }
@@ -80,6 +80,7 @@ function queuedRun(overrides: Record<string, unknown> = {}) {
     outputLanguage: "en",
     status: "queued",
     provider: "deterministic_mock",
+    providerMode: "mock",
     model: "meetinglens-deterministic-mock-v1",
     promptVersion: "summary-core-mock-v1",
     content: null,
@@ -231,8 +232,8 @@ describe("summaryApi command routing", () => {
       expectedArgs: { request: { meetingId } },
       response: {
         items: [queuedRun()],
-        offset: 0,
-        limit: 50,
+        nextCursor: null,
+        hasMore: false,
         totalCount: 1,
       },
     },
@@ -276,10 +277,15 @@ describe("summaryApi command routing", () => {
   it("serializes explicit pagination and omits null cursors", async () => {
     const adapter = new FakeInvokeAdapter();
     const api = createSummaryApi(adapter);
-    adapter.response = { items: [], offset: 4, limit: 10, totalCount: 4 };
-    await api.listRuns({ meetingId, offset: 4, limit: 10 });
+    adapter.response = {
+      items: [],
+      nextCursor: null,
+      hasMore: false,
+      totalCount: 4,
+    };
+    await api.listRuns({ meetingId, cursor: summaryId, limit: 10 });
     expect(adapter.calls[0]?.args).toEqual({
-      request: { meetingId, offset: 4, limit: 10 },
+      request: { meetingId, cursor: summaryId, limit: 10 },
     });
 
     adapter.response = {
@@ -292,6 +298,30 @@ describe("summaryApi command routing", () => {
     expect(adapter.calls[1]?.args).toEqual({
       request: { meetingId, summaryId, limit: 25 },
     });
+  });
+
+  it("accepts ordered keyset pages and binds the next cursor to the last item", async () => {
+    const adapter = new FakeInvokeAdapter();
+    adapter.response = {
+      items: [revisionRun(), queuedRun()],
+      nextCursor: summaryId,
+      hasMore: true,
+      totalCount: 3,
+    };
+
+    await expect(
+      createSummaryApi(adapter).listRuns({ meetingId, limit: 2 }),
+    ).resolves.toMatchObject({
+      nextCursor: summaryId,
+      hasMore: true,
+      totalCount: 3,
+    });
+    expect(adapter.calls).toEqual([
+      {
+        command: summaryCommandNames.listRuns,
+        args: { request: { meetingId, limit: 2 } },
+      },
+    ]);
   });
 
   it("filters unapproved caller properties before invoking Rust", async () => {
@@ -358,8 +388,9 @@ describe("summaryApi request boundary", () => {
         }),
     },
     {
-      name: "a negative run offset",
-      run: (api: SummaryApi) => api.listRuns({ meetingId, offset: -1 }),
+      name: "an invalid run cursor",
+      run: (api: SummaryApi) =>
+        api.listRuns({ meetingId, cursor: "not-a-uuid" }),
     },
     {
       name: "an excessive run limit",
@@ -373,7 +404,7 @@ describe("summaryApi request boundary", () => {
     {
       name: "an excessive evidence limit",
       run: (api: SummaryApi) =>
-        api.listEvidence({ meetingId, summaryId, limit: 201 }),
+        api.listEvidence({ meetingId, summaryId, limit: 101 }),
     },
   ])("rejects $name before invoke", async ({ run }) => {
     const adapter = new FakeInvokeAdapter();
@@ -392,10 +423,10 @@ describe("summaryApi response and error boundary", () => {
       meetingId,
       summaryId,
     });
-    expect(run.content?.overview.evidence_ids).toEqual([evidenceId]);
-    expect(run.content?.action_items[0]).toMatchObject({
+    expect(run.content?.overview.evidenceIds).toEqual([evidenceId]);
+    expect(run.content?.actionItems[0]).toMatchObject({
       owner: "Synthetic owner",
-      due_date: null,
+      dueDate: null,
       status: "unconfirmed",
     });
 
@@ -507,7 +538,7 @@ describe("summaryApi response and error boundary", () => {
           content: content({
             overview: {
               text: "Synthetic overview",
-              evidence_ids: [evidenceId],
+              evidenceIds: [evidenceId],
               privateText: "private",
             },
           }),
@@ -520,7 +551,7 @@ describe("summaryApi response and error boundary", () => {
           content: content({
             overview: {
               text: "Synthetic overview",
-              evidence_ids: [evidenceId, evidenceId],
+              evidenceIds: [evidenceId, evidenceId],
             },
           }),
         }),
@@ -534,7 +565,7 @@ describe("summaryApi response and error boundary", () => {
               {
                 text: "Synthetic decision",
                 status: "accepted",
-                evidence_ids: [evidenceId],
+                evidenceIds: [evidenceId],
               },
             ],
           }),
@@ -566,8 +597,8 @@ describe("summaryApi response and error boundary", () => {
     const api = createSummaryApi(adapter);
     adapter.response = {
       items: [queuedRun(), queuedRun()],
-      offset: 0,
-      limit: 50,
+      nextCursor: null,
+      hasMore: false,
       totalCount: 2,
     };
     await expect(api.listRuns({ meetingId })).rejects.toMatchObject({
@@ -576,8 +607,8 @@ describe("summaryApi response and error boundary", () => {
 
     adapter.response = {
       items: [queuedRun({ meetingId: otherMeetingId })],
-      offset: 0,
-      limit: 50,
+      nextCursor: null,
+      hasMore: false,
       totalCount: 1,
     };
     await expect(api.listRuns({ meetingId })).rejects.toMatchObject({
@@ -586,9 +617,19 @@ describe("summaryApi response and error boundary", () => {
 
     adapter.response = {
       items: [queuedRun()],
-      offset: 1,
-      limit: 50,
+      nextCursor: summaryId,
+      hasMore: false,
       totalCount: 1,
+    };
+    await expect(api.listRuns({ meetingId })).rejects.toMatchObject({
+      code: "internal_error",
+    });
+
+    adapter.response = {
+      items: [queuedRun(), revisionRun()],
+      nextCursor: null,
+      hasMore: false,
+      totalCount: 2,
     };
     await expect(api.listRuns({ meetingId })).rejects.toMatchObject({
       code: "internal_error",

@@ -9,8 +9,8 @@ pub const SUMMARY_MAX_INPUT_BYTES: usize = 10 * 1024 * 1024;
 pub const SUMMARY_EVIDENCE_EXCERPT_MAX_BYTES: usize = 1_024;
 pub const SUMMARY_LIST_DEFAULT_LIMIT: u64 = 50;
 pub const SUMMARY_LIST_MAX_LIMIT: u64 = 100;
-pub const SUMMARY_EVIDENCE_DEFAULT_LIMIT: u64 = 100;
-pub const SUMMARY_EVIDENCE_MAX_LIMIT: u64 = 200;
+pub const SUMMARY_EVIDENCE_DEFAULT_LIMIT: u64 = 50;
+pub const SUMMARY_EVIDENCE_MAX_LIMIT: u64 = 100;
 pub const SUMMARY_RESULT_MAX_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -230,7 +230,7 @@ impl fmt::Debug for SummaryActionItem {
             .debug_struct("SummaryActionItem")
             .field("text", &"[REDACTED]")
             .field("owner", &self.owner.as_ref().map(|_| "[REDACTED]"))
-            .field("due_date", &self.due_date)
+            .field("due_date", &self.due_date.as_ref().map(|_| "[REDACTED]"))
             .field("status", &self.status)
             .field("evidence_count", &self.evidence_ids.len())
             .finish()
@@ -276,6 +276,7 @@ pub struct SummaryRun {
     pub output_language: SummaryOutputLanguage,
     pub status: SummaryStatus,
     pub provider: String,
+    pub provider_mode: String,
     pub model: String,
     pub prompt_version: String,
     pub content: Option<SummaryContent>,
@@ -307,6 +308,7 @@ impl fmt::Debug for SummaryRun {
             .field("output_language", &self.output_language)
             .field("status", &self.status)
             .field("provider", &self.provider)
+            .field("provider_mode", &self.provider_mode)
             .field("model", &self.model)
             .field("prompt_version", &self.prompt_version)
             .field("content", &self.content.as_ref().map(|_| "[REDACTED]"))
@@ -431,8 +433,8 @@ impl fmt::Debug for SummaryEvidence {
 #[serde(rename_all = "camelCase")]
 pub struct SummaryRunPage {
     pub items: Vec<SummaryRun>,
-    pub offset: u64,
-    pub limit: u64,
+    pub next_cursor: Option<String>,
+    pub has_more: bool,
     pub total_count: u64,
 }
 
@@ -443,4 +445,30 @@ pub struct SummaryEvidencePage {
     pub next_cursor: Option<u64>,
     pub has_more: bool,
     pub total_count: u64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn action_item_debug_redacts_all_provider_text() {
+        let item = SummaryActionItem {
+            text: "Private synthetic action".to_string(),
+            owner: Some("Private synthetic owner".to_string()),
+            due_date: Some("Private synthetic due date".to_string()),
+            status: SummaryActionStatus::Assigned,
+            evidence_ids: vec!["00000000-0000-4000-8000-000000000001".to_string()],
+        };
+
+        let debug = format!("{item:?}");
+        for private in [
+            "Private synthetic action",
+            "Private synthetic owner",
+            "Private synthetic due date",
+        ] {
+            assert!(!debug.contains(private));
+        }
+        assert!(debug.contains("[REDACTED]"));
+    }
 }

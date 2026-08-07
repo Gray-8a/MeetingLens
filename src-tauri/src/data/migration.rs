@@ -257,6 +257,9 @@ const MIGRATIONS: &[Migration] = &[
                 previous_summary_id IS NULL OR length(previous_summary_id) = 36
             ),
             revision INTEGER NOT NULL CHECK(revision >= 1),
+            previous_revision INTEGER GENERATED ALWAYS AS (
+                CASE WHEN revision = 1 THEN NULL ELSE revision - 1 END
+            ) STORED,
             run_purpose TEXT NOT NULL CHECK(run_purpose IN ('checkpoint', 'final')),
             trigger_kind TEXT NOT NULL CHECK(trigger_kind IN ('manual', 'interval', 'topic', 'final')),
             meeting_title_snapshot TEXT NOT NULL CHECK(
@@ -273,6 +276,9 @@ const MIGRATIONS: &[Migration] = &[
             provider TEXT NOT NULL CHECK(
                 length(trim(provider)) > 0
                 AND length(CAST(provider AS BLOB)) <= 64
+            ),
+            provider_mode TEXT NOT NULL CHECK(
+                provider_mode IN ('mock', 'local', 'external')
             ),
             model TEXT NOT NULL CHECK(
                 length(trim(model)) > 0
@@ -308,6 +314,7 @@ const MIGRATIONS: &[Migration] = &[
             cancel_requested_at TEXT,
             updated_at TEXT NOT NULL,
             UNIQUE(id, meeting_id),
+            UNIQUE(id, series_id, meeting_id, revision),
             UNIQUE(series_id, revision),
             CHECK(
                 (revision = 1 AND previous_summary_id IS NULL)
@@ -329,7 +336,9 @@ const MIGRATIONS: &[Migration] = &[
                 OR (status = 'cancelled' AND content_json IS NULL AND error_code IS NULL
                     AND finished_at IS NOT NULL AND cancel_requested_at IS NOT NULL)
             ),
-            FOREIGN KEY(meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
+            FOREIGN KEY(meeting_id) REFERENCES meetings(id) ON DELETE CASCADE,
+            FOREIGN KEY(previous_summary_id, series_id, meeting_id, previous_revision)
+                REFERENCES summaries(id, series_id, meeting_id, revision)
         );
 
         CREATE INDEX idx_summaries_meeting_created
@@ -339,6 +348,9 @@ const MIGRATIONS: &[Migration] = &[
         CREATE INDEX idx_summaries_meeting_stale
             ON summaries(meeting_id, stale_at, id)
             WHERE is_stale = 1;
+        CREATE INDEX idx_summaries_previous
+            ON summaries(previous_summary_id, series_id, meeting_id, previous_revision)
+            WHERE previous_summary_id IS NOT NULL;
         CREATE UNIQUE INDEX idx_summaries_series_active
             ON summaries(series_id)
             WHERE status IN ('queued', 'running');
@@ -405,6 +417,10 @@ const MIGRATIONS: &[Migration] = &[
             source_deleted INTEGER NOT NULL DEFAULT 0 CHECK(source_deleted IN (0, 1)),
             redacted_at TEXT,
             UNIQUE(id, summary_id, meeting_id),
+            UNIQUE(
+                id, summary_id, meeting_id, source_id_snapshot,
+                segment_id_snapshot, segment_revision, segment_ordinal, global_ordinal
+            ),
             UNIQUE(summary_id, segment_id_snapshot, segment_revision),
             UNIQUE(summary_id, global_ordinal),
             CHECK(
@@ -456,8 +472,14 @@ const MIGRATIONS: &[Migration] = &[
             source_deleted INTEGER NOT NULL DEFAULT 0 CHECK(source_deleted IN (0, 1)),
             created_at TEXT NOT NULL,
             UNIQUE(summary_id, summary_source_id),
-            FOREIGN KEY(summary_source_id, summary_id, meeting_id)
-                REFERENCES summary_sources(id, summary_id, meeting_id),
+            CHECK(id = summary_source_id),
+            FOREIGN KEY(
+                summary_source_id, summary_id, meeting_id, source_id_snapshot,
+                transcript_segment_id_snapshot, segment_revision, ordinal, global_ordinal
+            ) REFERENCES summary_sources(
+                id, summary_id, meeting_id, source_id_snapshot,
+                segment_id_snapshot, segment_revision, segment_ordinal, global_ordinal
+            ) ON DELETE CASCADE,
             FOREIGN KEY(summary_id, meeting_id)
                 REFERENCES summaries(id, meeting_id) ON DELETE CASCADE
         );
@@ -1156,5 +1178,242 @@ mod tests {
             })
             .expect("sources should be readable");
         assert_eq!(source_count, 0);
+    }
+
+    #[test]
+    fn schema_v4_enforces_summary_lineage_provider_mode_and_evidence_tuple() {
+        let mut connection = Connection::open_in_memory().expect("in-memory database should open");
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
+            .expect("foreign keys should enable");
+        apply(&mut connection, MIGRATIONS).expect("schema should apply");
+        connection
+            .execute_batch(
+                "
+                INSERT INTO meetings(
+                    id, title, status, primary_language, created_at, updated_at
+                ) VALUES
+                    ('10000000-0000-4000-8000-000000000001', 'Summary A', 'draft', 'en-AU',
+                     '2026-08-07T00:00:00.000Z', '2026-08-07T00:00:00.000Z'),
+                    ('10000000-0000-4000-8000-000000000002', 'Summary B', 'draft', 'en-AU',
+                     '2026-08-07T00:00:00.000Z', '2026-08-07T00:00:00.000Z');
+
+                INSERT INTO summaries(
+                    id, meeting_id, series_id, previous_summary_id, revision,
+                    run_purpose, trigger_kind, meeting_title_snapshot,
+                    meeting_primary_language_snapshot, template, output_language,
+                    status, provider, provider_mode, model, prompt_version, content_json,
+                    source_count, input_segment_count, input_bytes, snapshot_created_at,
+                    created_at, started_at, finished_at, updated_at
+                ) VALUES
+                    ('20000000-0000-4000-8000-000000000001',
+                     '10000000-0000-4000-8000-000000000001',
+                     '30000000-0000-4000-8000-000000000001', NULL, 1,
+                     'final', 'manual', 'Summary A', 'en-AU', 'detailed', 'en',
+                     'completed', 'deterministic_mock', 'mock', 'mock-v1', 'prompt-v1', '{}',
+                     1, 1, 8, '2026-08-07T00:00:00.000Z',
+                     '2026-08-07T00:00:00.000Z', '2026-08-07T00:00:01.000Z',
+                     '2026-08-07T00:00:02.000Z', '2026-08-07T00:00:02.000Z'),
+                    ('20000000-0000-4000-8000-000000000002',
+                     '10000000-0000-4000-8000-000000000001',
+                     '30000000-0000-4000-8000-000000000001',
+                     '20000000-0000-4000-8000-000000000001', 2,
+                     'final', 'manual', 'Summary A', 'en-AU', 'detailed', 'en',
+                     'completed', 'deterministic_mock', 'mock', 'mock-v1', 'prompt-v1', '{}',
+                     1, 1, 8, '2026-08-07T00:00:03.000Z',
+                     '2026-08-07T00:00:03.000Z', '2026-08-07T00:00:04.000Z',
+                     '2026-08-07T00:00:05.000Z', '2026-08-07T00:00:05.000Z'),
+                    ('20000000-0000-4000-8000-000000000010',
+                     '10000000-0000-4000-8000-000000000001',
+                     '30000000-0000-4000-8000-000000000010', NULL, 1,
+                     'final', 'manual', 'Summary A', 'en-AU', 'concise', 'en',
+                     'completed', 'deterministic_mock', 'mock', 'mock-v1', 'prompt-v1', '{}',
+                     1, 1, 8, '2026-08-07T00:00:00.000Z',
+                     '2026-08-07T00:00:00.000Z', '2026-08-07T00:00:01.000Z',
+                     '2026-08-07T00:00:02.000Z', '2026-08-07T00:00:02.000Z');
+
+                INSERT INTO summary_sources(
+                    id, summary_id, meeting_id, source_id_snapshot, segment_id_snapshot,
+                    segment_revision, source_ordinal, segment_ordinal, global_ordinal,
+                    source_type_snapshot, source_display_name_snapshot,
+                    original_text_snapshot, is_final_snapshot, snapshot_at
+                ) VALUES (
+                    '40000000-0000-4000-8000-000000000001',
+                    '20000000-0000-4000-8000-000000000001',
+                    '10000000-0000-4000-8000-000000000001',
+                    '50000000-0000-4000-8000-000000000001',
+                    '60000000-0000-4000-8000-000000000001',
+                    7, 0, 3, 0, 'pasted_text', 'Synthetic source',
+                    'Synthetic text', 1, '2026-08-07T00:00:00.000Z'
+                );
+                ",
+            )
+            .expect("valid v4 rows should insert");
+
+        let insert_revision = |connection: &Connection,
+                               id: &str,
+                               meeting_id: &str,
+                               series_id: &str,
+                               previous_id: &str,
+                               revision: i64,
+                               provider_mode: &str| {
+            connection.execute(
+                "
+                INSERT INTO summaries(
+                    id, meeting_id, series_id, previous_summary_id, revision,
+                    run_purpose, trigger_kind, meeting_title_snapshot,
+                    meeting_primary_language_snapshot, template, output_language,
+                    status, provider, provider_mode, model, prompt_version,
+                    source_count, input_segment_count, input_bytes,
+                    snapshot_created_at, created_at, updated_at
+                ) VALUES (
+                    ?1, ?2, ?3, ?4, ?5, 'final', 'manual', 'Synthetic', 'en-AU',
+                    'detailed', 'en', 'queued', 'deterministic_mock', ?6,
+                    'mock-v1', 'prompt-v1', 1, 1, 8,
+                    '2026-08-07T00:00:06.000Z', '2026-08-07T00:00:06.000Z',
+                    '2026-08-07T00:00:06.000Z'
+                )
+                ",
+                params![
+                    id,
+                    meeting_id,
+                    series_id,
+                    previous_id,
+                    revision,
+                    provider_mode
+                ],
+            )
+        };
+
+        assert!(
+            insert_revision(
+                &connection,
+                "20000000-0000-4000-8000-000000000003",
+                "10000000-0000-4000-8000-000000000001",
+                "30000000-0000-4000-8000-000000000001",
+                "20000000-0000-4000-8000-000000000001",
+                3,
+                "mock",
+            )
+            .is_err(),
+            "revision three must reference revision two"
+        );
+        assert!(
+            insert_revision(
+                &connection,
+                "20000000-0000-4000-8000-000000000011",
+                "10000000-0000-4000-8000-000000000002",
+                "30000000-0000-4000-8000-000000000010",
+                "20000000-0000-4000-8000-000000000010",
+                2,
+                "mock",
+            )
+            .is_err(),
+            "lineage must not cross meetings"
+        );
+        assert!(
+            insert_revision(
+                &connection,
+                "20000000-0000-4000-8000-000000000012",
+                "10000000-0000-4000-8000-000000000001",
+                "30000000-0000-4000-8000-000000000012",
+                "20000000-0000-4000-8000-000000000099",
+                2,
+                "mock",
+            )
+            .is_err(),
+            "lineage must not dangle"
+        );
+        assert!(
+            insert_revision(
+                &connection,
+                "20000000-0000-4000-8000-000000000013",
+                "10000000-0000-4000-8000-000000000001",
+                "30000000-0000-4000-8000-000000000013",
+                "20000000-0000-4000-8000-000000000099",
+                2,
+                "disabled",
+            )
+            .is_err(),
+            "disabled is not an executing provider mode"
+        );
+        for allowed_mode in ["local", "external", "mock"] {
+            connection
+                .execute(
+                    "UPDATE summaries SET provider_mode = ?2 WHERE id = ?1",
+                    params!["20000000-0000-4000-8000-000000000010", allowed_mode],
+                )
+                .expect("future executing provider modes should remain schema-compatible");
+        }
+        assert!(
+            connection
+                .execute(
+                    "UPDATE summaries SET provider_mode = 'disabled' WHERE id = ?1",
+                    ["20000000-0000-4000-8000-000000000010"],
+                )
+                .is_err()
+        );
+        assert!(
+            connection
+                .execute(
+                    "DELETE FROM summaries WHERE id = ?1",
+                    ["20000000-0000-4000-8000-000000000001"],
+                )
+                .is_err(),
+            "a parent revision must not be deleted while its child exists"
+        );
+
+        let insert_evidence = |connection: &Connection, source_id: &str, revision: i64| {
+            connection.execute(
+                "
+                INSERT INTO evidence_items(
+                    id, summary_id, meeting_id, summary_source_id, kind,
+                    source_id_snapshot, transcript_segment_id_snapshot, segment_revision,
+                    label, ordinal, global_ordinal, excerpt, created_at
+                ) VALUES (
+                    '40000000-0000-4000-8000-000000000001',
+                    '20000000-0000-4000-8000-000000000001',
+                    '10000000-0000-4000-8000-000000000001',
+                    '40000000-0000-4000-8000-000000000001', 'transcript',
+                    ?1, '60000000-0000-4000-8000-000000000001', ?2,
+                    'Synthetic evidence', 3, 0, 'Synthetic text',
+                    '2026-08-07T00:00:02.000Z'
+                )
+                ",
+                params![source_id, revision],
+            )
+        };
+        assert!(
+            insert_evidence(&connection, "50000000-0000-4000-8000-000000000099", 7,).is_err(),
+            "evidence source snapshot must match its frozen row"
+        );
+        assert!(
+            insert_evidence(&connection, "50000000-0000-4000-8000-000000000001", 8,).is_err(),
+            "evidence revision must match its frozen row"
+        );
+        insert_evidence(&connection, "50000000-0000-4000-8000-000000000001", 7)
+            .expect("matching evidence tuple should insert");
+
+        let foreign_key_violations: i64 = connection
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })
+            .expect("foreign keys should check");
+        assert_eq!(foreign_key_violations, 0);
+
+        connection
+            .execute(
+                "DELETE FROM meetings WHERE id = '10000000-0000-4000-8000-000000000001'",
+                [],
+            )
+            .expect("meeting cascade should succeed");
+        for table in ["summaries", "summary_sources", "evidence_items"] {
+            let count: i64 = connection
+                .query_row(&format!("SELECT COUNT(*) FROM {table}"), [], |row| {
+                    row.get(0)
+                })
+                .expect("summary rows should count");
+            assert_eq!(count, 0, "{table} should cascade");
+        }
     }
 }
