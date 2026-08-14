@@ -1,10 +1,10 @@
 # MeetingLens Development Preview User Guide
 
-> Development Preview: this guide describes the local desktop workflows that the current repository actually provides. It is not a production manual; existing transcripts can be imported, reviewed, and corrected, while the current Summary Run Core remains a developer-only zero-network foundation and real AI minutes are not available.
+> Development Preview: this guide describes the local desktop workflows that the current repository actually provides. It is not a production manual; existing transcripts can be imported, reviewed, and corrected, while the merged Summary Run Core remains a developer-only zero-network foundation and real AI minutes are not available.
 
 ## 1. Introduction to MeetingLens
 
-MeetingLens is a local-first meeting workspace for Windows 11. Its product goal is to turn pasted or imported meeting transcripts into detailed, editable, traceable minutes. The current development preview can safely accept, persist, review, and correct transcripts. The current feature branch also builds the persistent Summary run/snapshot boundary for development validation, but it does not expose real minutes to ordinary users.
+MeetingLens is a local-first meeting workspace for Windows 11. Its product goal is to turn pasted or imported meeting transcripts into detailed, editable, traceable minutes. The current development preview can safely accept, persist, review, and correct transcripts. PR #21 established the persistent Summary run/snapshot boundary for development validation, but it does not expose real minutes to ordinary users.
 
 The same application includes Simplified Chinese (`zh-CN`) and English (`en-US`); two installations are not required.
 
@@ -203,7 +203,7 @@ Secure credential storage and the zero-network Summary core are separate. The cu
 
 ### Why is Generate meeting minutes unavailable when the transcript is ready?
 
-PR #20 completed input, persistence, paginated review, and manual correction. The current branch adds developer-only immutable Summary runs, `series_id + revision`, a 20,000-segment/10-MiB snapshot policy, evidence allowlisting, cancellation delivered to the running Mock, stale/delete handling, and interrupted-run recovery through eight minimal commands. Development acceptance uses an isolated operating-system temporary data root and a matching synthetic WebView2 profile rather than the user's normal MeetingLens data locations. Consent data, the bounded DeepSeek Provider, and the minutes result workspace still follow separately; the disabled action does not call AI.
+PR #20 completed input, persistence, paginated review, and manual correction. PR #21 completed developer-only immutable Summary runs, `series_id + revision`, a 20,000-segment/10-MiB snapshot policy, evidence allowlisting, cancellation delivered to the running Mock, stale/delete handling, and interrupted-run recovery through eight minimal commands. Development acceptance uses an isolated operating-system temporary data root and a matching synthetic WebView2 profile rather than the user's normal MeetingLens data locations. Consent Data Core is next, followed separately by the bounded DeepSeek Provider and minutes result workspace; the disabled action does not call AI.
 
 ### Does transcript import copy or delete the source file?
 
@@ -234,13 +234,13 @@ No. It resets only the non-sensitive interface-language preference. Meetings and
 
 ## 17. Roadmap
 
-The completed and current delivery path is:
+The completed and next delivery path is:
 
 1. `feat/transcript-data-core` (PR #18 merged): schema v3, transcript sources and segments, and local paste/TXT/SRT/VTT parsing;
 2. `feat/transcript-command-api` (PR #19 merged): secure transcript commands, the Rust-native picker, and atomic meeting + transcript creation;
 3. `feat/summary-mode-input-ui` (PR #20 merged): the Summary entry point, paste, native import, paginated review, and basic speaker/text correction;
-4. `feat/summary-run-core` (current): schema v4, immutable full-text snapshots, series/revisions, evidence allowlisting, recovery, and the Rust zero-network Mock;
-5. `feat/consent-data-core`: shared consent records, session expiry, and audit behavior;
+4. `feat/summary-run-core` (PR #21 merged): schema v4, immutable full-text snapshots, series/revisions, evidence allowlisting, recovery, and the Rust zero-network Mock;
+5. `feat/consent-data-core` (next): shared consent records, session expiry, and audit behavior;
 6. `feat/summary-provider-deepseek`: the bounded DeepSeek adapter, SecretStore use, and outbound consent;
 7. `feat/summary-mode-minutes`: templates, run state, evidence navigation, and Markdown view, copy, and download;
 8. `feat/summary-editing-export`: editing, revisions, stale state, section regeneration, and DOCX;

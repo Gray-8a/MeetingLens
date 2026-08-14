@@ -47,9 +47,9 @@
 
 第一版不把 TXT/SRT/VTT 强制交给 Docling。参考文档与转录保持不同语义和信任边界；在 Docling 产品接线完成前，界面必须明确提示“参考材料尚未参与本次总结”。
 
-PR #20 已完成上述第 1–2 步：总结模式是首页唯一可进入的三模式入口，翻译模式和会议模式显示“即将推出”；用户可以粘贴或通过 Rust 原生选择器导入转录、查看来源、分页检查片段、修正正文和说话人显示名称。当前 `feat/summary-run-core` 只在开发/API 边界加入 schema v4、run/series/revision、完整正文快照、evidence allowlist 与 Rust zero-network Mock；普通用户生成按钮继续禁用，不调用网络，也不能暗示 DeepSeek 或真实 AI 已运行。
+PR #20 已完成上述第 1–2 步：总结模式是首页唯一可进入的三模式入口，翻译模式和会议模式显示“即将推出”；用户可以粘贴或通过 Rust 原生选择器导入转录、查看来源、分页检查片段、修正正文和说话人显示名称。`feat/summary-run-core` 已由 PR #21 完成，只在开发/API 边界加入 schema v4、run/series/revision、完整正文快照、evidence allowlist 与 Rust zero-network Mock；普通用户生成按钮继续禁用，不调用网络，也不能暗示 DeepSeek 或真实 AI 已运行。下一阶段是 `feat/consent-data-core`。
 
-当前 core 固定 `final/manual`，运行状态是 queued/running/completed/failed/cancelled；异常退出后遗留 running 以 `summary_interrupted` 失败恢复。八个 Summary commands 和集中式 `summaryApi` 只提供最小开发边界，不等于正式纪要页面、Consent 或真实 Provider 已开放。
+PR #21 合并后的 core 固定 `final/manual`，运行状态是 queued/running/completed/failed/cancelled；异常退出后遗留 running 以 `summary_interrupted` 失败恢复。八个 Summary commands 和集中式 `summaryApi` 只提供最小开发边界，不等于正式纪要页面、Consent 或真实 Provider 已开放。
 
 单个来源最多允许 20,000 个 segments，检查页面必须使用后端稳定分页且单页不超过 200 条，不能在 React 中加载全量后切片。单个 Summary run 跨来源最多冻结 20,000 个 final segments 和 10 MiB UTF-8 正文，超限、空输入、重复或跨 meeting source 整体拒绝，不截断。用户可以为当前 source 中相同 `speaker_label` 批量设置或清空 `speaker_name`；该操作保留原始 label、逐条递增 revision、不跨 source/meeting，也不是说话人分离、真实身份推断或跨会议声纹。
 

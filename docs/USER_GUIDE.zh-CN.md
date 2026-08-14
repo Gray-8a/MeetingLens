@@ -1,10 +1,10 @@
 # MeetingLens 开发预览使用手册
 
-> 开发预览版：本手册描述当前仓库实际可用的本地桌面流程。它不是正式产品手册；已有转录可以导入、检查和修正，当前 Summary Run Core 仍是仅供开发验证的零网络基础，真实 AI 纪要尚未开放。
+> 开发预览版：本手册描述当前仓库实际可用的本地桌面流程。它不是正式产品手册；已有转录可以导入、检查和修正，已合并的 Summary Run Core 仍是仅供开发验证的零网络基础，真实 AI 纪要尚未开放。
 
 ## 1. MeetingLens 简介
 
-MeetingLens 是面向 Windows 11 的本地优先会议工作台。产品目标是把粘贴或导入的会议转录转化为详实、可编辑、可追溯的会议纪要；当前开发预览版已经可以安全接收、持久化、检查和修正转录。当前功能分支也在建立可持久化的 Summary run/快照开发边界，但普通用户仍不能生成真实纪要。
+MeetingLens 是面向 Windows 11 的本地优先会议工作台。产品目标是把粘贴或导入的会议转录转化为详实、可编辑、可追溯的会议纪要；当前开发预览版已经可以安全接收、持久化、检查和修正转录。PR #21 已建立可持久化的 Summary run/快照开发边界，但普通用户仍不能生成真实纪要。
 
 同一个应用内置简体中文（`zh-CN`）和 English（`en-US`），不需要安装两个版本。
 
@@ -203,7 +203,7 @@ Key 保存在当前 Windows 用户的 Credential Manager 中，而不是 SQLite�
 
 ### 为什么转录已准备好，“生成会议纪要”仍不可用？
 
-PR #20 已完成输入、持久化、分页检查和人工修正。当前分支通过八个最小 Commands 增加仅供开发的不可变 Summary run、`series_id + revision`、20,000 segments/10 MiB 快照策略、evidence allowlist、可传递到运行中 Mock 的取消、stale/删除协调和遗留运行恢复。开发验收使用隔离的系统临时数据目录及匹配的合成 WebView2 profile，不会写入用户正常 MeetingLens 数据位置。随后仍分别实现同意数据、受限 DeepSeek Provider 和纪要结果页；禁用按钮不会调用 AI。
+PR #20 已完成输入、持久化、分页检查和人工修正。PR #21 已通过八个最小 Commands 完成仅供开发的不可变 Summary run、`series_id + revision`、20,000 segments/10 MiB 快照策略、evidence allowlist、可传递到运行中 Mock 的取消、stale/删除协调和遗留运行恢复。开发验收使用隔离的系统临时数据目录及匹配的合成 WebView2 profile，不会写入用户正常 MeetingLens 数据位置。下一阶段是同意数据核心，随后仍分别实现受限 DeepSeek Provider 和纪要结果页；禁用按钮不会调用 AI。
 
 ### 导入转录会复制或删除原文件吗？
 
@@ -234,13 +234,13 @@ PR #20 已完成输入、持久化、分页检查和人工修正。当前分支�
 
 ## 17. 后续计划
 
-已完成或当前交付路径是：
+已完成和下一阶段交付路径是：
 
 1. `feat/transcript-data-core`（PR #18 已合并）：schema v3、转录来源和片段、粘贴/TXT/SRT/VTT 本地解析；
 2. `feat/transcript-command-api`（PR #19 已合并）：安全转录 Commands、Rust 原生选择器和原子 meeting + transcript 创建；
 3. `feat/summary-mode-input-ui`（PR #20 已合并）：总结模式入口、粘贴、原生导入、分页预览和基础说话人/正文修正；
-4. `feat/summary-run-core`（当前）：schema v4、完整正文快照、series/revision、evidence allowlist、恢复和 Rust zero-network Mock；
-5. `feat/consent-data-core`：通用同意记录、会话失效与审计；
+4. `feat/summary-run-core`（PR #21 已合并）：schema v4、完整正文快照、series/revision、evidence allowlist、恢复和 Rust zero-network Mock；
+5. `feat/consent-data-core`（下一阶段）：通用同意记录、会话失效与审计；
 6. `feat/summary-provider-deepseek`：受限 DeepSeek adapter、SecretStore 和外发同意；
 7. `feat/summary-mode-minutes`：模板、生成状态、证据导航、Markdown 查看、复制和下载；
 8. `feat/summary-editing-export`：编辑、revision、stale、章节重生成和 DOCX；

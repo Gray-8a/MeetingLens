@@ -80,7 +80,7 @@ flowchart LR
 - 文件导入通过应用私有 staging 目录流式复制并计算 SHA-256，校验成功后在同一卷原子 rename；失败时清理临时文件。
 - SQLite schema v2 已新增 `documents` 与统一 `deletion_jobs`；应用持有 `meeting-data/.meetinglens-storage.lock` 的生命周期独占锁，第二个写入实例 fail closed，进程内 mutation mutex 串行化导入、删除与恢复。
 - schema v3 已由 PR #18 引入 `transcript_sources` 与 `transcript_segments`。粘贴文本和 TXT/SRT/VTT 使用轻量同步解析器进入 SQLite，不经过 DocumentService、Docling 或 Python Sidecar；原始转录文件首版不长期复制。
-- 当前 `feat/summary-run-core` 追加 schema v4：`summaries` 保存 run/series/revision 与状态，`summary_sources` 保存真实复制的 transcript snapshot 正文和元数据，`evidence_items` 只保存当前 run 实际引用的 transcript evidence。snapshot source/segment UUID 是历史值而非 live FK，因此终态 source 删除不会级联破坏已有结果。
+- PR #21 已通过 `feat/summary-run-core` 追加 schema v4：`summaries` 保存 run/series/revision 与状态，`summary_sources` 保存真实复制的 transcript snapshot 正文和元数据，`evidence_items` 只保存当前 run 实际引用的 transcript evidence。snapshot source/segment UUID 是历史值而非 live FK，因此终态 source 删除不会级联破坏已有结果。
 
 ### 3.5 外部 AI 适配器
 
@@ -93,7 +93,7 @@ flowchart LR
 
 MVP 1A-3A 在 React/TypeScript 应用边界定义五类能力契约：Capture、Transcription、Translation、Summary 和 DocumentParser。每个契约明确输入、输出、统一状态、稳定错误、取消和清理行为；页面只通过应用拥有的 `ProviderRegistry` 获取能力，不直接实例化第三方实现。
 
-TypeScript Provider Registry 继续只有确定性的纯内存 Mock，用于页面能力预览，不是持久 Summary run 的执行者。当前 Summary Run Core 在 Rust 信任边界增加独立 `SummaryProvider` trait 和 `DeterministicMockSummaryProvider`：它只接收从 schema v4 snapshot 重建的有界 DTO，不访问 SecretStore、环境凭据、文件、SQLite、Sidecar 或网络，也不自行改变 run 状态。Summary service 独占快照、状态转换、输出校验和原子持久化；未来真实 Provider 复用该 Rust 边界而不是让 WebView 提交结果。
+TypeScript Provider Registry 继续只有确定性的纯内存 Mock，用于页面能力预览，不是持久 Summary run 的执行者。PR #21 已在 Rust 信任边界增加独立 `SummaryProvider` trait 和 `DeterministicMockSummaryProvider`：它只接收从 schema v4 snapshot 重建的有界 DTO，不访问 SecretStore、环境凭据、文件、SQLite、Sidecar 或网络，也不自行改变 run 状态。Summary service 独占快照、状态转换、输出校验和原子持久化；未来真实 Provider 复用该 Rust 边界而不是让 WebView 提交结果。
 
 `TranscriptionSegment` 契约和 schema v3 已统一使用可空 `startOffsetMs/endOffsetMs`，并在 source 上使用可空 `baseStartedAt`；SRT/VTT 与未来实时 ASR 都归一化为相对毫秒，没有时间戳时以稳定 ordinal 定位证据，不保存两套竞争的时间真相。现有内存 Mock 与持久化 DTO 使用同一时间语义。
 
@@ -253,7 +253,7 @@ sequenceDiagram
     Rust->>DB: 原子提交 content_json 与实际引用的 evidence
 ```
 
-上图展示完整产品目标；当前 Summary Run Core 只实现 Rust/schema/command/Mock 部分，现有“生成会议纪要”按钮保持禁用，不执行外发。真实 Provider、外发同意、发送预览和正式结果页面分别留在后续独立阶段。
+上图展示完整产品目标；PR #21 完成的 Summary Run Core 只实现 Rust/schema/command/Mock 部分，现有“生成会议纪要”按钮保持禁用，不执行外发。真实 Provider、外发同意、发送预览和正式结果页面分别留在后续独立阶段。
 
 转录 source 删除会处理其 segments，但不影响用户原始文件。queued/running Summary run 使用该 source 时删除稳定拒绝 `transcript_source_in_use`；terminal run 不阻塞删除。删除事务保留已实际引用的 evidence excerpt、speaker、offset/ordinal 和 revision并标 `source_deleted`，清理 `summary_sources` 中完整正文与非必要显示元数据，再删除 live source/segments；结果不会被静默改写。segment 修正增加 revision，并把依赖旧输入的 run 标为 `segment_revised` stale；运行中的 Mock 仍完成旧快照，后台不得静默重新生成。
 
@@ -354,8 +354,8 @@ Phase 0 不提前写入 `externalBin`，因为仓库尚无可验证的平台二�
 | `feat/transcript-data-core`（PR #18，已完成）   | schema v3、转录来源/片段、同步 parser、修正/删除                                                 | UI、外部 Provider                 |
 | `feat/transcript-command-api`（PR #19，已完成） | Transcript commands/API、Rust 原生选择器、原子 meeting + transcript 工作流                       | 正式 UI、Summary schema、DeepSeek |
 | `feat/summary-mode-input-ui`（PR #20，已完成）  | 总结模式入口、粘贴/导入、来源/分页片段预览、正文和 source-scoped speaker 修正                    | Summary schema、DeepSeek          |
-| `feat/summary-run-core`（当前）                 | schema v4、run/series/revision、正文快照、evidence allowlist 与 Rust zero-network Mock           | SecretStore 消费、网络、正式 UI   |
-| `feat/consent-data-core`                        | 通用 consent events、会话失效、grant/revoke 与审计 API                                           | 设备、Provider、正式 UI           |
+| `feat/summary-run-core`（PR #21，已完成）       | schema v4、run/series/revision、正文快照、evidence allowlist 与 Rust zero-network Mock           | SecretStore 消费、网络、正式 UI   |
+| `feat/consent-data-core`（下一阶段）            | 通用 consent events、会话失效、grant/revoke 与审计 API                                           | 设备、Provider、正式 UI           |
 | `feat/summary-provider-deepseek`                | SecretStore、外发同意、受限 adapter、超时/取消                                                   | schema、正式 UI、Docling          |
 | `feat/summary-mode-minutes`                     | 输入/模板选择、外发预览、结果、evidence 导航和 Markdown                                          | schema、Provider、持久编辑        |
 | `feat/summary-editing-export`                   | 用户编辑、revision/stale、章节重生成和 DOCX                                                      | 文档解析、实时能力                |

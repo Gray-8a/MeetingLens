@@ -83,7 +83,7 @@ Phase 0 已通过 PR #1 合并，并在 Windows 本机实际启动 Tauri 窗口�
 
 ### 5.3 简约版近期主线：先完成总结模式
 
-PR #1–#20 已合并。文档安全存储、原生导入 UI、Docling Worker Foundation、转录/纪要规格、zh-CN/en-US 界面、Help 页面、双语开发预览手册、Transcript Data Core、安全 Transcript Command API 和 Summary Mode Input UI 已完成；Docling 具备独立锁定环境、显式离线模型、stdio 协议、Windows Job Object、超时/取消和多格式本机 Smoke，但尚未接入 SQLite、Provider、Commands 或 UI。当前 `feat/summary-run-core` 正在加入 schema v4、不可变正文快照、run/series/revision、Rust zero-network Mock 与 evidence allowlist。DeepSeek key 可以安全保存但没有真实 Provider 消费，普通用户生成入口仍禁用，真实 AI 纪要和正式结果 UI 仍不可用。阶段名和分支名是未来计划的权威标识；PR 编号只记录实际历史。
+PR #1–#21 已合并。文档安全存储、原生导入 UI、Docling Worker Foundation、转录/纪要规格、zh-CN/en-US 界面、Help 页面、双语开发预览手册、Transcript Data Core、安全 Transcript Command API、Summary Mode Input UI 和 Summary Run Core 已完成；PR #21 已交付 schema v4、不可变正文快照、run/series/revision、Rust zero-network Mock 与 evidence allowlist。Docling 具备独立锁定环境、显式离线模型、stdio 协议、Windows Job Object、超时/取消和多格式本机 Smoke，但尚未接入 SQLite、Provider、Commands 或 UI。下一阶段是 `feat/consent-data-core`。DeepSeek key 可以安全保存但没有真实 Provider 消费，普通用户生成入口仍禁用，真实 AI 纪要和正式结果 UI 仍不可用。阶段名和分支名是未来计划的权威标识；PR 编号只记录实际历史。
 
 当前顺序不再使用未来 PR 编号作为计划契约：
 
@@ -93,8 +93,8 @@ PR #1–#20 已合并。文档安全存储、原生导入 UI、Docling Worker Fo
 4. **`feat/transcript-data-core`（已完成，PR #18）**：schema v3、`transcript_sources`/`transcript_segments`、粘贴/TXT/SRT/VTT 同步解析、去重、修正和删除语义；不做 UI 或外部 Provider。
 5. **`feat/transcript-command-api`（已完成，PR #19）**：安全 Transcript Commands/API、Rust 原生选择器和原子 meeting + transcript 工作流；不实现正式页面。
 6. **`feat/summary-mode-input-ui`（已完成，PR #20）**：总结模式入口、粘贴与原生导入、来源和分页片段预览、基础说话人/正文修正；只消费已合并 API，不调用 DeepSeek。
-7. **`feat/summary-run-core`（当前）**：schema v4、Summary run/series/revision、完整 transcript snapshot、evidence allowlist、稳定状态/恢复与 Rust zero-network Mock；不接外部 Provider 或结果 UI。
-8. **`feat/consent-data-core`**：通用 `consent_events`、会话失效和审计 API；不调用 Provider、不访问设备。
+7. **`feat/summary-run-core`（已完成，PR #21）**：schema v4、Summary run/series/revision、完整 transcript snapshot、evidence allowlist、稳定状态/恢复与 Rust zero-network Mock；不接外部 Provider 或结果 UI。
+8. **`feat/consent-data-core`（下一阶段）**：通用 `consent_events`、会话失效和审计 API；不调用 Provider、不访问设备。
 9. **`feat/summary-provider-deepseek`**：Rust SecretStore 消费、外发同意和受限 DeepSeek adapter；不新增 schema 或正式页面。
 10. **`feat/summary-mode-minutes`**：选择输入/模板、外发预览、生成状态、结果、证据和 Markdown 复制/下载；不新增数据库或 Provider。
 11. **`feat/summary-editing-export`**：用户编辑、summary revision、stale、章节重生成、DOCX 和历史版本，完成首个 transcript-only 总结闭环。
@@ -260,7 +260,7 @@ React 只接收 document ID、原始显示名称、安全类型、大小、状�
 
 ## 10. DeepSeek 约定
 
-当前 Summary Run Core 不调用 DeepSeek：`deterministic_mock` 是零网络开发 Provider，普通用户生成入口与正式结果 UI 仍不可用。以下约定只对后续获批的真实 Provider 阶段生效。
+已完成的 Summary Run Core 不调用 DeepSeek：`deterministic_mock` 是零网络开发 Provider，普通用户生成入口与正式结果 UI 仍不可用。以下约定只对后续获批的真实 Provider 阶段生效。
 
 - 基础地址可配置，默认使用官方 `https://api.deepseek.com`。
 - 实时翻译模型为 `deepseek-v4-flash`。
