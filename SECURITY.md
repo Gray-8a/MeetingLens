@@ -82,7 +82,7 @@ MVP 1A-3A 的 `MockCaptureProvider` 不访问真实设备、不申请权限，�
 
 ## 7. 外部 AI 数据流
 
-当前 `feat/summary-run-core` 不属于外部 AI 数据流：Rust `DeterministicMockSummaryProvider` 只读取 SQLite 中已经冻结的 transcript snapshot，不读取 SecretStore、环境凭据、文件、Sidecar 或网络。它产生的持久结果只用于开发/协议验证，不能被 UI 描述为真实 AI 纪要。下列要求从后续真实 DeepSeek Provider 阶段开始适用。
+PR #21 已完成的 `feat/summary-run-core` 不属于外部 AI 数据流：Rust `DeterministicMockSummaryProvider` 只读取 SQLite 中已经冻结的 transcript snapshot，不读取 SecretStore、环境凭据、文件、Sidecar 或网络。它产生的持久结果只用于开发/协议验证，不能被 UI 描述为真实 AI 纪要。下列要求从后续真实 DeepSeek Provider 阶段开始适用。
 
 调用 DeepSeek 前必须：
 
@@ -238,47 +238,47 @@ SecretStore command 不记录请求 DTO、凭据值、长度、首尾字符、Cr
 
 ## 15. 分阶段安全交付
 
-| 阶段        | 必须完成的安全控制                                                                                                 |
-| ----------- | ------------------------------------------------------------------------------------------------------------------ |
-| MVP 1A-1    | SQLite 事务/迁移、路径规范化、删除语义、数据库与 WAL/SHM Git 忽略测试                                              |
-| MVP 1A-2-1  | DTO/UUID/状态校验、后端时间戳、最小 Tauri commands、稳定脱敏错误以及禁止前端路径或 SQL                             |
-| MVP 1A-2-2  | 只用合成数据、集中调用 command、UI 错误不泄漏内部路径或正文                                                        |
-| MVP 1A-3A   | Provider 稳定状态/错误、Mock 无设备/文件/网络访问、Registry 生命周期与清理测试                                     |
-| MVP 1A-3B-1 | Sidecar 会话 token、Loopback、全路由认证、稳定错误、最小日志脱敏和 fail-closed 测试                                |
-| MVP 1A-3B-2 | SecretStore、Windows Credential Manager、安全配置与跨层日志 allowlist                                              |
-| MVP 1B-0    | 文件威胁边界、格式/配额、状态机、存储布局和可恢复删除规范                                                          |
-| MVP 1B-1A   | Rust 安全导入、私有 staging、签名/配额、去重、删除 tombstone 与恢复测试                                            |
-| MVP 1B-1B   | 最小 Document commands、原生选择器、无路径 DTO、UI 安全错误和删除/重试交互                                         |
-| PR #14      | 隔离 Docling Worker、锁定供应链、离线模型门槛、资源上限、取消和产物完整性校验（完成）                              |
-| 转录规格    | 转录输入、纪要快照、外部发送和证据的安全规格（PR #15 已完成）                                                      |
-| 国际化基础  | 仅保存允许的 UI locale 枚举、打包语言资源、无动态 HTML、稳定状态/错误本地化（PR #16 已完成）                       |
-| 三模式对齐  | 独立 capability 同意、权限降级、屏幕最小化和三类输出保留规则                                                       |
-| 转录数据    | 严格 UTF-8、大小/片段上限、同步 parser、source/segment 修正删除与 schema v3（PR #18 已完成）                       |
-| 转录接口    | Rust 原生转录选择器、原子工作流、无路径 DTO、revision 和最小 capability（PR #19 已完成）                           |
-| 总结入口    | 内存粘贴、后端有界分页、纯文本预览、source-scoped speaker 修正和无正文/路径浏览器持久化（PR #20 已完成）           |
-| 纪要数据    | 当前：schema v4、series/revision、20k/10 MiB 正文快照、Rust zero-network Mock、evidence allowlist、stale/删除/恢复 |
-| 同意数据    | capability allowlist、grant/revoke、重启失效、最小 scope、审计和无正文/凭据                                        |
-| 纪要服务    | SecretStore key、独立外发同意、HTTPS、超时/取消、响应 schema 和日志脱敏                                            |
-| 纪要工作区  | 外发预览、本次确认、安全状态/错误和 evidence 导航                                                                  |
-| 编辑导出    | 用户编辑保护、revision/stale、章节重生成隔离和 DOCX 导出                                                           |
-| 文档编排    | Rust-only Docling 调用、状态恢复、artifact 原子提交、解析/删除竞态和无网络 Worker                                  |
-| 文档证据    | page/section/table 位置验证、document evidence allowlist 和 transcript 语义隔离                                    |
-| 实时数据    | 复用同意服务、capture session、音频 artifact 保留、删除协调和 mode 提示不越权                                      |
-| 实时进程    | sidecar supervisor、崩溃恢复、孤儿进程回收、临时文件和生命周期安全日志                                             |
-| 音频采集    | 麦克风/系统音频/保存分别同意、可见状态、句柄释放和权限拒绝降级                                                     |
-| 实时转录    | 只写统一 transcript segments、来源/顺序校验、取消、CPU 回退和正文日志禁止                                          |
-| 窗口上下文  | 单应用目标约束、窗口身份复核、暂停/撤销和 accessibility 内容最小化                                                 |
-| 屏幕 OCR    | 敏感内容遮蔽、临时帧 TTL/删除、screen evidence 验证和可选 Provider 权限边界                                        |
-| 语言数据    | 译文单一真相、segment revision、匿名 speaker 映射、checkpoint 增量快照                                             |
-| 说话人增强  | voice sample 明示同意/删除、会话级匿名标签、人工修正和模型 worker 隔离                                             |
-| 翻译服务    | 持续外发独立同意、只发最终片段、关闭后停止发送、重试与日志脱敏                                                     |
-| 阶段摘要    | 独立同意、频率/窗口预览、新片段游标、失败重试复用快照和停止后取消                                                  |
-| 话题建议    | 只建议不确认、可忽略/修正、不得自动写入最终决定                                                                    |
-| 翻译浮窗    | 透明度/收起/滚动不扩大采集范围；关闭只停止展示，不得隐式改变独立的翻译外发开关                                     |
-| 翻译工作区  | 主窗口安全展示、匿名 speaker 改名、状态和停止入口                                                                  |
-| 重点数据    | 书签引用同会议最终片段、用户文字校验、manual_note evidence 和删除                                                  |
-| 会议工作区  | 翻译开关、checkpoint 与原始转录快照分离、无屏幕安全降级                                                            |
-| 产品化      | 签名、升级/回滚、SBOM、诊断导出脱敏和卸载残留检查                                                                  |
+| 阶段        | 必须完成的安全控制                                                                                                          |
+| ----------- | --------------------------------------------------------------------------------------------------------------------------- |
+| MVP 1A-1    | SQLite 事务/迁移、路径规范化、删除语义、数据库与 WAL/SHM Git 忽略测试                                                       |
+| MVP 1A-2-1  | DTO/UUID/状态校验、后端时间戳、最小 Tauri commands、稳定脱敏错误以及禁止前端路径或 SQL                                      |
+| MVP 1A-2-2  | 只用合成数据、集中调用 command、UI 错误不泄漏内部路径或正文                                                                 |
+| MVP 1A-3A   | Provider 稳定状态/错误、Mock 无设备/文件/网络访问、Registry 生命周期与清理测试                                              |
+| MVP 1A-3B-1 | Sidecar 会话 token、Loopback、全路由认证、稳定错误、最小日志脱敏和 fail-closed 测试                                         |
+| MVP 1A-3B-2 | SecretStore、Windows Credential Manager、安全配置与跨层日志 allowlist                                                       |
+| MVP 1B-0    | 文件威胁边界、格式/配额、状态机、存储布局和可恢复删除规范                                                                   |
+| MVP 1B-1A   | Rust 安全导入、私有 staging、签名/配额、去重、删除 tombstone 与恢复测试                                                     |
+| MVP 1B-1B   | 最小 Document commands、原生选择器、无路径 DTO、UI 安全错误和删除/重试交互                                                  |
+| PR #14      | 隔离 Docling Worker、锁定供应链、离线模型门槛、资源上限、取消和产物完整性校验（完成）                                       |
+| 转录规格    | 转录输入、纪要快照、外部发送和证据的安全规格（PR #15 已完成）                                                               |
+| 国际化基础  | 仅保存允许的 UI locale 枚举、打包语言资源、无动态 HTML、稳定状态/错误本地化（PR #16 已完成）                                |
+| 三模式对齐  | 独立 capability 同意、权限降级、屏幕最小化和三类输出保留规则                                                                |
+| 转录数据    | 严格 UTF-8、大小/片段上限、同步 parser、source/segment 修正删除与 schema v3（PR #18 已完成）                                |
+| 转录接口    | Rust 原生转录选择器、原子工作流、无路径 DTO、revision 和最小 capability（PR #19 已完成）                                    |
+| 总结入口    | 内存粘贴、后端有界分页、纯文本预览、source-scoped speaker 修正和无正文/路径浏览器持久化（PR #20 已完成）                    |
+| 纪要数据    | PR #21 已完成：schema v4、series/revision、20k/10 MiB 正文快照、Rust zero-network Mock、evidence allowlist、stale/删除/恢复 |
+| 同意数据    | 下一阶段：capability allowlist、grant/revoke、重启失效、最小 scope、审计和无正文/凭据                                       |
+| 纪要服务    | SecretStore key、独立外发同意、HTTPS、超时/取消、响应 schema 和日志脱敏                                                     |
+| 纪要工作区  | 外发预览、本次确认、安全状态/错误和 evidence 导航                                                                           |
+| 编辑导出    | 用户编辑保护、revision/stale、章节重生成隔离和 DOCX 导出                                                                    |
+| 文档编排    | Rust-only Docling 调用、状态恢复、artifact 原子提交、解析/删除竞态和无网络 Worker                                           |
+| 文档证据    | page/section/table 位置验证、document evidence allowlist 和 transcript 语义隔离                                             |
+| 实时数据    | 复用同意服务、capture session、音频 artifact 保留、删除协调和 mode 提示不越权                                               |
+| 实时进程    | sidecar supervisor、崩溃恢复、孤儿进程回收、临时文件和生命周期安全日志                                                      |
+| 音频采集    | 麦克风/系统音频/保存分别同意、可见状态、句柄释放和权限拒绝降级                                                              |
+| 实时转录    | 只写统一 transcript segments、来源/顺序校验、取消、CPU 回退和正文日志禁止                                                   |
+| 窗口上下文  | 单应用目标约束、窗口身份复核、暂停/撤销和 accessibility 内容最小化                                                          |
+| 屏幕 OCR    | 敏感内容遮蔽、临时帧 TTL/删除、screen evidence 验证和可选 Provider 权限边界                                                 |
+| 语言数据    | 译文单一真相、segment revision、匿名 speaker 映射、checkpoint 增量快照                                                      |
+| 说话人增强  | voice sample 明示同意/删除、会话级匿名标签、人工修正和模型 worker 隔离                                                      |
+| 翻译服务    | 持续外发独立同意、只发最终片段、关闭后停止发送、重试与日志脱敏                                                              |
+| 阶段摘要    | 独立同意、频率/窗口预览、新片段游标、失败重试复用快照和停止后取消                                                           |
+| 话题建议    | 只建议不确认、可忽略/修正、不得自动写入最终决定                                                                             |
+| 翻译浮窗    | 透明度/收起/滚动不扩大采集范围；关闭只停止展示，不得隐式改变独立的翻译外发开关                                              |
+| 翻译工作区  | 主窗口安全展示、匿名 speaker 改名、状态和停止入口                                                                           |
+| 重点数据    | 书签引用同会议最终片段、用户文字校验、manual_note evidence 和删除                                                           |
+| 会议工作区  | 翻译开关、checkpoint 与原始转录快照分离、无屏幕安全降级                                                                     |
+| 产品化      | 签名、升级/回滚、SBOM、诊断导出脱敏和卸载残留检查                                                                           |
 
 Docling 的进程/依赖攻击面已由 PR #14 隔离；数据库/状态/UI 编排在首个 transcript-only 总结与编辑导出闭环后由 `feat/document-parsing-orchestration` 引入，并在真实音频前由独立的 `feat/document-evidence-index` 接入文档 evidence。transcript-only 外部数据流仍只能在 `feat/summary-provider-deepseek` 引入，正式纪要页面由 `feat/summary-mode-minutes` 集成；Docling 不得成为第一份纪要的前置条件。不得在同一 PR 同时扩大转录持久化、外部 AI、文件解析和证据索引信任边界。
 

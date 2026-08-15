@@ -326,7 +326,7 @@ schema v4 首先只创建 transcript evidence；document、screen 和 manual not
 
 ### `summaries`
 
-纪要拥有独立于 `meeting.status` 的运行与修订生命周期。schema v4 状态固定为 `queued/running/completed/failed/cancelled`；当前 Summary Run Core 只创建 `run_purpose=final`、`trigger_kind=manual`。只要用户选择的输入可以原子冻结，`draft`、`recording` 或 `ready` 均可创建 run；`deleting`、`delete_failed`、空输入或无法安全冻结的输入拒绝。不要新增 `content_ready`、`source_ready` 或 `summarized` meeting 状态。
+纪要拥有独立于 `meeting.status` 的运行与修订生命周期。schema v4 状态固定为 `queued/running/completed/failed/cancelled`；PR #21 已合并的 Summary Run Core 只创建 `run_purpose=final`、`trigger_kind=manual`。只要用户选择的输入可以原子冻结，`draft`、`recording` 或 `ready` 均可创建 run；`deleting`、`delete_failed`、空输入或无法安全冻结的输入拒绝。不要新增 `content_ready`、`source_ready` 或 `summarized` meeting 状态。
 
 | 字段                                | 类型      | 说明                                                      |
 | ----------------------------------- | --------- | --------------------------------------------------------- |
@@ -457,7 +457,7 @@ Summary run 和 evidence 列表均使用有界 keyset 分页，默认 50、最�
 
 ### `consent_events`
 
-该通用表由 `feat/consent-data-core` 在任何真实外部 Provider 或设备采集前创建；后续阶段只通过受控 capability 扩展和 service 使用，不得各自建立不可审计的授权存储。
+该通用表由下一阶段 `feat/consent-data-core` 在任何真实外部 Provider 或设备采集前创建；后续阶段只通过受控 capability 扩展和 service 使用，不得各自建立不可审计的授权存储。
 
 | 字段          | 类型    | 说明                                                                                                             |
 | ------------- | ------- | ---------------------------------------------------------------------------------------------------------------- |
@@ -476,7 +476,7 @@ Summary run 和 evidence 列表均使用有界 keyset 分页，默认 50、最�
 - 使用 WAL 时，`.db-wal` 和 `.db-shm` 必须保持本地且被 Git 忽略。
 - schema v2 已建立 `idx_documents_meeting_status`、`idx_documents_meeting_sha256`、两个 deletion job partial unique indexes 和 `idx_deletion_jobs_status`。
 - schema v3 已建立 `transcript_sources`/`transcript_segments` 及同会议来源哈希、source ordinal、meeting/source 查询索引。
-- schema v4 在当前 Summary Run Core 中创建 `summaries`、`summary_sources` 和 transcript-only `evidence_items`。关键索引包括 `(series_id, revision)` 唯一约束、direct-previous lineage、每个 series 最多一个 active run 的 partial unique index、meeting/created、status/updated、meeting/stale、live source/segment snapshot 查询以及 evidence 的 summary/global ordinal 查询。
+- schema v4 已由 PR #21 的 Summary Run Core 创建 `summaries`、`summary_sources` 和 transcript-only `evidence_items`。关键索引包括 `(series_id, revision)` 唯一约束、direct-previous lineage、每个 series 最多一个 active run 的 partial unique index、meeting/created、status/updated、meeting/stale、live source/segment snapshot 查询以及 evidence 的 summary/global ordinal 查询。
 - `documents(meeting_id, sha256)` 对非 NULL 哈希使用唯一约束，确保同一会议内容去重；跨会议不共享物理副本。
 - 状态字段使用 `CHECK` 约束或迁移层枚举校验。
 - 所有迁移在事务中执行，并在 schema 版本表中记录。
@@ -569,7 +569,7 @@ MVP 1B-1A 已同时迁移删除实现和测试；MVP 1B-1B 的 `delete_meeting` 
 ## 8. 数据模型版本化
 
 - `schema_migrations(version, applied_at, checksum)` 记录数据库迁移。
-- 当前分支的 SQLite schema 版本为 4：v1 是 meeting 数据核心；v2 以事务方式保留既有 meeting 数据并扩展删除状态，同时创建 `documents`、`deletion_jobs` 和相关索引；v3 创建 `transcript_sources` 与 `transcript_segments`；v4 创建 Summary series/run、完整 transcript snapshot 与 run-owned evidence。重复启动按 checksum 幂等跳过，冲突或中途失败 fail closed。
+- 当前 `main` 的 SQLite schema 版本为 4：v1 是 meeting 数据核心；v2 以事务方式保留既有 meeting 数据并扩展删除状态，同时创建 `documents`、`deletion_jobs` 和相关索引；v3 创建 `transcript_sources` 与 `transcript_segments`；v4 创建 Summary series/run、完整 transcript snapshot 与 run-owned evidence。重复启动按 checksum 幂等跳过，冲突或中途失败 fail closed。
 - 后续 Docling parsing 或其他 migration 不得复用 v4，必须基于合并时最新版本顺序递增。
 - Sidecar API 和 `content_json` 都包含独立 `api_version/schema_version`。
 - 破坏性迁移必须先备份并获得用户批准，不得自动丢弃未知字段。

@@ -28,8 +28,8 @@ MVP 1A-2 实现前已使用 `docs/define-meeting-lifecycle` 固定会议状态�
 | 总结数据   | schema v3、转录来源/片段、TXT/SRT/VTT/粘贴解析      | `feat/transcript-data-core` / PR #18        | 已完成并合并   |
 | 转录接口   | Commands/API、原生选择器和原子创建边界              | `feat/transcript-command-api` / PR #19      | 已完成并合并   |
 | 总结入口   | 首页入口、粘贴/导入、分页预览和说话人修正           | `feat/summary-mode-input-ui` / PR #20       | 已完成并合并   |
-| 纪要数据   | schema v4、run/series/revision、正文快照和 evidence | `feat/summary-run-core`                     | 当前阶段       |
-| 同意数据   | 通用 consent events、会话失效与审计 API             | `feat/consent-data-core`                    | 待开始         |
+| 纪要数据   | schema v4、run/series/revision、正文快照和 evidence | `feat/summary-run-core` / PR #21            | 已完成并合并   |
+| 同意数据   | 通用 consent events、会话失效与审计 API             | `feat/consent-data-core`                    | 下一阶段       |
 | 纪要服务   | SecretStore 消费、外发同意和受限 DeepSeek adapter   | `feat/summary-provider-deepseek`            | 待开始、需批准 |
 | 纪要工作区 | 输入/模板选择、外发预览、结果和 Markdown            | `feat/summary-mode-minutes`                 | 待开始         |
 | 编辑导出   | revision/stale、章节重生成和 DOCX                   | `feat/summary-editing-export`               | 待开始         |
@@ -315,7 +315,7 @@ MVP 1A-2 固定拆成以下两个顺序 PR。前一个 PR 合并后，后一个 
 
 完成证据：PR #20 已交付三模式首页、总结模式粘贴与 Rust 原生 TXT/SRT/VTT 导入、来源与后端有界分页、正文修正和 source-scoped speaker 显示名修正；禁用的纪要入口不调用网络，Windows 本机、SQLite 持久化和 CI 验收通过后已合并。
 
-### 8.4 当前：Summary Run Core
+### 8.4 Summary Run Core（已完成，PR #21）
 
 分支：`feat/summary-run-core`
 
@@ -329,9 +329,9 @@ MVP 1A-2 固定拆成以下两个顺序 PR。前一个 PR 合并后，后一个 
 
 segment 修正只把依赖旧 revision 的 run 标记 stale，不改变其快照或结果；queued/running run 使用的 source 删除稳定拒绝，terminal source 删除清理完整正文/显示元数据快照，只保留已引用的最小 evidence 并标记 `source_deleted`/stale。会议删除先取消 active Summary run，再通过既有协调器删除该会议的 summaries、snapshots 和 evidence。当前 PR 不实现 Consent、DeepSeek、正式纪要页面、持久编辑/导出、Docling、document/screen/manual-note evidence、checkpoint、音频、翻译或屏幕能力。
 
-验收必须用 development-only、系统 Temp 直属隔离 app-data 根完成两次 `npm run tauri dev`，并为两次启动合并与根目录 UUID 相同的合成 Tauri identifier，隔离 SQLite 与 WebView2 profile，不得触碰用户正常数据库或浏览器存储。第一次覆盖 queued/completed/evidence/stale/revision/cancel/source 删除与零外网/零正文浏览器持久化；第二次复验 run/result/revision/stale/evidence、遗留 running 恢复、SQLite integrity 和全部合成数据/文件/profile/进程/端口清理。production dist 不得包含 harness。只有本 PR 由用户合并后，下一阶段才是 `feat/consent-data-core`。
+验收必须用 development-only、系统 Temp 直属隔离 app-data 根完成两次 `npm run tauri dev`，并为两次启动合并与根目录 UUID 相同的合成 Tauri identifier，隔离 SQLite 与 WebView2 profile，不得触碰用户正常数据库或浏览器存储。第一次覆盖 queued/completed/evidence/stale/revision/cancel/source 删除与零外网/零正文浏览器持久化；第二次复验 run/result/revision/stale/evidence、遗留 running 恢复、SQLite integrity 和全部合成数据/文件/profile/进程/端口清理。production dist 不得包含 harness。完成证据：PR #21 在 CI 与 Windows 双启动隔离验收通过后已合并；下一阶段为 `feat/consent-data-core`。
 
-### 8.5 Consent Data Core
+### 8.5 当前：Consent Data Core
 
 分支：`feat/consent-data-core`
 
@@ -508,6 +508,6 @@ Screenpipe 只能是可替换的可选 Capture Provider，不得成为核心强�
 
 ## 18. 当前下一步
 
-PR #1–#20 已合并；三模式路线、i18n、Help、中英文开发预览手册、Docling Worker Foundation、Transcript Data Core、Transcript Command API 和 Summary Mode Input UI 已完成，Docling 尚未接入产品。当前阶段为 `feat/summary-run-core`：只交付 schema v4、持久不可变 transcript snapshot、run/series/revision、Rust zero-network Mock、evidence allowlist、稳定状态/错误/恢复、删除协调和开发 API；普通用户的“生成会议纪要”仍禁用，真实 AI 与正式结果 UI 仍不可用。
+PR #1–#21 已合并；三模式路线、i18n、Help、中英文开发预览手册、Docling Worker Foundation、Transcript Data Core、Transcript Command API、Summary Mode Input UI 和 Summary Run Core 已完成，Docling 尚未接入产品。PR #21 已交付 schema v4、持久不可变 transcript snapshot、run/series/revision、Rust zero-network Mock、evidence allowlist、稳定状态/错误/恢复、删除协调和开发 API；普通用户的“生成会议纪要”仍禁用，真实 AI 与正式结果 UI 仍不可用。下一阶段为 `feat/consent-data-core`。
 
-`feat/summary-run-core` 必须从已合并 PR #20 的最新 `main` 独立完成并停在待审 PR，不得同时启动 Consent、外部 Provider、Docling、音频、翻译或屏幕功能。只有该 PR 经用户审查并明确合并后，下一阶段才是 `feat/consent-data-core`；当前任务不得预先开始它。首个 transcript-only 纪要与编辑导出闭环完成后，必须先完成 `feat/document-parsing-orchestration` 和 `feat/document-evidence-index`，再进入实时采集与 ASR；Docling 仍不阻塞第一份纪要。未来 GitHub PR 编号只在实际创建后记录，不是计划契约。
+`feat/consent-data-core` 必须从已合并 PR #21 的最新 `main` 独立完成并停在待审 PR，不得夹带外部 Provider、正式纪要 UI、Docling、设备访问、音频、翻译或屏幕功能。只有该 PR 经用户审查并明确合并后，才进入仍需用户单独批准费用、条款和外发范围的 `feat/summary-provider-deepseek`。首个 transcript-only 纪要与编辑导出闭环完成后，必须先完成 `feat/document-parsing-orchestration` 和 `feat/document-evidence-index`，再进入实时采集与 ASR；Docling 仍不阻塞第一份纪要。未来 GitHub PR 编号只在实际创建后记录，不是计划契约。
