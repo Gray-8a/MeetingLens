@@ -57,9 +57,13 @@ permissions = [
 
 [[set]]
 identifier = "summary-run-commands"
-description = "Allows the local main window to create, execute, inspect, list, cancel, and cite local summary runs through the Rust trust boundary."
+description = "Allows the local main window to inspect DeepSeek readiness, confirm or revoke summary disclosure, and create, execute, inspect, list, cancel, and cite summary runs through the Rust trust boundary."
 permissions = [
   "allow-get-summary-policy",
+  "allow-get-deepseek-provider-status",
+  "allow-get-summary-external-disclosure",
+  "allow-confirm-summary-external-disclosure",
+  "allow-revoke-deepseek-consent",
   "allow-create-summary-run",
   "allow-create-summary-revision",
   "allow-execute-summary-run",

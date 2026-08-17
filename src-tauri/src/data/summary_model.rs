@@ -12,6 +12,7 @@ pub const SUMMARY_LIST_MAX_LIMIT: u64 = 100;
 pub const SUMMARY_EVIDENCE_DEFAULT_LIMIT: u64 = 50;
 pub const SUMMARY_EVIDENCE_MAX_LIMIT: u64 = 100;
 pub const SUMMARY_RESULT_MAX_BYTES: usize = 1024 * 1024;
+pub const DEEPSEEK_SUMMARY_MAX_INPUT_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -144,6 +145,16 @@ impl Default for SummaryPolicy {
             list_max_limit: SUMMARY_LIST_MAX_LIMIT,
             evidence_default_limit: SUMMARY_EVIDENCE_DEFAULT_LIMIT,
             evidence_max_limit: SUMMARY_EVIDENCE_MAX_LIMIT,
+        }
+    }
+}
+
+impl SummaryPolicy {
+    pub(crate) fn deepseek() -> Self {
+        Self {
+            provider: "deepseek",
+            max_input_bytes: DEEPSEEK_SUMMARY_MAX_INPUT_BYTES,
+            ..Self::default()
         }
     }
 }

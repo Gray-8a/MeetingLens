@@ -24,6 +24,7 @@ import {
   syntheticMeeting,
 } from "./test/fakeMeetingApi";
 import { FakeSecretApi } from "./test/fakeSecretApi";
+import { FakeSummaryApi } from "./test/fakeSummaryApi";
 import {
   FakeTranscriptApi,
   syntheticTranscriptSegment,
@@ -45,6 +46,7 @@ function renderHarness(
     documentApi: new FakeDocumentApi(),
     meetingApi,
     secretApi: new FakeSecretApi(),
+    summaryApi: new FakeSummaryApi(),
     transcriptApi,
     checkSidecarHealth: async () => ({
       status: "authenticated",
@@ -1243,7 +1245,9 @@ describe("Summary mode localization and security surface", () => {
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Real AI minutes, DeepSeek calls/),
+      screen.getByText(
+        /Rust-only DeepSeek provider and consent foundation are implemented/,
+      ),
     ).toBeInTheDocument();
   });
 

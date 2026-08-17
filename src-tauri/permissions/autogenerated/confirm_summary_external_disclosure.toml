@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-confirm-summary-external-disclosure"
+description = "Enables the confirm_summary_external_disclosure command without any pre-configured scope."
+commands.allow = ["confirm_summary_external_disclosure"]
+
+[[permission]]
+identifier = "deny-confirm-summary-external-disclosure"
+description = "Denies the confirm_summary_external_disclosure command without any pre-configured scope."
+commands.deny = ["confirm_summary_external_disclosure"]

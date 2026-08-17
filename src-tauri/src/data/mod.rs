@@ -8,6 +8,9 @@ mod error;
 mod migration;
 mod model;
 mod paths;
+mod provider_consent_model;
+mod provider_consent_repository;
+mod provider_consent_service;
 mod repository;
 mod service;
 #[cfg(debug_assertions)]
@@ -35,21 +38,35 @@ pub use document_service::DocumentService;
 pub use error::{DataError, DataResult};
 pub use model::{CreateMeeting, Meeting, MeetingStatus, UpdateMeeting};
 pub use paths::StoragePaths;
+pub(crate) use provider_consent_model::{
+    DEEPSEEK_CONSENT_DATA_CATEGORIES, DEEPSEEK_CONSENT_ENDPOINT_HOST, DEEPSEEK_CONSENT_MODEL,
+    DEEPSEEK_CONSENT_POLICY_VERSION, DEEPSEEK_CONSENT_PROVIDER, ProviderConsentPolicy,
+};
+pub(crate) use provider_consent_service::ProviderConsentService;
 pub use service::MeetingService;
 #[cfg(debug_assertions)]
 pub use summary_dev_harness::{SummarySmokeV3Seed, seed_summary_smoke_v3};
 pub use summary_error::{SummaryError, SummaryResult};
 pub use summary_model::{
-    CreateSummaryRevision, CreateSummaryRun, SUMMARY_EVIDENCE_DEFAULT_LIMIT,
-    SUMMARY_EVIDENCE_EXCERPT_MAX_BYTES, SUMMARY_EVIDENCE_MAX_LIMIT, SUMMARY_LIST_DEFAULT_LIMIT,
-    SUMMARY_LIST_MAX_LIMIT, SUMMARY_MAX_INPUT_BYTES, SUMMARY_MAX_SEGMENTS, SummaryActionItem,
-    SummaryActionStatus, SummaryClaim, SummaryContent, SummaryDecision, SummaryDecisionStatus,
-    SummaryEvidence, SummaryEvidencePage, SummaryOutputLanguage, SummaryPolicy, SummaryRun,
-    SummaryRunPage, SummarySnapshotSegment, SummaryStatus, SummaryTemplate,
+    CreateSummaryRevision, CreateSummaryRun, DEEPSEEK_SUMMARY_MAX_INPUT_BYTES,
+    SUMMARY_EVIDENCE_DEFAULT_LIMIT, SUMMARY_EVIDENCE_EXCERPT_MAX_BYTES, SUMMARY_EVIDENCE_MAX_LIMIT,
+    SUMMARY_LIST_DEFAULT_LIMIT, SUMMARY_LIST_MAX_LIMIT, SUMMARY_MAX_INPUT_BYTES,
+    SUMMARY_MAX_SEGMENTS, SummaryActionItem, SummaryActionStatus, SummaryClaim, SummaryContent,
+    SummaryDecision, SummaryDecisionStatus, SummaryEvidence, SummaryEvidencePage,
+    SummaryOutputLanguage, SummaryPolicy, SummaryRun, SummaryRunPage, SummarySnapshotSegment,
+    SummaryStatus, SummaryTemplate,
 };
+#[cfg(any(test, debug_assertions))]
+pub use summary_provider::DeterministicMockSummaryProvider;
 pub use summary_provider::{
-    DeterministicMockSummaryProvider, SummaryProvider, SummaryProviderOutput,
+    DEEPSEEK_ENDPOINT_HOST, DEEPSEEK_SUMMARY_MODEL, DEEPSEEK_SUMMARY_PROMPT_VERSION,
+    DEEPSEEK_SUMMARY_PROVIDER, DEEPSEEK_SUMMARY_PROVIDER_MODE, DeepSeekApiKeySource,
+    DeepSeekSummaryProvider, SummaryProvider, SummaryProviderFuture, SummaryProviderOutput,
     SummaryProviderRequest,
+};
+#[cfg(any(test, debug_assertions))]
+pub use summary_provider::{
+    DeepSeekTransport, DeepSeekTransportFuture, DeepSeekTransportRequest, DeepSeekTransportResponse,
 };
 pub use summary_service::SummaryService;
 #[cfg(debug_assertions)]

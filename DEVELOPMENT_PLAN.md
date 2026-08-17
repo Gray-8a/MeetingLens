@@ -4,15 +4,19 @@
 
 本文件是 MeetingLens 当前实施顺序、分支名、停止线和验收条件的权威文档。产品行为、安全边界和数据事实分别由 `PRODUCT_SPEC.md`、`SECURITY.md`、`DATA_MODEL.md` 和 `ARCHITECTURE.md` 说明；这些文档不得形成第二条实施路线。
 
-截至 PR #22，`main` 已完成工程与安全基础、安全文件导入、隔离 Docling Worker、zh-CN/en-US 与 Help、粘贴/TXT/SRT/VTT 转录工作区，以及 schema v4 Summary Run Core。当前已经具备：
+截至 PR #23，`main` 已完成工程与安全基础、安全文件导入、隔离 Docling Worker、zh-CN/en-US 与 Help、粘贴/TXT/SRT/VTT 转录工作区、schema v4 Summary Run Core 和 Personal Edition 重定基线。当前 `feat/summary-provider-deepseek` 功能交付在此基础上增加 schema v5 和真实 Provider 底层。当前已经具备：
 
 - `transcript_sources` / `transcript_segments`、有界分页、正文修正和 source-scoped speaker 显示名；
 - `summaries` / `summary_sources` / `evidence_items`；
 - 不可变 transcript snapshot、series/revision、evidence allowlist；
 - queued/running/completed/failed/cancelled、stale、取消、删除协调和 interrupted recovery；
 - 由 Rust 执行的 deterministic、零会议内容外发 Mock Summary Provider。
+- production 固定 `deepseek/external/deepseek-v4-pro/summary-deepseek-v1`，只由 Rust 请求 `api.deepseek.com`；Mock 只允许测试/debug 隔离，历史 run 继续可读；
+- Rust SecretStore Key 消费、严格 JSON/evidence 校验、超时/取消/稳定错误；
+- 按 run 的 10 分钟单次 Consent、schema v5 remembered Consent 当前偏好与撤销；
+- 集中式十二方法 `summaryApi`、可复用双语 Consent Dialog 和 Settings 安全状态/撤销。
 
-当前尚未实现真实 DeepSeek Provider、SecretStore 中 API Key 的实际消费、用户外发确认、正式纪要结果页、Markdown 复制/保存、录音文件转录、Docling 产品编排、document evidence、实时音频、实时 ASR、实时翻译或独立会议模式工作区。文档规划不得被描述为已经实现的能力。
+当前尚未实现正式纪要生成按钮接线、结果页、Markdown 复制/保存、正文编辑/整份重新生成、录音文件转录、Docling 产品编排、document evidence、实时音频、实时 ASR、实时翻译或独立会议模式工作区。底层 Provider 存在不等于普通用户已经能生成纪要；真实付费 DeepSeek API smoke 未执行，文档不得声称通过真实账户端到端验收。
 
 MeetingLens 现在采用 **Personal Edition / 自用版基线**：Windows-first、local-first、transcript-first，优先让单个用户尽快完成：
 
@@ -66,14 +70,15 @@ PR #23 是本次重大路线重构所需的最后一个普通独立路线文档 
 | PR #20    | Summary 输入 UI、分页预览、正文和 speaker 显示名修正                                                         | 已完成并合并                         |
 | PR #21    | schema v4 Summary Run Core、不可变快照、series/revision、evidence、Mock、取消和恢复                          | 已完成并合并                         |
 | PR #22    | Summary Run Core 合并后状态与路线文档同步                                                                    | 已完成并合并                         |
+| PR #23    | Personal Edition 范围、Frozen/Deferred 边界与风险分级验收重新定基线                                          | 已完成并合并                         |
 
 历史阶段曾按 Data/API/UI 或多个安全基础 PR 拆分，这是已完成工作的审查记录，不再构成所有新功能必须采用相同拆法的通用规则。
 
 PR #21 的 Windows 验收使用 development-only 系统 Temp 直属隔离 app-data 根，并让两次 Tauri 启动使用与根 UUID 匹配的合成 identifier，从而隔离 SQLite 和 WebView2 profile。两次启动覆盖 run/result/revision/stale/evidence、running recovery、SQLite integrity、零 MeetingLens 应用层外发、无正文浏览器持久化及最终清理。该记录必须保留为 Summary Run Core 的历史验收证据，但双隔离 app-data 和完整双启动不是普通 UI PR 的默认门槛。
 
-当前 SQLite schema 版本仍是 v4。PR #23 不修改代码、schema、migration、依赖、lockfile、权限或 CSP。
+当前功能分支的 SQLite schema 版本为 v5：保留 v4 Summary Core，并只追加最小 `provider_consent_preferences` 表。
 
-## 4. 当前：Personal Edition Re-baseline
+## 4. 已完成：Personal Edition Re-baseline
 
 分支：`docs/personal-edition-descope`
 
@@ -87,31 +92,32 @@ PR #21 的 Windows 验收使用 development-only 系统 Temp 直属隔离 app-da
 - 简化编辑、Docling 编排、PR 粒度和本机验收；
 - 统一后续最短路线。
 
-本 PR 只修改权威文档。不得修改 Rust、TypeScript/React、Python、SQL、migration、依赖、lockfile、Tauri Commands、权限或 CSP；不得添加 DeepSeek、Consent 表、faster-whisper、音频依赖或 Docling 产品接线；不得创建下一阶段分支。
+该 PR 只修改权威文档，没有修改 Rust、TypeScript/React、Python、SQL、migration、依赖、lockfile、Tauri Commands、权限或 CSP。
 
-## 5. 下一阶段：DeepSeek Summary Provider
+## 5. 当前交付：DeepSeek Summary Provider
 
 分支：`feat/summary-provider-deepseek`
 
 预期顺序：PR #24；PR 编号只是预期，分支名与能力边界才是权威标识。
 
-这是 PR #23 合并后唯一明确的下一阶段。范围可以在一个完整功能 PR 内包含：
+本功能交付的实际范围：
 
 - Rust `SummaryProvider` 的受限 DeepSeek adapter；
 - 只由受信任 Rust 代码从 Windows Credential Manager `SecretStore` 读取 API Key；
-- 真实 DeepSeek HTTPS 请求、超时、取消和安全错误；
+- 固定 `https://api.deepseek.com/chat/completions`、`deepseek-v4-pro`、非流式 JSON-only/thinking disabled、10 秒连接/180 秒总超时、无重定向/环境 proxy、无自动重试和可唤醒取消；
 - 严格、版本化的响应解析与大小/数量限制；
 - 继续由 Rust 验证 run-local evidence allowlist，并原子提交结果；
 - 第一次准备外发时显示明确确认，说明 Provider 为 DeepSeek，且只发送用户本次选择的规范化转录内容；
 - “本次同意”“记住我的选择”“取消”；
-- 本地保留实现所需的最小时间戳或状态；未确认、没有 Key 或发送范围为空时 fail closed；
+- 一次性确认按 run 在 Rust 内存中保留 10 分钟并单次消费；schema v5 的 `provider_consent_preferences` 只保存 fixed policy fingerprint 与时间，撤销同时清除 remembered 和所有未消费一次性确认；
+- 未确认、没有 Key、发送范围为空/超出 1 MiB Provider 上限、transport/响应/evidence 不合法时 fail closed；
 - 与实现同步更新架构、安全、README、开发计划和中英文用户指南。
 
-Personal Edition 当前不建立通用 `consent_events` 审计体系，不创建 Consent 查询页、多用户 Consent、复杂会话失效矩阵或企业合规导出。最小确认状态的具体持久化设计由本 PR 根据实际实现决定；不得修改既有 migration，也不得破坏 schema v4 的不可变快照、series/revision、状态机或 Rust Provider 权威边界。
+Personal Edition 不建立通用 `consent_events` 审计体系，不创建 Consent 查询页、多用户 Consent、复杂会话失效矩阵或企业合规导出。schema v5 是追加式极小当前偏好表，不修改既有 v1–v4 migration，也不破坏 schema v4 的不可变快照、series/revision、状态机或 Rust Provider 权威边界。
 
-这套最小 Consent 只适用于单人自用版，不是面向团队、客户或公众分发的企业合规方案。真实 Provider 会产生外部数据处理和潜在费用；开始实现前仍须用户明确批准 Provider、模型、价格/条款和发送范围。测试只使用 Mock 与合成数据，不得读取聊天中出现过的 key，不得从 `.env`、环境变量、Python 或命令行消费真实 DeepSeek 凭据。
+这套最小 Consent 只适用于单人自用版，不是面向团队、客户或公众分发的企业合规方案。真实 Provider 会产生外部数据处理和潜在费用；用户在实际使用前仍须确认价格/条款和发送范围。自动测试只使用 fake transport、Mock 与合成数据，不得读取聊天中出现过的 key，不得从 `.env`、环境变量、Python 或命令行消费真实 DeepSeek 凭据。
 
-本阶段不实现完整纪要结果页面、Markdown 文件保存、持久正文编辑、Docling、录音文件转录、实时功能或独立 Consent schema。
+本阶段不实现完整纪要结果页面、正式生成按钮接线、Markdown 文件保存、持久正文编辑、Docling、录音文件转录、实时功能或通用 Consent schema。
 
 里程碑：
 
@@ -119,7 +125,7 @@ Personal Edition 当前不建立通用 `consent_events` 审计体系，不创建
 真实 AI Provider 接通，但正式日常纪要工作区尚未完成
 ```
 
-## 6. 随后：Summary Mode Minutes
+## 6. 唯一下一阶段：Summary Mode Minutes
 
 分支：`feat/summary-mode-minutes`
 
@@ -259,7 +265,7 @@ PDF、DOCX、PPTX 等继续是参考文档输入格式；冻结的是 DOCX/PDF �
 
 ### 已取消的独立阶段
 
-`feat/consent-data-core` 不再作为独立阶段，也不属于 Frozen 功能分支。最小外发确认并入 `feat/summary-provider-deepseek`；不得重新创建通用 Consent schema PR，除非未来产品从 Personal Edition 扩展到需要重新设计合规模型，并先获得用户批准和更新权威文档。
+`feat/consent-data-core` 不再作为独立阶段，也不属于 Frozen 功能分支。最小外发确认已并入 `feat/summary-provider-deepseek`；schema v5 的单表当前偏好实现不构成通用 Consent Data Core。不得重新创建通用 Consent schema PR，除非未来产品从 Personal Edition 扩展到需要重新设计合规模型，并先获得用户批准和更新权威文档。
 
 冻结阶段不得自行创建。只有用户明确解冻并先更新本文件的范围、数据边界和验收条件后，才可进入实现。
 
@@ -330,7 +336,7 @@ PR #23 是迁移到新流程的文档 PR，自身仍须遵守任务开始时已�
 
 ### Migration 与数据
 
-- migration 只能追加、在事务中执行并记录 checksum；不得修改、替换或复用已合并的 v1–v4 或任何后续 migration。
+- migration 只能追加、在事务中执行并记录 checksum；不得修改、替换或复用已合并的 v1–v5 或任何后续 migration。
 - 数据层变化必须有自动测试；破坏性 migration、数据删除或不可逆转换必须先备份并获得用户批准。
 - schema v4 的 Summary series/revision、不可变 input snapshot、stale 字段、evidence 和 completed/failed/cancelled 状态机必须保留。
 
@@ -339,7 +345,7 @@ PR #23 是迁移到新流程的文档 PR，自身仍须遵守任务开始时已�
 - DeepSeek API Key 只能保存在 Windows Credential Manager，并由 Rust `SecretStore` 读取；不得进入 React、SQLite、日志、Python、环境变量或命令行。
 - React/WebView 不直接请求 DeepSeek，不提交 Provider 结果或 evidence，也不获得通用 HTTP、shell、process 或文件系统权限。
 - Rust 是持久 Summary run、快照、状态转换、Provider 调用、响应 schema、evidence allowlist 和原子提交的执行权威。
-- 未确认外发必须 fail closed。当前 Mock 和 MeetingLens 应用代码不外发会议内容；这不等于声称 WebView2 Runtime 在物理层面完全断网。
+- 未确认外发必须 fail closed。Mock 不外发会议内容；production 只有 Rust DeepSeek Provider 可向固定目标发送已确认范围。这不等于声称 WebView2 Runtime 在物理层面完全断网。
 
 ### 路径、文件与进程
 
@@ -367,12 +373,12 @@ PR #23 是迁移到新流程的文档 PR，自身仍须遵守任务开始时已�
 
 ## 14. 当前下一步
 
-当前任务是完成并审查 `docs/personal-edition-descope` / PR #23，只修改权威文档并停在待审状态。
+当前任务是完成并审查 `feat/summary-provider-deepseek`：Rust-only Provider、schema v5 最小 Consent、Commands/API/Dialog/Settings 和文档同步；正式生成入口与结果页面必须保持未开始。
 
-PR #23 合并后，唯一明确下一阶段为：
+该功能通过审查并由用户决定合并后，唯一明确下一阶段为：
 
 ```text
-feat/summary-provider-deepseek
+feat/summary-mode-minutes
 ```
 
-在用户明确批准并开始该阶段前，不得创建该分支、接入 DeepSeek 或实现最小 Consent。不得创建 `feat/consent-data-core`。Frozen / Deferred 阶段不得提前启动。
+在用户明确批准并开始该阶段前，不得创建该分支或接线正式生成/结果能力。不得创建 `feat/consent-data-core`。Frozen / Deferred 阶段不得提前启动。

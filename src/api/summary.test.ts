@@ -5,9 +5,11 @@ import {
   SummaryApiError,
   summaryCommandNames,
   type CreateSummaryRunRequest,
+  type ConfirmSummaryExternalDisclosureRequest,
   type SummaryApi,
   type SummaryContent,
   type SummaryEvidenceResponse,
+  type SummaryExternalDisclosureRequest,
 } from "./summary";
 
 const meetingId = "11111111-1111-4111-8111-111111111111";
@@ -36,6 +38,45 @@ const policy = {
   listMaxLimit: 100,
   evidenceDefaultLimit: 50,
   evidenceMaxLimit: 100,
+};
+
+const deepSeekPolicy = {
+  ...policy,
+  provider: "deepseek",
+  maxInputBytes: 1024 * 1024,
+};
+
+const deepSeekStatus = {
+  keyConfigured: true,
+  provider: "deepseek",
+  endpointHost: "api.deepseek.com",
+  model: "deepseek-v4-pro",
+  consentRemembered: false,
+  consentedAt: null,
+  policyVersion: "deepseek-transcript-external-v1",
+  executionAvailable: true,
+};
+
+const disclosure = {
+  provider: "deepseek",
+  endpointHost: "api.deepseek.com",
+  model: "deepseek-v4-pro",
+  sourceCount: 1,
+  segmentCount: 2,
+  inputBytes: 128,
+  template: "detailed",
+  outputLanguage: "en",
+  dataCategories: [
+    "transcript_text",
+    "speaker_labels_and_names",
+    "time_offsets",
+    "evidence_ids",
+    "summary_template",
+    "output_language",
+  ],
+  rememberedConsentValid: false,
+  requiresConfirmation: true,
+  policyVersion: "deepseek-transcript-external-v1",
 };
 
 function content(overrides: Record<string, unknown> = {}): SummaryContent {
@@ -201,6 +242,35 @@ describe("summaryApi command routing", () => {
       run: (api) => api.getPolicy(),
       expectedArgs: undefined,
       response: policy,
+    },
+    {
+      command: "getDeepSeekProviderStatus",
+      run: (api) => api.getDeepSeekProviderStatus(),
+      expectedArgs: undefined,
+      response: deepSeekStatus,
+    },
+    {
+      command: "getExternalDisclosure",
+      run: (api) => api.getExternalDisclosure({ summaryId }),
+      expectedArgs: { request: { summaryId } },
+      response: disclosure,
+    },
+    {
+      command: "confirmExternalDisclosure",
+      run: (api) =>
+        api.confirmExternalDisclosure({ summaryId, remember: true }),
+      expectedArgs: { request: { summaryId, remember: true } },
+      response: {
+        ...disclosure,
+        rememberedConsentValid: true,
+        requiresConfirmation: false,
+      },
+    },
+    {
+      command: "revokeDeepSeekConsent",
+      run: (api) => api.revokeDeepSeekConsent(),
+      expectedArgs: undefined,
+      response: deepSeekStatus,
     },
     {
       command: "createRun",
@@ -405,6 +475,33 @@ describe("summaryApi request boundary", () => {
       name: "an excessive evidence limit",
       run: (api: SummaryApi) =>
         api.listEvidence({ meetingId, summaryId, limit: 101 }),
+    },
+    {
+      name: "an invalid disclosure summary ID",
+      run: (api: SummaryApi) =>
+        api.getExternalDisclosure({ summaryId: "not-a-uuid" }),
+    },
+    {
+      name: "a null disclosure request",
+      run: (api: SummaryApi) =>
+        api.getExternalDisclosure(
+          null as unknown as SummaryExternalDisclosureRequest,
+        ),
+    },
+    {
+      name: "a null confirmation request",
+      run: (api: SummaryApi) =>
+        api.confirmExternalDisclosure(
+          null as unknown as ConfirmSummaryExternalDisclosureRequest,
+        ),
+    },
+    {
+      name: "a non-boolean remember choice",
+      run: (api: SummaryApi) =>
+        api.confirmExternalDisclosure({
+          summaryId,
+          remember: "yes" as unknown as boolean,
+        }),
     },
   ])("rejects $name before invoke", async ({ run }) => {
     const adapter = new FakeInvokeAdapter();
@@ -715,6 +812,8 @@ describe("summaryApi response and error boundary", () => {
     { ...policy, templates: ["detailed", "detailed", "actions_decisions"] },
     { ...policy, outputLanguages: ["en", "zh", "bilingual"] },
     { ...policy, maxInputBytes: 1 },
+    { ...policy, provider: "deepseek" },
+    { ...deepSeekPolicy, maxInputBytes: policy.maxInputBytes },
   ])("rejects a drifted or expanded policy", async (response) => {
     const adapter = new FakeInvokeAdapter();
     adapter.response = response;
@@ -722,15 +821,129 @@ describe("summaryApi response and error boundary", () => {
       new SummaryApiError("internal_error", false),
     );
   });
+
+  it("uses the fixed provider-specific DeepSeek input limit", async () => {
+    const adapter = new FakeInvokeAdapter();
+    adapter.response = deepSeekPolicy;
+
+    await expect(createSummaryApi(adapter).getPolicy()).resolves.toEqual(
+      deepSeekPolicy,
+    );
+  });
 });
 
 describe("summaryApi security surface", () => {
-  it("exposes exactly the approved eight methods", () => {
+  it("accepts historical Mock and fixed DeepSeek run identities only", async () => {
+    const adapter = new FakeInvokeAdapter();
+    adapter.response = queuedRun({
+      provider: "deepseek",
+      providerMode: "external",
+      model: "deepseek-v4-pro",
+      promptVersion: "summary-deepseek-v1",
+    });
+    await expect(
+      createSummaryApi(adapter).getRun({ meetingId, summaryId }),
+    ).resolves.toMatchObject({
+      provider: "deepseek",
+      providerMode: "external",
+      model: "deepseek-v4-pro",
+      promptVersion: "summary-deepseek-v1",
+    });
+
+    for (const overrides of [
+      { provider: "deepseek", providerMode: "mock" },
+      { provider: "deepseek", model: "user-selected-model" },
+      { provider: "deterministic_mock", providerMode: "external" },
+    ]) {
+      adapter.response = queuedRun(overrides);
+      await expect(
+        createSummaryApi(adapter).getRun({ meetingId, summaryId }),
+      ).rejects.toEqual(new SummaryApiError("internal_error", false));
+    }
+  });
+
+  it("strictly validates provider status and disclosure metadata", async () => {
+    const adapter = new FakeInvokeAdapter();
+    const api = createSummaryApi(adapter);
+
+    for (const response of [
+      { ...deepSeekStatus, endpointHost: "example.invalid" },
+      { ...deepSeekStatus, consentRemembered: true, consentedAt: null },
+      {
+        ...deepSeekStatus,
+        consentRemembered: true,
+        consentedAt: "2026-02-30T00:00:00.000Z",
+      },
+      {
+        ...deepSeekStatus,
+        consentRemembered: true,
+        consentedAt: "2026-08-17T02:03:04Z",
+      },
+      { ...deepSeekStatus, unexpected: true },
+    ]) {
+      adapter.response = response;
+      await expect(api.getDeepSeekProviderStatus()).rejects.toEqual(
+        new SummaryApiError("internal_error", false),
+      );
+    }
+
+    for (const response of [
+      { ...disclosure, sourceCount: 3, segmentCount: 2 },
+      { ...disclosure, inputBytes: 0 },
+      { ...disclosure, inputBytes: 1024 * 1024 + 1 },
+      {
+        ...disclosure,
+        dataCategories: [...disclosure.dataCategories].reverse(),
+      },
+      { ...disclosure, policyVersion: "future-policy" },
+      { ...disclosure, transcript: "must-not-cross-boundary" },
+    ]) {
+      adapter.response = response;
+      await expect(api.getExternalDisclosure({ summaryId })).rejects.toEqual(
+        new SummaryApiError("internal_error", false),
+      );
+    }
+  });
+
+  it("filters unapproved disclosure and confirmation properties", async () => {
+    const adapter = new FakeInvokeAdapter();
+    adapter.response = disclosure;
+    await createSummaryApi(adapter).getExternalDisclosure({
+      summaryId,
+      provider: "caller-controlled",
+    } as { summaryId: string; provider: string });
+    expect(adapter.calls[0]?.args).toEqual({ request: { summaryId } });
+
+    adapter.response = {
+      ...disclosure,
+      requiresConfirmation: false,
+    };
+    await createSummaryApi(adapter).confirmExternalDisclosure({
+      summaryId,
+      remember: false,
+      model: "caller-controlled",
+      endpoint: "https://example.invalid",
+    } as {
+      summaryId: string;
+      remember: boolean;
+      model: string;
+      endpoint: string;
+    });
+    expect(adapter.calls[1]?.args).toEqual({
+      request: { summaryId, remember: false },
+    });
+  });
+
+  it("exposes exactly the approved twelve methods", () => {
     expect(
       Object.keys(createSummaryApi(new FakeInvokeAdapter())).sort(),
     ).toEqual(
       [
         "getPolicy",
+        "getDeepSeekProviderStatus",
+        "getExternalDisclosure",
+        "confirmExternalDisclosure",
+        "revokeDeepSeekConsent",
         "createRun",
         "createRevision",
         "executeRun",
@@ -746,6 +959,10 @@ describe("summaryApi security surface", () => {
     expect(Object.values(summaryCommandNames).sort()).toEqual(
       [
         "get_summary_policy",
+        "get_deepseek_provider_status",
+        "get_summary_external_disclosure",
+        "confirm_summary_external_disclosure",
+        "revoke_deepseek_consent",
         "create_summary_run",
         "create_summary_revision",
         "execute_summary_run",
@@ -765,7 +982,7 @@ describe("summaryApi security surface", () => {
       /sourcePath|storageRelativePath|snapshotBody|originalText|providerResult/,
     );
     expect(summarySource).not.toMatch(
-      /localStorage|sessionStorage|indexedDB|console\./,
+      /localStorage|sessionStorage|indexedDB|console\.|\bfetch\s*\(|XMLHttpRequest|WebSocket/,
     );
   });
 

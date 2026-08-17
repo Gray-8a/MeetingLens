@@ -7,6 +7,8 @@ use uuid::Uuid;
 use super::database::Database;
 use super::error::DataError;
 use super::model::{Meeting, MeetingStatus};
+use super::provider_consent_model::ProviderConsentPolicy;
+use super::provider_consent_service::ProviderConsentService;
 use super::repository;
 use super::summary_error::{SummaryError, SummaryResult};
 use super::summary_model::{
@@ -17,10 +19,9 @@ use super::summary_model::{
     SummaryEvidencePage, SummaryPolicy, SummaryRun, SummaryRunPage, SummarySnapshotSegment,
     SummaryStatus,
 };
-use super::summary_provider::{
-    DeterministicMockSummaryProvider, SummaryProvider, SummaryProviderOutput,
-    SummaryProviderRequest,
-};
+#[cfg(any(test, debug_assertions))]
+use super::summary_provider::DeterministicMockSummaryProvider;
+use super::summary_provider::{SummaryProvider, SummaryProviderOutput, SummaryProviderRequest};
 use super::summary_repository::{self, NewSummary};
 use super::transcript_error::TranscriptError;
 use super::transcript_repository;
@@ -30,45 +31,65 @@ const MAX_RESULT_TOTAL_ITEMS: usize = 1_000;
 const MAX_RESULT_TEXT_BYTES: usize = 16 * 1024;
 const MAX_RESULT_METADATA_BYTES: usize = 255;
 
-fn active_providers() -> &'static Mutex<HashMap<String, Arc<dyn SummaryProvider>>> {
-    static ACTIVE_PROVIDERS: OnceLock<Mutex<HashMap<String, Arc<dyn SummaryProvider>>>> =
-        OnceLock::new();
+#[derive(Clone)]
+struct ActiveProvider {
+    meeting_id: String,
+    provider: Arc<dyn SummaryProvider>,
+}
+
+fn active_providers() -> &'static Mutex<HashMap<String, ActiveProvider>> {
+    static ACTIVE_PROVIDERS: OnceLock<Mutex<HashMap<String, ActiveProvider>>> = OnceLock::new();
     ACTIVE_PROVIDERS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
 struct ActiveProviderExecution {
     run_id: String,
+    provider: Arc<dyn SummaryProvider>,
 }
 
 impl ActiveProviderExecution {
-    fn register(run_id: &str, provider: Arc<dyn SummaryProvider>) -> SummaryResult<Self> {
+    fn register(
+        meeting_id: &str,
+        run_id: &str,
+        provider: Arc<dyn SummaryProvider>,
+    ) -> SummaryResult<Self> {
         let mut providers = active_providers()
             .lock()
-            .map_err(|_| SummaryError::Internal)?;
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
         if providers.contains_key(run_id) {
             return Err(SummaryError::InvalidState);
         }
-        providers.insert(run_id.to_string(), provider);
+        providers.insert(
+            run_id.to_string(),
+            ActiveProvider {
+                meeting_id: meeting_id.to_string(),
+                provider: Arc::clone(&provider),
+            },
+        );
         Ok(Self {
             run_id: run_id.to_string(),
+            provider,
         })
     }
 }
 
 impl Drop for ActiveProviderExecution {
     fn drop(&mut self) {
-        if let Ok(mut providers) = active_providers().lock() {
-            providers.remove(&self.run_id);
-        }
+        active_providers()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .remove(&self.run_id);
+        self.provider.release_run(&self.run_id);
     }
 }
 
-fn cancel_active_provider(run_id: &str) -> SummaryResult<()> {
+fn cancel_active_provider_for_meeting(meeting_id: &str, run_id: &str) -> SummaryResult<()> {
     let provider = active_providers()
         .lock()
-        .map_err(|_| SummaryError::Internal)?
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
         .get(run_id)
-        .cloned();
+        .filter(|active| active.meeting_id == meeting_id)
+        .map(|active| Arc::clone(&active.provider));
     if let Some(provider) = provider {
         provider.cancel(run_id)?;
     }
@@ -76,8 +97,20 @@ fn cancel_active_provider(run_id: &str) -> SummaryResult<()> {
 }
 
 pub(crate) fn cancel_active_providers(run_ids: &[String]) {
-    for run_id in run_ids {
-        let _ = cancel_active_provider(run_id);
+    let providers = active_providers()
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let active = run_ids
+        .iter()
+        .filter_map(|run_id| {
+            providers
+                .get(run_id)
+                .map(|entry| (run_id.clone(), Arc::clone(&entry.provider)))
+        })
+        .collect::<Vec<_>>();
+    drop(providers);
+    for (run_id, provider) in active {
+        let _ = provider.cancel(&run_id);
     }
 }
 
@@ -95,10 +128,22 @@ impl SummaryService {
         SummaryPolicy::default()
     }
 
+    pub(crate) fn production_policy(&self) -> SummaryPolicy {
+        SummaryPolicy::deepseek()
+    }
+
+    #[cfg(any(test, debug_assertions))]
     pub fn create_run(&self, input: CreateSummaryRun) -> SummaryResult<SummaryRun> {
+        self.create_run_with_provider(input, &DeterministicMockSummaryProvider::default())
+    }
+
+    pub(crate) fn create_run_with_provider(
+        &self,
+        input: CreateSummaryRun,
+        provider: &dyn SummaryProvider,
+    ) -> SummaryResult<SummaryRun> {
         validate_uuid(&input.meeting_id)?;
         validate_source_ids(&input.source_ids)?;
-        let provider = DeterministicMockSummaryProvider::default();
         let _guard = self.database.mutation_guard().map_err(map_data_error)?;
         let mut connection = self.database.connect().map_err(map_data_error)?;
         let transaction = connection
@@ -116,16 +161,24 @@ impl SummaryService {
             &input.source_ids,
             input.template,
             input.output_language,
-            &provider,
+            provider,
         )?;
         transaction.commit().map_err(SummaryError::from)?;
         Ok(run)
     }
 
+    #[cfg(any(test, debug_assertions))]
     pub fn create_revision(&self, input: CreateSummaryRevision) -> SummaryResult<SummaryRun> {
+        self.create_revision_with_provider(input, &DeterministicMockSummaryProvider::default())
+    }
+
+    pub(crate) fn create_revision_with_provider(
+        &self,
+        input: CreateSummaryRevision,
+        provider: &dyn SummaryProvider,
+    ) -> SummaryResult<SummaryRun> {
         validate_uuid(&input.meeting_id)?;
         validate_uuid(&input.summary_id)?;
-        let provider = DeterministicMockSummaryProvider::default();
         let _guard = self.database.mutation_guard().map_err(map_data_error)?;
         let mut connection = self.database.connect().map_err(map_data_error)?;
         let transaction = connection
@@ -153,7 +206,7 @@ impl SummaryService {
             &source_ids,
             base.template,
             base.output_language,
-            &provider,
+            provider,
         )?;
         transaction.commit().map_err(SummaryError::from)?;
         Ok(run)
@@ -196,6 +249,9 @@ impl SummaryService {
             }
             if total_bytes > SUMMARY_MAX_INPUT_BYTES {
                 return Err(SummaryError::InputTooLarge);
+            }
+            if total_bytes > provider.max_input_bytes() {
+                return Err(SummaryError::ProviderInputTooLarge);
             }
             sources.push(source);
         }
@@ -269,23 +325,79 @@ impl SummaryService {
         summary_repository::get_summary(transaction, &meeting.id, id)
     }
 
+    #[cfg(any(test, debug_assertions))]
     pub fn execute(&self, meeting_id: &str, summary_id: &str) -> SummaryResult<SummaryRun> {
-        self.execute_with_provider(
+        tauri::async_runtime::block_on(self.execute_with_provider_async(
             meeting_id,
             summary_id,
             Arc::new(DeterministicMockSummaryProvider::default()),
-        )
+        ))
     }
 
+    #[cfg(any(test, debug_assertions))]
     pub fn execute_with_provider(
         &self,
         meeting_id: &str,
         summary_id: &str,
         provider: Arc<dyn SummaryProvider>,
     ) -> SummaryResult<SummaryRun> {
+        tauri::async_runtime::block_on(
+            self.execute_with_provider_async(meeting_id, summary_id, provider),
+        )
+    }
+
+    pub async fn execute_with_provider_async(
+        &self,
+        meeting_id: &str,
+        summary_id: &str,
+        provider: Arc<dyn SummaryProvider>,
+    ) -> SummaryResult<SummaryRun> {
+        self.execute_with_provider_authorization_async(meeting_id, summary_id, provider, None)
+            .await
+    }
+
+    pub(crate) async fn execute_with_provider_consent_async(
+        &self,
+        meeting_id: &str,
+        summary_id: &str,
+        provider: Arc<dyn SummaryProvider>,
+        consents: &ProviderConsentService,
+        policy: &ProviderConsentPolicy<'_>,
+    ) -> SummaryResult<SummaryRun> {
+        self.execute_with_provider_authorization_async(
+            meeting_id,
+            summary_id,
+            provider,
+            Some((consents, policy)),
+        )
+        .await
+    }
+
+    async fn execute_with_provider_authorization_async(
+        &self,
+        meeting_id: &str,
+        summary_id: &str,
+        provider: Arc<dyn SummaryProvider>,
+        authorization: Option<(&ProviderConsentService, &ProviderConsentPolicy<'_>)>,
+    ) -> SummaryResult<SummaryRun> {
         validate_uuid(meeting_id)?;
         validate_uuid(summary_id)?;
-        let (request, _active_provider) = {
+        // Register before waiting on the global mutation guard. A concurrent
+        // cancellation can then stop this execution even while another data
+        // mutation holds that guard. The transaction below repeats every
+        // security and state check before consuming consent or going running.
+        {
+            let connection = self.database.connect().map_err(map_data_error)?;
+            eligible_meeting(&connection, meeting_id)?;
+            let run = summary_repository::get_summary(&connection, meeting_id, summary_id)?;
+            ensure_run_provider(&run, provider.as_ref())?;
+            if run.status != SummaryStatus::Queued {
+                return Err(SummaryError::InvalidState);
+            }
+        }
+        let _active_provider =
+            ActiveProviderExecution::register(meeting_id, summary_id, Arc::clone(&provider))?;
+        let request = {
             let _guard = self.database.mutation_guard().map_err(map_data_error)?;
             let mut connection = self.database.connect().map_err(map_data_error)?;
             let transaction = connection
@@ -293,42 +405,49 @@ impl SummaryService {
                 .map_err(SummaryError::from)?;
             eligible_meeting(&transaction, meeting_id)?;
             let run = summary_repository::get_summary(&transaction, meeting_id, summary_id)?;
-            if run.provider != provider.provider_name()
-                || run.provider_mode != provider.provider_mode()
-                || run.model != provider.model_name()
-                || run.prompt_version != provider.prompt_version()
-            {
+            ensure_run_provider(&run, provider.as_ref())?;
+            if run.status != SummaryStatus::Queued {
+                if run.status == SummaryStatus::Cancelled {
+                    return Ok(run);
+                }
                 return Err(SummaryError::InvalidState);
             }
-            summary_repository::transition_to_running(&transaction, meeting_id, summary_id)?;
             let segments = summary_repository::load_snapshot(&transaction, meeting_id, summary_id)?;
-            let (meeting_title, meeting_primary_language) =
-                summary_repository::provider_meeting_snapshot(
-                    &transaction,
-                    meeting_id,
-                    summary_id,
-                )?;
+            let consent_authorization = if let Some((consents, policy)) = authorization {
+                let authorization = consents
+                    .validate_and_consume_authorization(&transaction, summary_id, policy)
+                    .map_err(map_consent_error)?;
+                Some(authorization.ok_or(SummaryError::DeepSeekConsentRequired)?)
+            } else {
+                None
+            };
+            summary_repository::transition_to_running(&transaction, meeting_id, summary_id)?;
             let request = SummaryProviderRequest {
                 run_id: summary_id.to_string(),
                 meeting_id: meeting_id.to_string(),
-                meeting_title,
-                meeting_primary_language,
                 template: run.template,
                 output_language: run.output_language,
                 segments,
             };
-            let active_provider =
-                ActiveProviderExecution::register(summary_id, Arc::clone(&provider))?;
             transaction.commit().map_err(SummaryError::from)?;
-            (request, active_provider)
+            if let Some(authorization) = consent_authorization {
+                authorization.commit();
+            }
+            request
         };
 
-        let output = match provider.generate(&request) {
+        let output = match provider.generate(&request).await {
             Ok(output) => output,
-            Err(_) => {
-                return self.finish_failed(meeting_id, summary_id, SummaryError::ProviderFailed);
+            Err(_) if provider.is_cancelled(summary_id) => {
+                return self.finish_cancelled(meeting_id, summary_id);
+            }
+            Err(error) => {
+                return self.finish_failed(meeting_id, summary_id, error);
             }
         };
+        if provider.is_cancelled(summary_id) {
+            return self.finish_cancelled(meeting_id, summary_id);
+        }
         let evidence = match validate_provider_output(&request, &output) {
             Ok(evidence) => evidence,
             Err(error) => return self.finish_failed(meeting_id, summary_id, error),
@@ -339,6 +458,12 @@ impl SummaryService {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(SummaryError::from)?;
+        if provider.is_cancelled(summary_id) {
+            summary_repository::cancel(&transaction, meeting_id, summary_id)?;
+            let cancelled = summary_repository::get_summary(&transaction, meeting_id, summary_id)?;
+            transaction.commit().map_err(SummaryError::from)?;
+            return Ok(cancelled);
+        }
         match summary_repository::complete(
             &transaction,
             meeting_id,
@@ -347,6 +472,12 @@ impl SummaryService {
             &evidence,
         ) {
             Ok(true) => {
+                if provider.is_cancelled(summary_id) {
+                    transaction.rollback().map_err(SummaryError::from)?;
+                    drop(connection);
+                    drop(_guard);
+                    return self.finish_cancelled(meeting_id, summary_id);
+                }
                 let completed =
                     summary_repository::get_summary(&transaction, meeting_id, summary_id)?;
                 transaction.commit().map_err(SummaryError::from)?;
@@ -395,25 +526,37 @@ impl SummaryService {
         }
     }
 
-    pub fn cancel(&self, meeting_id: &str, summary_id: &str) -> SummaryResult<SummaryRun> {
-        validate_uuid(meeting_id)?;
-        validate_uuid(summary_id)?;
+    fn finish_cancelled(&self, meeting_id: &str, summary_id: &str) -> SummaryResult<SummaryRun> {
         let _guard = self.database.mutation_guard().map_err(map_data_error)?;
         let mut connection = self.database.connect().map_err(map_data_error)?;
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(SummaryError::from)?;
-        let was_running = summary_repository::get_summary(&transaction, meeting_id, summary_id)?
-            .status
-            == SummaryStatus::Running;
+        summary_repository::cancel(&transaction, meeting_id, summary_id)?;
+        let cancelled = summary_repository::get_summary(&transaction, meeting_id, summary_id)?;
+        transaction.commit().map_err(SummaryError::from)?;
+        Ok(cancelled)
+    }
+
+    pub fn cancel(&self, meeting_id: &str, summary_id: &str) -> SummaryResult<SummaryRun> {
+        validate_uuid(meeting_id)?;
+        validate_uuid(summary_id)?;
+        // Signal first so a provider that is already parsing or waiting on the
+        // network can stop without waiting for the database mutation guard.
+        // Signal again after the transaction to cover an execution that was
+        // registered while this cancellation waited for that same guard.
+        cancel_active_provider_for_meeting(meeting_id, summary_id)?;
+        let _guard = self.database.mutation_guard().map_err(map_data_error)?;
+        let mut connection = self.database.connect().map_err(map_data_error)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(SummaryError::from)?;
         summary_repository::cancel(&transaction, meeting_id, summary_id)?;
         let cancelled = summary_repository::get_summary(&transaction, meeting_id, summary_id)?;
         transaction.commit().map_err(SummaryError::from)?;
         drop(connection);
         drop(_guard);
-        if was_running {
-            let _ = cancel_active_provider(summary_id);
-        }
+        cancel_active_provider_for_meeting(meeting_id, summary_id)?;
         Ok(cancelled)
     }
 
@@ -425,6 +568,77 @@ impl SummaryService {
             meeting_id,
             summary_id,
         )
+    }
+
+    pub(crate) fn disclosure_run(
+        &self,
+        summary_id: &str,
+        provider: &dyn SummaryProvider,
+    ) -> SummaryResult<SummaryRun> {
+        validate_uuid(summary_id)?;
+        let connection = self.database.connect().map_err(map_data_error)?;
+        let run = summary_repository::get_summary_by_id(&connection, summary_id)?;
+        if run.status != SummaryStatus::Queued {
+            return Err(SummaryError::InvalidState);
+        }
+        ensure_run_provider(&run, provider)?;
+        let segments = summary_repository::load_snapshot(&connection, &run.meeting_id, summary_id)?;
+        if segments.is_empty() {
+            return Err(SummaryError::SnapshotMissing);
+        }
+        Ok(run)
+    }
+
+    pub(crate) fn confirm_external_disclosure(
+        &self,
+        summary_id: &str,
+        remember: bool,
+        provider: &dyn SummaryProvider,
+        consents: &ProviderConsentService,
+        policy: &ProviderConsentPolicy<'_>,
+    ) -> SummaryResult<SummaryRun> {
+        validate_uuid(summary_id)?;
+        let _guard = self.database.mutation_guard().map_err(map_data_error)?;
+        let mut connection = self.database.connect().map_err(map_data_error)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(SummaryError::from)?;
+        let run = summary_repository::get_summary_by_id(&transaction, summary_id)?;
+        if run.status != SummaryStatus::Queued {
+            return Err(SummaryError::InvalidState);
+        }
+        ensure_run_provider(&run, provider)?;
+        let segments =
+            summary_repository::load_snapshot(&transaction, &run.meeting_id, summary_id)?;
+        if segments.is_empty() {
+            return Err(SummaryError::SnapshotMissing);
+        }
+        let already_remembered = consents
+            .remembered_with_transaction(&transaction, policy)
+            .map_err(map_consent_error)?
+            .is_some();
+        if already_remembered && !remember {
+            return Err(SummaryError::DeepSeekConsentInvalid);
+        }
+        if remember {
+            consents
+                .remember_with_transaction(&transaction, policy)
+                .map_err(map_consent_error)?;
+            let _ = consents
+                .clear_one_time_for_summary(summary_id)
+                .map_err(map_consent_error)?;
+        } else {
+            consents
+                .grant_one_time_with_transaction(&transaction, summary_id, policy)
+                .map_err(map_consent_error)?;
+        }
+        if let Err(error) = transaction.commit() {
+            if !remember {
+                let _ = consents.clear_one_time_for_summary(summary_id);
+            }
+            return Err(SummaryError::from(error));
+        }
+        Ok(run)
     }
 
     pub fn list(
@@ -638,6 +852,18 @@ fn truncate_utf8(value: &str, max_bytes: usize) -> &str {
     &value[..end]
 }
 
+fn ensure_run_provider(run: &SummaryRun, provider: &dyn SummaryProvider) -> SummaryResult<()> {
+    if run.provider == provider.provider_name()
+        && run.provider_mode == provider.provider_mode()
+        && run.model == provider.model_name()
+        && run.prompt_version == provider.prompt_version()
+    {
+        Ok(())
+    } else {
+        Err(SummaryError::InvalidState)
+    }
+}
+
 fn eligible_meeting(connection: &rusqlite::Connection, meeting_id: &str) -> SummaryResult<Meeting> {
     let meeting =
         repository::get_including_deleted(connection, meeting_id).map_err(map_data_error)?;
@@ -697,6 +923,21 @@ fn map_data_error(error: DataError) -> SummaryError {
     }
 }
 
+fn map_consent_error(error: DataError) -> SummaryError {
+    match error {
+        DataError::InvalidId | DataError::InvalidInput | DataError::NotFound => {
+            SummaryError::DeepSeekConsentInvalid
+        }
+        DataError::Database | DataError::MigrationConflict | DataError::StorageUnavailable => {
+            SummaryError::PersistenceFailed
+        }
+        DataError::InvalidState
+        | DataError::MeetingDeleteFailed
+        | DataError::MeetingDeletePending
+        | DataError::UnsafePath => SummaryError::Internal,
+    }
+}
+
 fn map_transcript_error(error: TranscriptError) -> SummaryError {
     match error {
         TranscriptError::SourceNotFound => SummaryError::SourceNotFound,
@@ -719,7 +960,7 @@ fn map_transcript_error(error: TranscriptError) -> SummaryError {
 mod tests {
     use std::path::PathBuf;
     use std::sync::Barrier;
-    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::time::Duration;
 
     use super::*;
@@ -729,6 +970,7 @@ mod tests {
     };
     use crate::data::summary_provider::{
         MOCK_SUMMARY_MODEL, MOCK_SUMMARY_PROMPT_VERSION, MOCK_SUMMARY_PROVIDER,
+        SummaryProviderFuture,
     };
     use crate::data::{
         CreateMeeting, TranscriptImportInput, TranscriptImportOutcome, UpdateTranscriptSegment,
@@ -935,27 +1177,29 @@ mod tests {
             MOCK_SUMMARY_PROMPT_VERSION
         }
 
-        fn generate(
-            &self,
-            request: &SummaryProviderRequest,
-        ) -> SummaryResult<SummaryProviderOutput> {
-            Ok(SummaryProviderOutput {
-                run_id: request.run_id.clone(),
-                content: SummaryContent {
-                    schema_version: 1,
-                    overview: SummaryClaim {
-                        text: "Synthetic invalid evidence output".to_string(),
-                        evidence_ids: vec!["00000000-0000-4000-8000-000000000099".to_string()],
+        fn generate<'a>(
+            &'a self,
+            request: &'a SummaryProviderRequest,
+        ) -> SummaryProviderFuture<'a> {
+            Box::pin(async move {
+                Ok(SummaryProviderOutput {
+                    run_id: request.run_id.clone(),
+                    content: SummaryContent {
+                        schema_version: 1,
+                        overview: SummaryClaim {
+                            text: "Synthetic invalid evidence output".to_string(),
+                            evidence_ids: vec!["00000000-0000-4000-8000-000000000099".to_string()],
+                        },
+                        decisions: vec![SummaryDecision {
+                            text: "Synthetic invalid decision".to_string(),
+                            status: SummaryDecisionStatus::Confirmed,
+                            evidence_ids: vec!["00000000-0000-4000-8000-000000000099".to_string()],
+                        }],
+                        action_items: Vec::new(),
+                        risks: Vec::new(),
+                        open_questions: Vec::new(),
                     },
-                    decisions: vec![SummaryDecision {
-                        text: "Synthetic invalid decision".to_string(),
-                        status: SummaryDecisionStatus::Confirmed,
-                        evidence_ids: vec!["00000000-0000-4000-8000-000000000099".to_string()],
-                    }],
-                    action_items: Vec::new(),
-                    risks: Vec::new(),
-                    open_questions: Vec::new(),
-                },
+                })
             })
         }
     }
@@ -979,29 +1223,31 @@ mod tests {
             MOCK_SUMMARY_PROMPT_VERSION
         }
 
-        fn generate(
-            &self,
-            request: &SummaryProviderRequest,
-        ) -> SummaryResult<SummaryProviderOutput> {
-            let evidence_id = request
-                .segments
-                .first()
-                .expect("test snapshot should not be empty")
-                .evidence_id
-                .clone();
-            Ok(SummaryProviderOutput {
-                run_id: request.run_id.clone(),
-                content: SummaryContent {
-                    schema_version: 1,
-                    overview: SummaryClaim {
-                        text: "Synthetic duplicate evidence output".to_string(),
-                        evidence_ids: vec![evidence_id.clone(), evidence_id],
+        fn generate<'a>(
+            &'a self,
+            request: &'a SummaryProviderRequest,
+        ) -> SummaryProviderFuture<'a> {
+            Box::pin(async move {
+                let evidence_id = request
+                    .segments
+                    .first()
+                    .expect("test snapshot should not be empty")
+                    .evidence_id
+                    .clone();
+                Ok(SummaryProviderOutput {
+                    run_id: request.run_id.clone(),
+                    content: SummaryContent {
+                        schema_version: 1,
+                        overview: SummaryClaim {
+                            text: "Synthetic duplicate evidence output".to_string(),
+                            evidence_ids: vec![evidence_id.clone(), evidence_id],
+                        },
+                        decisions: Vec::new(),
+                        action_items: Vec::new(),
+                        risks: Vec::new(),
+                        open_questions: Vec::new(),
                     },
-                    decisions: Vec::new(),
-                    action_items: Vec::new(),
-                    risks: Vec::new(),
-                    open_questions: Vec::new(),
-                },
+                })
             })
         }
     }
@@ -1585,21 +1831,146 @@ mod tests {
             MOCK_SUMMARY_PROMPT_VERSION
         }
 
-        fn generate(
-            &self,
-            _request: &SummaryProviderRequest,
-        ) -> SummaryResult<SummaryProviderOutput> {
-            self.entered.wait();
-            while !self.cancelled.load(Ordering::SeqCst) {
-                std::thread::sleep(Duration::from_millis(5));
-            }
-            Err(SummaryError::ProviderFailed)
+        fn generate<'a>(
+            &'a self,
+            _request: &'a SummaryProviderRequest,
+        ) -> SummaryProviderFuture<'a> {
+            Box::pin(async move {
+                self.entered.wait();
+                while !self.cancelled.load(Ordering::SeqCst) {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(SummaryError::ProviderFailed)
+            })
         }
 
         fn cancel(&self, _run_id: &str) -> SummaryResult<()> {
             self.cancelled.store(true, Ordering::SeqCst);
             Ok(())
         }
+    }
+
+    #[derive(Clone, Default)]
+    struct PreSendCancellationProvider {
+        cancelled: Arc<AtomicBool>,
+        transport_calls: Arc<AtomicUsize>,
+    }
+
+    impl SummaryProvider for PreSendCancellationProvider {
+        fn provider_name(&self) -> &'static str {
+            MOCK_SUMMARY_PROVIDER
+        }
+
+        fn provider_mode(&self) -> &'static str {
+            crate::data::summary_provider::MOCK_SUMMARY_PROVIDER_MODE
+        }
+
+        fn model_name(&self) -> &'static str {
+            MOCK_SUMMARY_MODEL
+        }
+
+        fn prompt_version(&self) -> &'static str {
+            MOCK_SUMMARY_PROMPT_VERSION
+        }
+
+        fn generate<'a>(
+            &'a self,
+            _request: &'a SummaryProviderRequest,
+        ) -> SummaryProviderFuture<'a> {
+            Box::pin(async move {
+                if self.cancelled.load(Ordering::SeqCst) {
+                    return Err(SummaryError::ProviderFailed);
+                }
+                self.transport_calls.fetch_add(1, Ordering::SeqCst);
+                Err(SummaryError::ProviderFailed)
+            })
+        }
+
+        fn cancel(&self, _run_id: &str) -> SummaryResult<()> {
+            self.cancelled.store(true, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn is_cancelled(&self, _run_id: &str) -> bool {
+            self.cancelled.load(Ordering::SeqCst)
+        }
+    }
+
+    #[test]
+    fn cancel_before_running_transition_prevents_any_transport_call() {
+        let directory = TestDirectory::new();
+        let meetings = MeetingService::initialize(&directory.0).expect("service should initialize");
+        let (meeting_id, source_id, _) = create_meeting_and_source(&meetings);
+        let summaries = meetings.summaries();
+        let run = create_run(&summaries, &meeting_id, &source_id);
+        let provider = Arc::new(PreSendCancellationProvider::default());
+
+        let mutation_guard = summaries
+            .database
+            .mutation_guard()
+            .expect("test should hold the database mutation guard");
+        let execute_service = summaries.clone();
+        let execute_meeting_id = meeting_id.clone();
+        let execute_summary_id = run.id.clone();
+        let execute_provider: Arc<dyn SummaryProvider> = provider.clone();
+        let execute_handle = std::thread::spawn(move || {
+            execute_service.execute_with_provider(
+                &execute_meeting_id,
+                &execute_summary_id,
+                execute_provider,
+            )
+        });
+
+        let registration_deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !active_providers()
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .contains_key(&run.id)
+            && std::time::Instant::now() < registration_deadline
+        {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            active_providers()
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .contains_key(&run.id),
+            "execution must register cancellation before waiting for the mutation guard"
+        );
+
+        let cancel_service = summaries.clone();
+        let cancel_meeting_id = meeting_id.clone();
+        let cancel_summary_id = run.id.clone();
+        let cancel_handle = std::thread::spawn(move || {
+            cancel_service.cancel(&cancel_meeting_id, &cancel_summary_id)
+        });
+        let cancellation_deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !provider.cancelled.load(Ordering::SeqCst)
+            && std::time::Instant::now() < cancellation_deadline
+        {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(provider.cancelled.load(Ordering::SeqCst));
+        assert_eq!(provider.transport_calls.load(Ordering::SeqCst), 0);
+
+        drop(mutation_guard);
+        assert_eq!(
+            cancel_handle
+                .join()
+                .expect("cancellation thread should join")
+                .expect("queued summary should cancel")
+                .status,
+            SummaryStatus::Cancelled
+        );
+        assert_eq!(
+            execute_handle
+                .join()
+                .expect("execution thread should join")
+                .expect("cancelled execution should return terminal run")
+                .status,
+            SummaryStatus::Cancelled
+        );
+        assert_eq!(provider.transport_calls.load(Ordering::SeqCst), 0);
     }
 
     #[test]
@@ -1632,14 +2003,40 @@ mod tests {
                 .status,
             SummaryStatus::Running
         );
+        let wrong_meeting_id = Uuid::new_v4().to_string();
+        assert!(
+            summaries.cancel(&wrong_meeting_id, &run.id).is_err(),
+            "a mismatched meeting must not cancel another meeting's run"
+        );
+        assert!(!provider.cancelled.load(Ordering::SeqCst));
+
+        let mutation_guard = summaries
+            .database
+            .mutation_guard()
+            .expect("test should hold the database mutation guard");
+        let cancel_service = summaries.clone();
+        let cancel_meeting_id = meeting_id.clone();
+        let cancel_summary_id = run.id.clone();
+        let cancel_handle = std::thread::spawn(move || {
+            cancel_service.cancel(&cancel_meeting_id, &cancel_summary_id)
+        });
+        let deadline = std::time::Instant::now() + Duration::from_secs(2);
+        while !provider.cancelled.load(Ordering::SeqCst) && std::time::Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        assert!(
+            provider.cancelled.load(Ordering::SeqCst),
+            "active provider must be signalled before waiting for the database guard"
+        );
+        drop(mutation_guard);
         assert_eq!(
-            summaries
-                .cancel(&meeting_id, &run.id)
+            cancel_handle
+                .join()
+                .expect("cancellation thread should join")
                 .expect("running summary should cancel")
                 .status,
             SummaryStatus::Cancelled
         );
-        assert!(provider.cancelled.load(Ordering::SeqCst));
         assert_eq!(
             summaries
                 .cancel(&meeting_id, &run.id)

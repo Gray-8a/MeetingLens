@@ -140,6 +140,7 @@ pub trait SecretStore: Send + Sync {
     fn backend_status(&self) -> SecretBackendStatus;
 }
 
+#[derive(Clone)]
 pub struct SecretStoreService {
     backend: Arc<dyn SecretStore>,
 }
@@ -151,7 +152,7 @@ impl SecretStoreService {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, debug_assertions))]
     pub fn with_backend(backend: Arc<dyn SecretStore>) -> Self {
         Self { backend }
     }
@@ -489,7 +490,7 @@ mod windows_backend {
     }
 }
 
-#[cfg(test)]
+#[cfg(any(test, debug_assertions))]
 pub mod test_support {
     use std::{collections::HashMap, sync::Mutex};
 

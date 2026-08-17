@@ -8,6 +8,7 @@ use super::document_service::{DocumentService, execute_meeting_delete};
 use super::error::{DataError, DataResult};
 use super::model::{CreateMeeting, Meeting, MeetingStatus, UpdateMeeting};
 use super::paths::StoragePaths;
+use super::provider_consent_service::ProviderConsentService;
 use super::repository::{self, NewMeeting};
 use super::summary_repository;
 use super::summary_service::{SummaryService, cancel_active_providers};
@@ -20,6 +21,7 @@ const MAX_LANGUAGE_CHARS: usize = 35;
 #[derive(Clone, Debug)]
 pub struct MeetingService {
     database: Database,
+    provider_consents: ProviderConsentService,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -31,8 +33,10 @@ pub(crate) struct PreparedMeeting {
 
 impl MeetingService {
     pub fn initialize(app_data_root: impl AsRef<Path>) -> DataResult<Self> {
+        let database = Database::initialize(app_data_root)?;
         let service = Self {
-            database: Database::initialize(app_data_root)?,
+            provider_consents: ProviderConsentService::new(database.clone()),
+            database,
         };
         SummaryService::new(service.database.clone())
             .recover_interrupted()
@@ -57,6 +61,10 @@ impl MeetingService {
 
     pub fn summaries(&self) -> SummaryService {
         SummaryService::new(self.database.clone())
+    }
+
+    pub(crate) fn provider_consents(&self) -> ProviderConsentService {
+        self.provider_consents.clone()
     }
 
     pub fn transcript_imports(&self) -> TranscriptImportWorkflow {

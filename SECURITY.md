@@ -35,8 +35,8 @@ MVP 1A-3B-1 的本地会话认证防止局域网设备、普通网页和未持�
 
 ### 当前与开发阶段
 
-- 当前真实 DeepSeek Provider 尚未接入，应用代码不消费真实 API key，也不发起 DeepSeek 请求。
-- 真实 DeepSeek 凭据不得保存在 `.env` 或环境变量中；未来 Rust Provider 不提供明文开发回退，只能通过 `SecretStore` 消费 key。
+- Rust DeepSeek Provider 已接入固定官方 host/model；只有受信任 Rust 执行路径可以消费真实 API key 和发起请求，正式用户生成入口仍未接线。
+- 真实 DeepSeek 凭据不得保存在 `.env` 或环境变量中；Rust Provider 不提供明文开发回退，只能通过 `SecretStore` 消费 key。
 - `.env.example` 只能包含空值或明显的非秘密占位符，不得暗示 Provider 会从环境中读取 key。
 - 测试使用 fake provider，不调用真实付费 API。
 
@@ -50,11 +50,11 @@ MVP 1A-3B-1 的本地会话认证防止局域网设备、普通网页和未持�
 - Windows 11 发布版使用 Windows Credential Manager；不得把 key 放入 WebView 的 localStorage、前端 bundle 或 sidecar 命令行参数。
 - 非 Windows 平台 fail closed，不使用文件、SQLite、注册表明文或浏览器存储回退。
 
-下一阶段的真实 Provider 必须由 Rust 通过 `get_for_backend` 从 SecretStore 取得 key。API key 不得进入 React 读取面、SQLite、日志、Python、Sidecar 或命令行；缺少 key 时请求 fail closed。
+真实 Provider 只在已授权 run 准备执行时由 Rust 通过 `get_for_backend` 从 SecretStore 取得 key。API key 不得进入 React 读取面、SQLite、日志、Python、Sidecar 或命令行；缺少 key 时请求在 transport 调用前 fail closed。
 
 界面语言是非敏感本地偏好。WebView 只可在命名空间键 `meetinglens.uiLocale` 保存允许的 `zh-CN` 或 `en-US` 枚举；不得在该存储中写入会议、文档、转录、纪要、凭据或路径。未知、损坏或不可访问的值安全回退到系统语言规则和 `en-US`，不得用任意值构造语言包路径、远程请求或动态 import。清除 WebView 存储只重置界面语言，不影响 SQLite、私有文件或 SecretStore。
 
-当前边界不防御取得同等 Windows 用户权限、可读取进程内存或用户 Credential Manager 的恶意软件，也不防御管理员/内核级攻击者。DeepSeek 网络有效性测试、真实调用和 Provider 消费凭据均尚未实现。
+当前边界不防御取得同等 Windows 用户权限、可读取进程内存或用户 Credential Manager 的恶意软件，也不防御管理员/内核级攻击者。Provider 协议、错误和取消使用本地 fake transport 验证；真实付费 DeepSeek API smoke 未执行，因此不得声称已经验证真实账户、余额或端到端联网结果。
 
 任何已经出现在聊天、日志或提交中的 key 都应视为已泄漏并立即撤销，而不是仅删除文件。
 
@@ -86,7 +86,7 @@ MVP 1A-3A 的 `MockCaptureProvider` 不访问真实设备、不申请权限，�
 
 ## 7. 外部 AI 数据流
 
-PR #21 已完成的 `feat/summary-run-core` 不属于外部 AI 数据流：Rust `DeterministicMockSummaryProvider` 只读取 SQLite 中已经冻结的 transcript snapshot，不读取 SecretStore、环境凭据、文件、Sidecar 或网络。它产生的持久结果只用于开发/协议验证，不能被 UI 描述为真实 AI 纪要。这里的“零网络”只表示 MeetingLens 应用代码和 Mock Provider 不外发数据，不代表 WebView2 Runtime 在物理层面完全断网。真实 DeepSeek 尚未接入；下列要求从 `feat/summary-provider-deepseek` 开始适用。
+PR #21 的 Rust `DeterministicMockSummaryProvider` 仍只读取冻结 snapshot，不读取 SecretStore、环境凭据、文件、Sidecar 或网络；它现在只允许测试/debug 隔离运行，历史 Mock run 继续可读，release WebView 不可选择或执行。production `DeepSeekSummaryProvider` 是唯一真实 Summary 外发路径。这里的“Mock 零网络”只表示 MeetingLens Mock 不外发数据，不代表 WebView2 Runtime 在物理层面完全断网。
 
 调用 DeepSeek 前必须：
 
@@ -94,16 +94,20 @@ PR #21 已完成的 `feat/summary-run-core` 不属于外部 AI 数据流：Rust 
 2. 第一次准备外发时让用户选择“本次同意”“记住我的选择”或“取消”；没有有效确认时 fail closed。
 3. 只发送不可变输入快照中的用户所选规范化转录片段，不发送音频、截图、原始转录文件或原始参考文档。
 4. 只有 Rust Provider 可以从 SecretStore 读取 key 和发起 HTTPS 请求；React/WebView、Python 和 Sidecar 不持有 key，也不直接请求 DeepSeek。
-5. 设置连接/读取超时、受限重试和取消；错误、日志和 command response 不得包含请求正文、响应全文或 key。
+5. 设置 10 秒连接/180 秒总超时、有界 request/response、无自动重试和可唤醒取消；错误、日志和 command response 不得包含请求正文、响应全文或 key。
 6. 严格解析和验证 Provider 响应，继续由 Rust 验证 evidence allowlist，再原子提交结果。
+
+Rust transport 固定使用 rustls HTTPS 和上述单一 endpoint，禁止 redirects 与环境 proxy，不接受 WebView URL。每个 run 最多一轮非流式、thinking disabled、JSON-object 请求，不自动重试；请求体上限 2 MiB、响应体上限 1 MiB，读取过程持续执行上限。DeepSeek snapshot 额外限制为 1 MiB；schema v4 的 10 MiB 通用历史快照仍可读取，但超出 Provider 上限的执行在发送前返回 `summary_provider_input_too_large`。
+
+Disclosure 固定覆盖 `transcript_text`、`speaker_labels_and_names`、`time_offsets`、`evidence_ids`、`summary_template` 和 `output_language`；界面在 evidence 类别中明确包含 source/segment 顺序与 run-scoped evidence IDs。除这些 run-scoped evidence IDs 外，请求不包含其他数据库标识，也不包含 meeting title、source display name/path、language/confidence、原始文件、Prompt 或 Key。关闭 Dialog、Escape 或取消都不得产生授权；loading 防重复确认，错误后只能安全重试或返回。
 
 持续实时翻译和定时 checkpoint 当前为 Frozen / Deferred。若未来解冻，它们仍是区别于一次性纪要生成的外发目的，必须分别同意并提供持续状态与停止入口；任何阶段都不能把原始音频、截图或用户文件直接发送给外部 Provider。
 
-未来设备采集和持续外发的同意仍只对当前应用会话有效，不能因历史状态自动重新打开设备或恢复发送。Personal Edition 的一次性 DeepSeek Summary 确认可以由用户明确选择“记住我的选择”；本地只保留实现所需的最小时间或状态，不建立通用 Consent 审计体系。
+未来设备采集和持续外发的同意仍只对当前应用会话有效，不能因历史状态自动重新打开设备或恢复发送。Personal Edition 的一次性 DeepSeek Summary 确认按 run 在 Rust 内存中保存 10 分钟并单次消费；“记住我的选择”只在 schema v5 保存 provider、policy version/fingerprint 和 UTC 时间，不建立通用 Consent 审计体系。
 
 提供商的保留政策和地区处理条款必须在启用生产集成前重新审查。
 
-DeepSeek Provider PR 必须重新复核可用模型、价格、数据条款和 endpoint；base URL 仅允许 HTTPS，自定义地址需由用户明确配置并重新显示数据接收方。
+DeepSeek production identity 固定为 `api.deepseek.com`、`deepseek-v4-pro` 与 `https://api.deepseek.com/chat/completions`；不允许用户或 WebView 配置 base URL、model、代理或重定向目标。价格和数据处理条款仍须由用户在实际付费使用前确认。
 
 这套最小 Consent 只适用于单人自用版本，不足以作为向团队、客户或公众分发时的企业合规方案。
 
@@ -115,7 +119,7 @@ DeepSeek Provider PR 必须重新复核可用模型、价格、数据条款和 e
 - 自定义应用 commands 登记进 Tauri `AppManifest`；Secret permission set 只授予本地 `main` 窗口 status/set/delete，不包含 get/reveal，也不授予 remote WebView。
 - Document permission set 只授予本地 `main` 窗口 select/import、list/get、delete/retry 和 policy 六个自定义 commands；不授予 WebView dialog、fs、shell、process 或 HTTP permission。
 - Transcript permission set 只授予本地 `main` 窗口原子粘贴/原生选择、source/segment 查询、revision 修正、source 删除、导入 policy，以及当前总结输入 UI 所需的有界分页和 source-scoped speaker 命名 commands；不接受源路径，不授予 WebView dialog、fs、shell、process 或 HTTP permission。
-- Summary permission set 只授予本地 `main` 窗口 `get_summary_policy`、`create_summary_run`、`create_summary_revision`、`execute_summary_run`、`get_summary_run`、`list_summary_runs`、`cancel_summary_run` 和 `list_summary_evidence`。Commands 只接受 meeting/source/run IDs、模板、输出语言和有界分页参数；不接受 Provider 结果、evidence、凭据、正文或路径，也不授予 dialog、fs、shell、process 或 HTTP permission。
+- Summary permission set 只授予本地 `main` 窗口十二个固定 commands：既有 policy/run/evidence 八个，加上 Provider status、external disclosure、confirm disclosure 和 revoke consent。Commands 只接受 meeting/source/run IDs、模板、输出语言、有界分页参数和 confirm 的 `remember` 布尔值；不接受 Provider/model/endpoint、结果、evidence、凭据、正文、时间戳或路径，也不授予 dialog、fs、shell、process 或 HTTP permission。
 - 文件对话框只由 Rust 打开；返回路径继续留在 Rust 并再次校验，不能由前端传入、拼接或读回任意路径。
 - Sidecar 通过固定名称 allowlist 启动，不向前端暴露通用命令执行。
 - Rust commands 对长度、枚举、UUID、路径、文件大小和超时做边界校验。
@@ -157,7 +161,9 @@ DeepSeek Provider PR 必须重新复核可用模型、价格、数据条款和 e
 - 单个 Summary run 只冻结用户选择 source 中的 final segments，合计最多 20,000 条和 10 MiB UTF-8 `original_text`；超限、空输入、跨 meeting source、重复 source 和无法原子冻结的输入全部 fail closed，不截断、不抽样。快照复制 source/segment IDs、三个层级 ordinal、revision、speaker、offset、正文、language、confidence 与创建时间；Rust Provider 只能读取这些 snapshot rows，不能在执行期间回读 live segment。
 - 每个 snapshot row 的随机 UUID 是当前 run 专用 evidence allowlist。Provider 输出必须在 Rust 内验证 run ID、schema version、结果大小/数量、必要 evidence 非空、ID 无重复且全部属于该 run；未知或跨 run ID 返回稳定错误，未完成完整验证前不得写入任何 `content_json` 或 evidence。
 - Summary run/evidence 查询只允许默认 50、最大 100 的 keyset 分页；wire DTO 包括嵌套 result 都使用 camelCase 并拒绝未知字段。revision 竞态和 evidence tuple 失败使用固定的 `summary_revision_conflict` / `summary_evidence_invalid`，不得返回 SQL、路径或 Provider wording。
-- schema v4 独立持久化 `provider_mode`；当前 Service 只能写/执行 `mock`，schema 只为已规划且必须经过 Consent 的 `local/external` 后续 adapter 保留值，`disabled` 或未知 mode 不能代表一次 run。
+- schema v4 独立持久化 `provider_mode`；production Service 只写/执行固定 `deepseek/external`，历史 `deterministic_mock/mock` 继续可读但只通过测试/debug 注入执行，`disabled` 或未知 mode 不能代表一次 run。
+
+- schema v5 `provider_consent_preferences` 只保存 DeepSeek policy version/fingerprint 与 consented/updated 时间；不保存正文、run/meeting ID、Prompt、响应、路径或 Key。policy/host/model/数据类别任一变化都会让 remembered 状态失效；撤销删除持久行并清空所有未消费一次性授权。
 
 删除 source 时同时处理其 segments。queued/running Summary run 使用该 source 时稳定拒绝 `transcript_source_in_use`；不采用隐式 pending，也不在 run 中途移除输入。terminal run 不阻塞删除：同一事务先把依赖结果标记 `source_deleted` stale，保留实际引用且最多 1,024 UTF-8 bytes 的 evidence excerpt、speaker、offset/ordinal 和 revision，清空完整 snapshot 正文与非必要显示元数据，再删除 live source/segments。segment 修正产生新 revision，并把依赖旧 revision 的 run 标记 `segment_revised` stale；旧快照和结果保持不变，不得后台静默重新生成或覆盖用户编辑。
 
@@ -202,7 +208,7 @@ Rust 是文件选择、校验、复制和私有存储的信任边界。React/Web
 - `draft`/`ready` 接受会议删除；`recording`/`processing`/既有保留状态拒绝；`deleting` 重复请求返回稳定 pending；`delete_failed` 允许幂等重试；未知状态 fail closed。
 - 单文档删除先进入 `deleting`，文件和 artifacts 清理成功后才移除元数据，失败进入 `delete_failed`。`importing`/`parsing` 必须先取消或等待；删除不影响用户源文件。
 - transcript source 不长期复制原始文件；删除协调其 segments、summary snapshot 引用和 stale 状态，但不删除用户源文件。正在使用该 source 的 Summary run 读取不可变快照，不得因并发删除产生不可解释证据。
-- schema v4 的完整 snapshot 正文只为 run 执行和可重建性保存在本地 SQLite；显式 source 删除会安全清理 terminal snapshot 正文，而整场 meeting 删除会通过 meeting FK/删除协调器清理 summaries、snapshots 与 evidence。会议删除开始前 queued/running Summary runs 先转为 cancelled，避免留下孤立运行。
+- schema v4 的完整 snapshot 正文只为 run 执行和可重建性保存在本地 SQLite；显式 source 删除会安全清理 terminal snapshot 正文，而整场 meeting 删除会通过 meeting FK/删除协调器清理 summaries、snapshots 与 evidence。schema v5 Provider 偏好是全局设置，不因删除单场会议而改变；用户可在 Settings 单独撤销。会议删除开始前 queued/running Summary runs 先转为 cancelled，避免留下孤立运行。
 - 应用启动时把遗留 `running` Summary run 转为 `failed + summary_interrupted`；不得自动重放可能已经部分执行的 Provider。未来设备采集或持续外发不得因旧状态自动恢复；用户明确选择记住的 Personal Edition DeepSeek Summary 确认除外，并仍须通过 Rust 最小状态校验。
 - 不允许先删除数据库再尽力删除文件，也不允许先删除文件再尝试数据库删除；崩溃后不得留下无法识别的孤儿文件。
 - 临时文件必须有 TTL 和崩溃恢复清理机制。
@@ -216,7 +222,7 @@ Rust 是文件选择、校验、复制和私有存储的信任边界。React/Web
 
 Summary Provider request/output 的 `Debug`、错误映射、测试 assertion 和 command response 同样遵守该 allowlist；不得输出 snapshot 正文、speaker、evidence excerpt、完整 `content_json` 或底层 SQL/SQLite 异常。
 
-Sidecar 认证失败只允许记录事件类型、结果和稳定错误码；当前实现默认关闭 Python 请求日志，并禁止 Rust 输出 HeaderMap、原始 reqwest/Python 错误或子进程环境。DeepSeek API key 是未来外部服务凭据，与短期 Sidecar Session Token 完全不同，二者不得复用。
+Sidecar 认证失败只允许记录事件类型、结果和稳定错误码；当前实现默认关闭 Python 请求日志，并禁止 Rust 输出 HeaderMap、原始 reqwest/Python 错误或子进程环境。DeepSeek API key 是外部服务凭据，与短期 Sidecar Session Token 完全不同，二者不得复用。
 
 SecretStore command 不记录请求 DTO、凭据值、长度、首尾字符、Credential blob、完整 target、Windows 用户名或 Win32 原始错误。当前没有新增完整日志框架；稳定错误码和无敏感上下文是本阶段的最小脱敏边界。
 
@@ -245,19 +251,19 @@ SecretStore command 不记录请求 DTO、凭据值、长度、首尾字符、Cr
 
 ## 15. 分阶段安全交付
 
-| 状态            | 阶段                                     | 必须完成的安全控制                                                                                               |
-| --------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| Implemented     | 基础、文件与 Worker（MVP 1A/1B、PR #14） | SQLite/migration、路径守卫、SecretStore、Sidecar auth、安全文件导入、可恢复删除、隔离 Docling Worker             |
-| Implemented     | 转录与总结入口（PR #18–#20）             | 严格 UTF-8、有界解析/分页、Rust 原生选择器、无路径 DTO、浏览器不持久化正文                                       |
-| Implemented     | Summary Run Core（PR #21）               | schema v4、series/revision、不可变快照、Rust 零网络 Mock、evidence allowlist、stale/删除/取消/恢复               |
-| Next            | `feat/summary-provider-deepseek`         | Rust-only 请求、SecretStore、首次明确确认、记住选择、无确认 fail closed、HTTPS/超时/取消、响应严格校验和日志脱敏 |
-| Planned         | `feat/summary-mode-minutes`              | 安全结果展示、正文修改、整份重新生成、既有 revision/stale 保护、Markdown 复制/保存；不实现章节重生成或 DOCX/PDF  |
-| Planned         | `feat/audio-file-transcription`          | Rust 原生文件边界、一次性 faster-whisper Worker、CPU int8、资源/取消/输出校验、只写既有 transcript 模型          |
-| Planned         | `feat/document-parsing-orchestration`    | Rust-only Docling 调用、一次自动重试、artifact 原子提交、document evidence allowlist、再次失败后提示重新导入     |
-| Optional        | `feat/window-context`                    | 用户明确选择窗口、身份复核、权限撤销即暂停、默认不保存帧、screen evidence 与其他来源隔离                         |
-| Frozen/Deferred | 实时与商业能力                           | 实时采集/ASR/翻译/diarization、checkpoint、浮窗、独立会议工作区、structured visuals、DOCX/PDF、签名和商业分发    |
+| 状态             | 阶段                                     | 必须完成的安全控制                                                                                               |
+| ---------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Implemented      | 基础、文件与 Worker（MVP 1A/1B、PR #14） | SQLite/migration、路径守卫、SecretStore、Sidecar auth、安全文件导入、可恢复删除、隔离 Docling Worker             |
+| Implemented      | 转录与总结入口（PR #18–#20）             | 严格 UTF-8、有界解析/分页、Rust 原生选择器、无路径 DTO、浏览器不持久化正文                                       |
+| Implemented      | Summary Run Core（PR #21）               | schema v4、series/revision、不可变快照、Rust 零网络 Mock、evidence allowlist、stale/删除/取消/恢复               |
+| Current delivery | `feat/summary-provider-deepseek`         | schema v5、Rust-only 固定请求、SecretStore、一次性/记住/撤销、无确认 fail closed、HTTPS/超时/取消、严格校验/脱敏 |
+| Next             | `feat/summary-mode-minutes`              | 正式生成与 Consent 接线、安全结果展示、正文修改、整份重新生成、revision/stale 保护、Markdown 复制/保存           |
+| Planned          | `feat/audio-file-transcription`          | Rust 原生文件边界、一次性 faster-whisper Worker、CPU int8、资源/取消/输出校验、只写既有 transcript 模型          |
+| Planned          | `feat/document-parsing-orchestration`    | Rust-only Docling 调用、一次自动重试、artifact 原子提交、document evidence allowlist、再次失败后提示重新导入     |
+| Optional         | `feat/window-context`                    | 用户明确选择窗口、身份复核、权限撤销即暂停、默认不保存帧、screen evidence 与其他来源隔离                         |
+| Frozen/Deferred  | 实时与商业能力                           | 实时采集/ASR/翻译/diarization、checkpoint、浮窗、独立会议工作区、structured visuals、DOCX/PDF、签名和商业分发    |
 
-Docling 的进程/依赖攻击面已由 PR #14 隔离；它不成为第一份 transcript-only 纪要的前置条件。真实外部数据流只能在合并最小 Consent 的 `feat/summary-provider-deepseek` 中引入，正式纪要页面由 `feat/summary-mode-minutes` 集成。一个功能 PR 可以同时包含必要的 Data/API/UI，但不得把无关的转录持久化、外部 AI、文件解析或其他信任边界混入同一能力。
+Docling 的进程/依赖攻击面已由 PR #14 隔离；它不成为第一份 transcript-only 纪要的前置条件。真实外部数据流已被限制在合并最小 Consent 的 Rust DeepSeek 边界内，正式纪要页面由下一阶段 `feat/summary-mode-minutes` 集成。一个功能 PR 可以同时包含必要的 Data/API/UI，但不得把无关的转录持久化、外部 AI、文件解析或其他信任边界混入同一能力。
 
 ## 16. 安全验收门槛
 

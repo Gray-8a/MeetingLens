@@ -27,7 +27,7 @@
     },
     "privacy": {
       "title": "本地优先",
-      "body": "转录保留在本地；此预览版不会录音，也不会调用外部 AI。"
+      "body": "转录默认保留在本地；只有你明确确认冻结的 Summary run 后，Rust 才会发送到固定 DeepSeek。录音保持关闭，正式“生成”入口尚未开放。"
     },
     "runtime": {
       "service": "服务",
@@ -89,7 +89,7 @@
   "home": {
     "eyebrow": "本地会议工作台",
     "title": "从你需要的会议结果开始。",
-    "description": "现在可以检查已有转录。此预览版仍不会录音、翻译或调用外部 AI。",
+    "description": "现在可以检查已有转录。录音和翻译保持关闭；正式“生成”入口尚未开放，Rust 只有在明确确认后才能连接固定 DeepSeek。",
     "newMeeting": "新建会议",
     "statusSummary": "会议状态摘要",
     "metrics": {
@@ -363,10 +363,10 @@
       "ready": "本地数据库已就绪",
       "unavailable": "本地数据库不可用"
     },
-    "providerRuntime": "Provider 运行环境",
+    "providerRuntime": "预览版 Provider 适配器",
     "providerModeMock": "模拟",
     "providerNotEnabled": "未启用",
-    "providerHelp": "模拟 Provider 只使用内存中的合成数据，不会访问设备、文件或外部 AI。",
+    "providerHelp": "这些界面预览适配器仍只使用合成 Mock。持久纪要由下方所示的 Rust DeepSeek 路径执行，WebView 不能选择 Provider。",
     "providerKind": {
       "capture": "采集",
       "transcription": "转录",
@@ -395,7 +395,20 @@
       "deleteQuestion": "从当前 Windows 账户中删除已保存的 API Key？",
       "saved": "API Key 已保存到本地安全存储。",
       "deleted": "已删除保存的 API Key。",
-      "defaultHelp": "凭据保存在 Windows 凭据管理器中，AI 功能尚未启用。",
+      "defaultHelp": "凭据保存在 Windows 凭据管理器中，正式纪要生成界面尚未开放。",
+      "externalSharing": "转录外发",
+      "consentChecking": "正在检查 DeepSeek 外发选择…",
+      "provider": "Provider",
+      "host": "目标域名",
+      "model": "模型",
+      "rememberedConsent": "已记住的选择",
+      "consentRemembered": "已记住",
+      "consentNotRemembered": "未记住",
+      "consentedAt": "记住时间",
+      "revokeConsent": "撤销外发同意",
+      "revokingConsent": "正在撤销…",
+      "revokeHelp": "撤销会清除已记住的同意和所有尚未使用的本次同意；它只影响未来发送，无法召回 DeepSeek 已收到的转录内容。",
+      "consentRevoked": "已撤销外发同意，未来发送将再次要求确认。",
       "status": {
         "checking": "正在检查安全存储…",
         "unconfigured": "未配置",
@@ -405,6 +418,44 @@
       }
     },
     "openHelp": "打开预览版帮助"
+  },
+  "summaryConsent": {
+    "close": "关闭且不发送",
+    "title": "将这份冻结转录发送给 DeepSeek？",
+    "description": "MeetingLens 准备仅发送当前所选 Summary run 的冻结转录快照，用于生成结构化纪要。",
+    "provider": "Provider",
+    "host": "目标域名",
+    "model": "模型",
+    "sources": "转录来源数",
+    "segments": "转录片段数",
+    "inputSize": "转录大小",
+    "template": "纪要模板",
+    "outputLanguage": "输出语言",
+    "templateValue": {
+      "detailed": "详细",
+      "concise": "简洁",
+      "actions_decisions": "行动项与决定"
+    },
+    "outputLanguageValue": {
+      "zh": "中文",
+      "en": "英文",
+      "bilingual": "中英双语"
+    },
+    "dataTitle": "将发送的数据",
+    "dataCategory": {
+      "transcript_text": "冻结的转录正文",
+      "speaker_labels_and_names": "说话人标签和说话人姓名",
+      "time_offsets": "转录时间偏移",
+      "evidence_ids": "仅限当前 run 的证据引用 ID 与转录顺序",
+      "summary_template": "所选纪要模板",
+      "output_language": "所选输出语言"
+    },
+    "notSent": "本次请求不会发送本地文件路径、本地数据库、API Key 到 WebView、原始音频、屏幕内容或 Docling 文档内容。",
+    "warning": "请求到达 DeepSeek 后，MeetingLens 无法召回已经发送的内容。",
+    "remember": "记住此选择，用于未来的 DeepSeek 转录外发。你可以随时在设置中撤销。",
+    "confirming": "正在确认…",
+    "confirmRemembered": "记住选择并继续",
+    "confirmOnce": "本次同意并继续"
   },
   "document": {
     "meetingFiles": "会议文件",
@@ -462,15 +513,15 @@
     "availableTitle": "当前可用功能",
     "availableBody": "你可以使用总结模式粘贴或导入 UTF-8 TXT、SRT、VTT 转录，分批检查片段，修正正文和说话人名称，并在本地管理转录来源。现有模拟会议和文档流程继续可用。",
     "unavailableTitle": "尚未提供的功能",
-    "unavailableBody": "真实 AI 纪要、DeepSeek 调用、录音、实时转录、屏幕捕获、说话人分离、实时翻译、视频导入和 Docling 产品编排尚未实现。",
+    "unavailableBody": "面向用户的 DeepSeek 生成和正式 AI 纪要结果、录音、实时转录、屏幕捕获、说话人分离、实时翻译、视频导入及 Docling 产品编排尚未开放。Rust-only DeepSeek Provider 与 Consent 底层已经实现，但“生成”仍保持禁用。",
     "quickStartTitle": "快速开始",
     "quickStartBody": "打开总结模式，粘贴记录或选择 TXT、SRT、VTT 转录，然后检查来源并修正规范化片段。纪要生成仍处于禁用状态。",
     "filesTitle": "会议材料",
     "filesBody": "打开一个会议并使用“添加文件”。允许的文件会复制到应用私有存储，删除副本不会改变源文件。Docling 尚未连接到此界面。",
     "deepseekTitle": "DeepSeek Key",
-    "deepseekBody": "在“设置”中将 Key 保存到 Windows 凭据管理器。WebView 无法读回其值，此预览版也没有真实的 DeepSeek Provider 使用它。",
+    "deepseekBody": "在“设置”中将 Key 保存到 Windows 凭据管理器。WebView 无法读回其值。Rust-only DeepSeek Provider 仅在执行已冻结且明确确认的 Summary run 时消费 Key；当前面向用户的“生成”入口尚未接线。",
     "privacyTitle": "隐私与本地存储",
-    "privacyBody": "已提交的转录片段保留在 MeetingLens 私有本地存储中；未提交的粘贴文本会在取消或保存后清除，源路径不会进入 WebView，转录也不会发送给外部 AI。",
+    "privacyBody": "已提交的转录片段保留在 MeetingLens 私有本地存储中；未提交的粘贴文本会在取消或保存后清除，源路径不会进入 WebView。当前面向用户的“生成”入口保持禁用；Rust Provider 只有在明确确认后才能发送冻结的转录范围。",
     "faqTitle": "常见问题",
     "faqBody": "更改界面语言不会翻译转录内容，也不会改变未来纪要输出语言。清除 WebView 存储只会重置界面语言偏好，不会删除本地会议或转录。",
     "feedbackTitle": "问题反馈",
@@ -531,6 +582,41 @@
       "secret_access_denied": "安全存储拒绝访问。",
       "secret_unsupported_platform": "此平台不支持安全本地存储。",
       "internal_error": "MeetingLens 无法完成此操作。"
+    },
+    "summary": {
+      "deepseek_access_denied": "DeepSeek 拒绝访问此请求。",
+      "deepseek_api_key_missing": "发送前请先配置 DeepSeek API Key。",
+      "deepseek_auth_failed": "DeepSeek 无法验证此请求，请检查已保存的 API Key。",
+      "deepseek_consent_invalid": "DeepSeek 外发确认已失效，请重新查看并确认。",
+      "deepseek_consent_required": "发送前请先查看并确认 DeepSeek 外发详情。",
+      "deepseek_content_filtered": "DeepSeek 无法返回这份纪要。",
+      "deepseek_insufficient_balance": "DeepSeek 账户余额不足。",
+      "deepseek_model_unavailable": "已配置的 DeepSeek 模型当前不可用。",
+      "deepseek_network_failed": "MeetingLens 无法连接 DeepSeek。",
+      "deepseek_output_truncated": "DeepSeek 返回的纪要不完整。",
+      "deepseek_rate_limited": "DeepSeek 请求过多，请稍后重试。",
+      "deepseek_request_invalid": "DeepSeek 拒绝了此纪要请求。",
+      "deepseek_response_empty": "DeepSeek 返回了空响应。",
+      "deepseek_response_invalid": "DeepSeek 返回了无效响应。",
+      "deepseek_service_unavailable": "DeepSeek 服务暂时不可用。",
+      "deepseek_timeout": "DeepSeek 未能及时响应。",
+      "summary_input_insufficient": "所选转录来源中没有可用的最终片段。",
+      "summary_input_too_large": "所选纪要输入超过大小限制。",
+      "summary_provider_input_too_large": "所选转录超过 DeepSeek 输入大小限制。",
+      "summary_evidence_invalid": "纪要包含无效的证据引用。",
+      "internal_error": "MeetingLens 无法完成此操作。",
+      "summary_invalid_input": "纪要请求无效。",
+      "summary_invalid_state": "当前状态下无法更改此 Summary run。",
+      "meeting_invalid_state": "当前会议状态下无法生成纪要。",
+      "meeting_not_found": "未找到此会议。",
+      "summary_persistence_failed": "无法保存此 Summary run。",
+      "summary_provider_failed": "纪要 Provider 无法完成此 Summary run。",
+      "summary_provider_output_invalid": "纪要 Provider 返回了无效结果。",
+      "summary_revision_conflict": "此纪要 revision 已不是最新状态。",
+      "summary_run_not_found": "未找到此 Summary run。",
+      "summary_segment_limit_exceeded": "所选纪要输入包含过多转录片段。",
+      "summary_snapshot_missing": "冻结的纪要输入不可用。",
+      "summary_source_not_found": "未找到某个所选转录来源。"
     },
     "provider": {
       "provider_not_ready": "Provider 尚未就绪。",

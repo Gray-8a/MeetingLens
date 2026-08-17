@@ -3,6 +3,7 @@ import { createContext, useContext, type ReactNode } from "react";
 import { documentApi, type DocumentApi } from "../api/document";
 import { meetingApi, type MeetingApi } from "../api/meeting";
 import { secretApi, type SecretApi } from "../api/secret";
+import { summaryApi, type SummaryApi } from "../api/summary";
 import { transcriptApi, type TranscriptApi } from "../api/transcript";
 import { checkSidecarHealth, type SidecarStatus } from "../lib/sidecar";
 import { ProviderRegistry } from "../providers/runtime";
@@ -11,6 +12,7 @@ export interface AppServices {
   documentApi: DocumentApi;
   meetingApi: MeetingApi;
   secretApi: SecretApi;
+  summaryApi: SummaryApi;
   transcriptApi: TranscriptApi;
   checkSidecarHealth: () => Promise<SidecarStatus>;
   providers: ProviderRegistry;
@@ -22,6 +24,7 @@ export function createDefaultAppServices(): AppServices {
     documentApi,
     meetingApi,
     secretApi,
+    summaryApi,
     transcriptApi,
     checkSidecarHealth,
     providers: new ProviderRegistry(),

@@ -16,7 +16,7 @@
 | 翻译模式 | Frozen/Deferred  | 若未来解冻，复用同一转录管线                 | 原文/译文字幕、阶段摘要和会后纪要           |
 | 会议模式 | Frozen/Deferred  | 若未来解冻，复用录音/转录与可选窗口上下文    | 阶段记录和同一 Summary pipeline 的最终纪要  |
 
-模式只是界面布局和能力默认值，不创建三套数据模型或状态机。未来解冻翻译或会议能力时，底层仍复用统一的来源、转录片段、快照、证据和摘要对象。当前不预先确定独立 Consent schema；最小外发确认状态由 DeepSeek Provider 实现阶段决定。
+模式只是界面布局和能力默认值，不创建三套数据模型或状态机。未来解冻翻译或会议能力时，底层仍复用统一的来源、转录片段、快照、证据和摘要对象。schema v5 只为 DeepSeek 的“记住我的选择”增加最小 `provider_consent_preferences` 当前偏好表；一次性确认仍是按 run 绑定、10 分钟有效、单次消费的 Rust 内存状态，不建立通用 Consent schema 或审计事件模型。
 
 `draft/recording/ready` 等内部状态只用于数据一致性和错误处理，普通用户界面必须使用“尚未开始、会议中、已结束、正在删除”等可理解文案；不得把内部枚举作为三个模式的主要导航或操作名称。
 
@@ -26,8 +26,8 @@
 进入总结模式
 → 粘贴或导入 TXT/SRT/VTT
 → 预览并修正规范化 transcript segments
-→ 确认第一次 DeepSeek 外发或使用已记住的选择
 → 冻结最终纪要输入快照
+→ 确认第一次 DeepSeek 外发或使用已记住的选择
 → 生成、核验并修改正文
 → 复制或保存 Markdown
 → 保留或完整删除
@@ -41,8 +41,8 @@ Personal Edition 首先把总结模式做成真实可用闭环：
 
 1. 粘贴严格 UTF-8 文本，或通过 Rust 原生选择器导入 TXT、SRT、VTT。
 2. 预览片段、时间范围和已有说话人标签；允许手动修正标签。
-3. 选择纪要模板和输出语言；第一次准备发送给 DeepSeek 时，显示外部 Provider 与所选转录范围，并提供本次同意、记住我的选择或取消；没有有效确认时 fail closed。
-4. 从不可变输入快照生成会议纪要，关键决定、行动项和争议链接到原始片段。
+3. 选择纪要模板和输出语言，由 Rust 在本地创建 queued run 并冻结不可变快照；冻结不读取 Key 或发起网络。
+4. 第一次准备发送该快照时，显示固定外部 Provider 与冻结范围，并提供本次同意、记住我的选择或取消；没有有效确认时 fail closed。授权后从该快照生成会议纪要，关键决定、行动项和争议链接到原始片段。
 5. 查看纪要、修改正文、保存当前结果、复制或保存 Markdown；整份重新生成创建同一 series 的新 revision，不覆盖旧 revision。
 6. 日常可用闭环完成后，先加入录音文件的本地批量转录，再接入简化 Docling 编排与 document evidence；可选窗口上下文只有在用户确认真实需求后启动。
 
@@ -50,9 +50,9 @@ Personal Edition 首先把总结模式做成真实可用闭环：
 
 计划中的简化 Docling 编排只负责调用已有 Worker、生成 document chunks/evidence、失败自动重试一次，并在再次失败时提示用户手动重新导入；当前不建设通用任务调度器、多级恢复、长期 checkpoint 或企业监控面板。
 
-PR #20 已完成上述第 1–2 步：总结模式是首页唯一可进入的三模式入口，翻译模式和会议模式在当前 UI 显示“即将推出”，但路线状态现为 Frozen/Deferred；用户可以粘贴或通过 Rust 原生选择器导入转录、查看来源、分页检查片段、修正正文和说话人显示名称。`feat/summary-run-core` 已由 PR #21 完成，只在开发/API 边界加入 schema v4、run/series/revision、完整正文快照、evidence allowlist 与 Rust zero-network Mock；PR #22 已同步其完成状态。普通用户生成按钮继续禁用，不调用网络，也不能暗示 DeepSeek 或真实 AI 已运行。唯一下一阶段是 `feat/summary-provider-deepseek`，最小 Consent 与 Provider 在同一阶段实现。
+PR #20 已完成上述第 1–2 步：总结模式是首页唯一可进入的三模式入口，翻译模式和会议模式在当前 UI 显示“即将推出”，但路线状态现为 Frozen/Deferred；用户可以粘贴或通过 Rust 原生选择器导入转录、查看来源、分页检查片段、修正正文和说话人显示名称。PR #21 的 schema v4 Run Core 保留 run/series/revision、完整正文快照、evidence allowlist 与 Rust zero-network Mock 历史基础；`feat/summary-provider-deepseek` 在其上增加 schema v5、固定 Rust DeepSeek Provider、SecretStore 消费、严格结果校验、一次性/记住/撤销确认、取消和稳定错误。普通用户生成按钮仍禁用，因此当前页面不会触发真实请求；正式接线和结果页是唯一下一阶段 `feat/summary-mode-minutes`。
 
-PR #21 合并后的 core 固定 `final/manual`，运行状态是 queued/running/completed/failed/cancelled；异常退出后遗留 running 以 `summary_interrupted` 失败恢复。八个 Summary commands 和集中式 `summaryApi` 只提供最小开发边界，不等于正式纪要页面、Consent 或真实 Provider 已开放。
+Run core 继续固定 `final/manual`，运行状态是 queued/running/completed/failed/cancelled；异常退出后遗留 running 以 `summary_interrupted` 失败恢复。集中式 `summaryApi` 固定为十二个方法：既有八个 run/policy/evidence commands，加上 Provider 状态、disclosure、确认和撤销四个 commands。可复用 Consent Dialog 与 Settings 状态已经实现，但不等于正式纪要页面或生成入口已开放。
 
 单个来源最多允许 20,000 个 segments，检查页面必须使用后端稳定分页且单页不超过 200 条，不能在 React 中加载全量后切片。单个 Summary run 跨来源最多冻结 20,000 个 final segments 和 10 MiB UTF-8 正文，超限、空输入、重复或跨 meeting source 整体拒绝，不截断。用户可以为当前 source 中相同 `speaker_label` 批量设置或清空 `speaker_name`；该操作保留原始 label、逐条递增 revision、不跨 source/meeting，也不是说话人分离、真实身份推断或跨会议声纹。
 
@@ -104,7 +104,7 @@ Summary run 的正文快照在普通编辑和重生成期间不可变；重新�
 
 ## 6. 权限、隐私与降级
 
-应用启动时不自动申请录音或屏幕权限。当前 Personal Edition 的下一阶段只引入最小 DeepSeek 外发确认：第一次准备发送用户本次选择的转录内容时，必须说明外部 Provider、数据类型和范围，并提供本次同意、记住我的选择或取消；没有有效确认时 fail closed。最小状态只服务单人自用，不是企业合规审计体系。
+应用启动时不自动申请录音或屏幕权限。当前最小 DeepSeek 外发确认由 Rust 执行最终授权：发送前必须说明固定 Provider、host、model、数据类型和冻结范围，并提供本次同意、记住我的选择或取消；没有有效确认、Key 或可发送输入时 fail closed。设置页可撤销 remembered Consent，撤销只影响后续发送且清除所有尚未消费的一次性确认。该状态只服务单人自用，不是企业合规审计体系。
 
 以下实时能力当前 Frozen/Deferred；未来如解冻，仍必须分别解释并分别获得本次会话同意：
 
@@ -153,4 +153,4 @@ Summary run 的正文快照在普通编辑和重生成期间不可变；重新�
 
 ## 9. 交付顺序
 
-权威分支顺序、每个 PR 的停止线和风险分级验收见 `DEVELOPMENT_PLAN.md`。当前顺序是 `docs/personal-edition-descope` → `feat/summary-provider-deepseek`（含最小 Consent）→ `feat/summary-mode-minutes`（日常可用）→ `feat/audio-file-transcription` → `feat/document-parsing-orchestration` → 可选 `feat/window-context`。未来 PR 编号只表示预期顺序，分支名和能力范围才是权威标识。实时采集/ASR、说话人分离、实时翻译、checkpoint、浮窗、独立翻译/会议工作区、Structured Visuals、商业分发及 DOCX/PDF 保持 Frozen/Deferred。
+权威分支顺序、每个 PR 的停止线和风险分级验收见 `DEVELOPMENT_PLAN.md`。`docs/personal-edition-descope` 已完成，当前 DeepSeek Provider/最小 Consent 交付完成后，唯一下一阶段是 `feat/summary-mode-minutes`（日常可用），随后为 `feat/audio-file-transcription` → `feat/document-parsing-orchestration` → 可选 `feat/window-context`。未来 PR 编号只表示预期顺序，分支名和能力范围才是权威标识。不得恢复独立 `feat/consent-data-core`；实时采集/ASR、说话人分离、实时翻译、checkpoint、浮窗、独立翻译/会议工作区、Structured Visuals、商业分发及 DOCX/PDF 保持 Frozen/Deferred。

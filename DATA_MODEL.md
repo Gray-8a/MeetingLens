@@ -10,7 +10,7 @@ MeetingLens 当前采用 Personal Edition 基线，近期只推进总结模式�
 - 外键级联只处理结构化引用，不能替代物理文件的可恢复删除协调。
 - AI 输出始终带模型、模板版本和来源范围，允许重建与审计。
 - API key、access token 和密码不属于业务数据模型，禁止写入数据库。
-- 总结、翻译和会议模式的长期愿景只是界面/能力预设，不建立三套实体或状态机；当前 schema v4 不包含 Consent 表，下一阶段的最小外发确认持久化由 Rust DeepSeek Provider PR 根据实际实现决定。
+- 总结、翻译和会议模式的长期愿景只是界面/能力预设，不建立三套实体或状态机；schema v5 只追加 DeepSeek remembered Consent 的最小当前偏好表，不建立通用事件、会话或企业审计模型。
 - 原始音频、规范化逐字稿和会议纪要是三个不同的数据类别，分别拥有同意、保留、导出和删除语义。
 
 ## 2. 实体关系
@@ -38,7 +38,7 @@ erDiagram
     MEETING ||--o{ PROCESSING_JOB : runs
 ```
 
-上图同时包含已实现实体和明确标注为计划/Deferred 的概念实体。当前 SQLite schema 版本为 v4；实际已实现范围以各节的 schema 版本说明和第 8 节为准，不能从概念关系图推断未来表已经存在。
+上图同时包含已实现实体和明确标注为计划/Deferred 的概念实体。当前 SQLite schema 版本为 v5；实际已实现范围以各节的 schema 版本说明和第 8 节为准，不能从概念关系图推断未来表已经存在。`provider_consent_preferences` 是与单个 meeting 无关联的全局当前偏好，因此不画成 meeting 子实体。
 
 ## 3. 核心表
 
@@ -58,7 +58,7 @@ erDiagram
 | `deleted_at`           | TEXT NULL | 软删除/清理协调标记                                                       |
 | `deletion_error_code`  | TEXT NULL | 删除失败的稳定安全错误码，不含路径或原始异常                              |
 
-当前 schema v4（该 meeting 结构源自早期 schema，v3/v4 未增加此字段）没有独立、可编辑的会议发生日期字段。`created_at` 只表示 MeetingLens 创建该记录的时间，`started_at/ended_at` 只由真实或模拟会议生命周期写入；总结模式输入 UI 可以将 `created_at` 明确展示为创建时间，但不得把它冒充会议发生日期，也不得提供无法持久化的日期输入。若以后需要 `occurred_at` 或等价语义，必须在对应功能 PR 中定义追加式 migration、API、UI 和验收，不得改写既有 migration。
+当前 schema v5（该 meeting 结构源自早期 schema，v3–v5 未增加此字段）没有独立、可编辑的会议发生日期字段。`created_at` 只表示 MeetingLens 创建该记录的时间，`started_at/ended_at` 只由真实或模拟会议生命周期写入；总结模式输入 UI 可以将 `created_at` 明确展示为创建时间，但不得把它冒充会议发生日期，也不得提供无法持久化的日期输入。若以后需要 `occurred_at` 或等价语义，必须在对应功能 PR 中定义追加式 migration、API、UI 和验收，不得改写既有 migration。
 
 #### 会议生命周期
 
@@ -80,9 +80,9 @@ erDiagram
 
 #### 模式提示
 
-当前 schema v4 不持久化模式，总结模式入口只是导航到共享 meeting/transcript 工作区。`workflow_mode` 之类的布局提示不属于当前计划；若未来解冻三模式，只能通过追加式 migration 在对应功能 PR 中评估，且不得决定权限、同意、数据保留或会议状态。本次重新定基线不决定任何新字段。
+当前 schema v5 不持久化模式，总结模式入口只是导航到共享 meeting/transcript 工作区。`workflow_mode` 之类的布局提示不属于当前计划；若未来解冻三模式，只能通过追加式 migration 在对应功能 PR 中评估，且不得决定权限、同意、数据保留或会议状态。
 
-### `artifacts`（Deferred 概念实体，当前 schema v4 不存在）
+### `artifacts`（Deferred 概念实体，当前 schema v5 不存在）
 
 | 字段            | 类型      | 说明                                 |
 | --------------- | --------- | ------------------------------------ |
@@ -99,7 +99,7 @@ erDiagram
 
 `relative_path` 不接受 `..`、盘符、UNC 或绝对路径。原始文件名只用于用户界面显示，并经过长度与控制字符清理。
 
-实时采集产生的音频 artifact 与其独立 `store_audio` grant 当前为 Deferred；若未来解冻，仍须默认不长期保存，并沿用 `ephemeral/user_managed/pinned` 的明确保留和协调删除语义。近期录音文件转录是用户主动导入后的批量处理功能，其最小持久化设计留给 `feat/audio-file-transcription`，本次不新增字段或修改 schema v4。
+实时采集产生的音频 artifact 与其独立 `store_audio` grant 当前为 Deferred；若未来解冻，仍须默认不长期保存，并沿用 `ephemeral/user_managed/pinned` 的明确保留和协调删除语义。近期录音文件转录是用户主动导入后的批量处理功能，其最小持久化设计留给 `feat/audio-file-transcription`，当前不新增对应字段。
 
 ### `participants`（Deferred 概念实体）
 
@@ -135,7 +135,7 @@ erDiagram
 | `created_at`        | TEXT      | 创建时间                                                                      |
 | `updated_at`        | TEXT      | 最近更新时间                                                                  |
 
-当前实现 `pasted_text/imported_txt/imported_srt/imported_vtt`；`live_asr` 是既有 schema v3 的预留类型，但实时 ASR 当前为 Deferred。录音文件批量转录必须复用既有 transcript 关系；若需要扩展枚举，只能在该功能 PR 中追加 migration，不能复用或改写 v3/v4。`platform_export` 只是保留类型，取得脱敏真实平台样例并实现专用 adapter 前不得对外宣称支持。第一版不长期复制 TXT/SRT/VTT 原始文件，只保存规范化 segments 与上述来源元数据；重新解析需要用户重新导入，用户源文件不被修改或删除。
+当前实现 `pasted_text/imported_txt/imported_srt/imported_vtt`；`live_asr` 是既有 schema v3 的预留类型，但实时 ASR 当前为 Deferred。录音文件批量转录必须复用既有 transcript 关系；若需要扩展枚举，只能在该功能 PR 中追加 migration，不能复用或改写 v3–v5。`platform_export` 只是保留类型，取得脱敏真实平台样例并实现专用 adapter 前不得对外宣称支持。第一版不长期复制 TXT/SRT/VTT 原始文件，只保存规范化 segments 与上述来源元数据；重新解析需要用户重新导入，用户源文件不被修改或删除。
 
 ### `transcript_segments`（schema v3）
 
@@ -174,7 +174,7 @@ segment 列表必须由 SQLite 按稳定 `ordinal` 顺序分页，不允许先�
 
 ### `screen_events`（Optional / Deferred 概念实体）
 
-该计划实体不属于 schema v3/v4。`feat/window-context` 只有在用户确认确有需要时才启动；屏幕 OCR 与实时 ASR 均为 Deferred。未来若引入屏幕上下文，不得在独立会议工作区中临时复制一套数据模型。
+该计划实体不属于 schema v3–v5。`feat/window-context` 只有在用户确认确有需要时才启动；屏幕 OCR 与实时 ASR 均为 Deferred。未来若引入屏幕上下文，不得在独立会议工作区中临时复制一套数据模型。
 
 | 字段                     | 类型         | 说明                                           |
 | ------------------------ | ------------ | ---------------------------------------------- |
@@ -239,7 +239,7 @@ schema v2 使用统一删除任务表协调 meeting/document 的文件清理：`
 
 ### `document_chunks`
 
-该计划实体将在录音文件批量转录之后，由简化的 `feat/document-parsing-orchestration` 与 document evidence 一起接入现有 Summary pipeline。它不属于 schema v3/v4，也不能替代 `transcript_segments`；具体 migration 只能在该功能 PR 中确定。
+该计划实体将在录音文件批量转录之后，由简化的 `feat/document-parsing-orchestration` 与 document evidence 一起接入现有 Summary pipeline。它不属于 schema v3–v5，也不能替代 `transcript_segments`；具体 migration 只能在该功能 PR 中确定。
 
 | 字段           | 类型         | 说明                         |
 | -------------- | ------------ | ---------------------------- |
@@ -308,7 +308,7 @@ schema v4 首先只创建 transcript evidence；document、screen 和 manual not
 | `created_at`   | TEXT      | 创建时间                   |
 | `updated_at`   | TEXT      | 最近更新时间               |
 
-`(source_id, source_label)` 唯一。若未来解冻实时工作区，只能通过该映射统一显示改名，不能批量覆写历史 segment 的原始 `speaker_label`；默认不跨会议复用名称或身份。它不属于 schema v3/v4，当前不安排独立 live-language 或 speaker-diarization 数据阶段。
+`(source_id, source_label)` 唯一。若未来解冻实时工作区，只能通过该映射统一显示改名，不能批量覆写历史 segment 的原始 `speaker_label`；默认不跨会议复用名称或身份。它不属于 schema v3–v5，当前不安排独立 live-language 或 speaker-diarization 数据阶段。
 
 ### `manual_notes`（Frozen / Deferred 概念实体）
 
@@ -344,9 +344,9 @@ schema v4 首先只创建 transcript evidence；document、screen 和 manual not
 | `template`                          | TEXT      | `detailed/concise/actions_decisions`                      |
 | `output_language`                   | TEXT      | `zh/en/bilingual`                                         |
 | `status`                            | TEXT      | 独立 Summary run 状态                                     |
-| `provider`                          | TEXT      | 当前固定 `deterministic_mock`                             |
-| `provider_mode`                     | TEXT      | 当前固定 `mock`；schema 预留 `local/external`             |
-| `model`                             | TEXT      | 实际 Mock 模型标识                                        |
+| `provider`                          | TEXT      | production 固定 `deepseek`；历史 Mock 值继续可读          |
+| `provider_mode`                     | TEXT      | production 固定 `external`；历史 Mock 为 `mock`           |
+| `model`                             | TEXT      | production 固定 `deepseek-v4-pro`                         |
 | `prompt_version`                    | TEXT      | 提示/结果契约版本                                         |
 | `content_json`                      | TEXT NULL | 完成后写入、最大 1 MiB 的版本化结构化结果                 |
 | `error_code`                        | TEXT NULL | 失败时的稳定安全错误码                                    |
@@ -365,6 +365,8 @@ schema v4 首先只创建 transcript evidence；document、screen 和 manual not
 | `updated_at`                        | TEXT      | 最近状态更新时间                                          |
 
 `(series_id, revision)` 唯一，同一 series 同时最多一个 queued/running run；revision 1 没有 previous，后续 revision 的四列复合自外键把 `previous_summary_id` 约束为同一会议、同一 series、恰好前一 revision。Rust Service 在 IMMEDIATE 事务内额外保证 parent 已终态且仍是 latest，并重新冻结当前 live revisions，不能覆盖旧结果。状态字段与 result/error/timestamp 使用组合 `CHECK`：只有 completed 可含 `content_json`，failed 必须含安全 `error_code`，terminal 必须有 `finished_at`。正常状态机是 `queued → running → completed/failed/cancelled` 和 `queued → cancelled`；启动恢复把遗留 `running` 原子转为 `failed + summary_interrupted`，不自动重放 Provider。
+
+schema v4 的通用快照约束仍允许最多 10 MiB，以保持已存在 run 可读；当前 production DeepSeek policy 只允许 1 MiB。读取历史或已经冻结的较大 run 不因新策略而损坏，但执行超过 DeepSeek 上限的 run 在网络前以 `summary_provider_input_too_large` fail closed。
 
 Summary run 和 evidence 列表均使用有界 keyset 分页，默认 50、最大 100；run cursor 是上一页最后一个 run UUID，排序固定为 `created_at DESC, id ASC`，evidence cursor 是上一页最后一个 `global_ordinal`。Tauri wire DTO（包括嵌套结构化结果）统一 camelCase。并发 stale base 返回 `summary_revision_conflict`，未知、重复或跨 run evidence 返回 `summary_evidence_invalid`。
 
@@ -442,7 +444,7 @@ Checkpoint 功能当前为 Frozen / Deferred。若未来解冻，仍首先只允
 
 ### `processing_jobs`（Deferred 通用调度概念）
 
-当前 schema v4 不包含通用处理任务调度器。简化的 Docling 编排只要求调用现有 Worker、失败自动重试一次、再次失败后提示用户手动重新导入；不以本表作为近期前置设计。
+当前 schema v5 不包含通用处理任务调度器。简化的 Docling 编排只要求调用现有 Worker、失败自动重试一次、再次失败后提示用户手动重新导入；不以本表作为近期前置设计。
 
 | 字段            | 类型      | 说明                                             |
 | --------------- | --------- | ------------------------------------------------ |
@@ -458,11 +460,19 @@ Checkpoint 功能当前为 Frozen / Deferred。若未来解冻，仍首先只允
 | `started_at`    | TEXT NULL | 开始时间                                         |
 | `finished_at`   | TEXT NULL | 结束时间                                         |
 
-### 最小外发确认（下一阶段，持久化待定）
+### `provider_consent_preferences`（schema v5）
 
-当前 schema v4 不存在通用 Consent 表，也不再安排独立 Consent Data Core schema PR。`feat/summary-provider-deepseek` 将在同一功能阶段实现第一次外发前的明确确认，提供“本次同意”“记住我的选择”和“取消”；没有有效确认时必须 fail closed。
+| 字段                 | 类型    | 说明                                                              |
+| -------------------- | ------- | ----------------------------------------------------------------- |
+| `provider`           | TEXT PK | 当前只允许 `deepseek`；每个 Provider 最多一行当前 remembered 偏好 |
+| `policy_version`     | TEXT    | 固定 `deepseek-transcript-external-v1`                            |
+| `policy_fingerprint` | TEXT    | 64 位小写 SHA-256，覆盖 Provider/host/model/version/数据类别顺序  |
+| `consented_at`       | TEXT    | 用户记住选择的 UTC 时间                                           |
+| `updated_at`         | TEXT    | 最近更新 UTC 时间，且不早于 `consented_at`                        |
 
-最小确认只保存实现所需的最少时间或状态，不包含凭据、转录正文、绝对路径或 Provider 响应；具体持久化方式和字段必须由 DeepSeek Provider PR 根据实际边界确定，本次文档重新定基线不预先决定 schema。该设计只面向单人 Personal Edition，不足以作为团队、客户或公众分发时的企业合规审计体系。
+该表只表示当前 remembered Consent，不是事件或审计日志。它不保存 summary/meeting/source ID、transcript、evidence excerpt、Prompt、Provider response、API Key、SecretStore target 或路径；撤销即删除该行。policy version 或 fingerprint 不再匹配时旧行不再授权。一次性确认不写入 SQLite：它按 summary run 绑定，在 Rust 进程内最多保留 10 分钟、只能消费一次且应用重启后失效；撤销同时清除所有尚未消费的一次性确认。没有有效确认时执行 fail closed。
+
+该设计只面向单人 Personal Edition，不足以作为团队、客户或公众分发时的企业合规审计体系；不得据此恢复独立 `feat/consent-data-core` 或通用 `consent_events`。
 
 ## 4. SQLite 约束与索引
 
@@ -471,6 +481,7 @@ Checkpoint 功能当前为 Frozen / Deferred。若未来解冻，仍首先只允
 - schema v2 已建立 `idx_documents_meeting_status`、`idx_documents_meeting_sha256`、两个 deletion job partial unique indexes 和 `idx_deletion_jobs_status`。
 - schema v3 已建立 `transcript_sources`/`transcript_segments` 及同会议来源哈希、source ordinal、meeting/source 查询索引。
 - schema v4 已由 PR #21 的 Summary Run Core 创建 `summaries`、`summary_sources` 和 transcript-only `evidence_items`。关键索引包括 `(series_id, revision)` 唯一约束、direct-previous lineage、每个 series 最多一个 active run 的 partial unique index、meeting/created、status/updated、meeting/stale、live source/segment snapshot 查询以及 evidence 的 summary/global ordinal 查询。
+- schema v5 追加无 rowid 的 `provider_consent_preferences`；`provider` 主键与固定值约束使当前只存在一行 DeepSeek remembered 偏好，不增加正文索引或通用 Consent 关系。
 - `documents(meeting_id, sha256)` 对非 NULL 哈希使用唯一约束，确保同一会议内容去重；跨会议不共享物理副本。
 - 状态字段使用 `CHECK` 约束或迁移层枚举校验。
 - 所有迁移在事务中执行，并在 schema 版本表中记录。
@@ -521,7 +532,7 @@ MVP 1A-2-1 的当前无文件删除状态契约固定如下：
 | 未知状态        | fail closed                                     |
 
 1. 接受请求时在事务中将会议设为 `deleting`、写入 `deleted_at` tombstone，并禁止编辑、开始、导入或生成纪要。
-2. 持久化协调状态必须能枚举原始文档、schema v4 summaries/snapshots/evidence，以及未来解析、音频、转写、译文、speaker aliases、manual notes、checkpoint、屏幕临时数据、缓存和导出产物。
+2. 持久化协调状态必须能枚举原始文档、schema v4 summaries/snapshots/evidence，以及未来解析、音频、转写、译文、speaker aliases、manual notes、checkpoint、屏幕临时数据、缓存和导出产物；schema v5 的全局 Provider 偏好不属于单场会议删除范围，用户通过设置单独撤销。
 3. 取消或等待任务并关闭句柄后，将受控文件同卷移动至应用私有 `deletion-trash`，或采用具备同等恢复能力的设计。
 4. 只有文件和派生数据清理全部成功后，才最终删除数据库记录和 tombstone。
 5. 任何步骤失败时进入 `delete_failed`，保留稳定安全错误码，不伪装成功，也不把残留重新暴露为正常会议数据。
@@ -563,7 +574,7 @@ MVP 1B-1A 已同时迁移删除实现和测试；MVP 1B-1B 的 `delete_meeting` 
 ## 8. 数据模型版本化
 
 - `schema_migrations(version, applied_at, checksum)` 记录数据库迁移。
-- 当前 `main` 的 SQLite schema 版本为 4：v1 是 meeting 数据核心；v2 以事务方式保留既有 meeting 数据并扩展删除状态，同时创建 `documents`、`deletion_jobs` 和相关索引；v3 创建 `transcript_sources` 与 `transcript_segments`；v4 创建 Summary series/run、完整 transcript snapshot 与 run-owned evidence。重复启动按 checksum 幂等跳过，冲突或中途失败 fail closed。
-- 后续 Docling parsing 或其他 migration 不得复用 v4，必须基于合并时最新版本顺序递增。
+- 当前 SQLite schema 版本为 5：v1 是 meeting 数据核心；v2 以事务方式保留既有 meeting 数据并扩展删除状态，同时创建 `documents`、`deletion_jobs` 和相关索引；v3 创建 `transcript_sources` 与 `transcript_segments`；v4 创建 Summary series/run、完整 transcript snapshot 与 run-owned evidence；v5 只创建 `provider_consent_preferences`。重复启动按 checksum 幂等跳过，冲突或中途失败 fail closed。
+- 后续 Docling parsing 或其他 migration 不得复用 v1–v5，必须基于合并时最新版本顺序递增。
 - Sidecar API 和 `content_json` 都包含独立 `api_version/schema_version`。
 - 破坏性迁移必须先备份并获得用户批准，不得自动丢弃未知字段。

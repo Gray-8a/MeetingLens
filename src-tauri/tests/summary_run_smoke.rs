@@ -57,7 +57,7 @@ fn native_summary_run_core_lifecycle_smoke() {
             .as_str(),
         "draft"
     );
-    assert_schema_and_integrity(&meetings, 4);
+    assert_schema_and_integrity(&meetings, 5);
 
     let summaries = meetings.summaries();
     let policy = summaries.policy();
@@ -230,7 +230,7 @@ fn native_summary_run_core_lifecycle_smoke() {
             .status,
         SummaryStatus::Queued
     );
-    assert_schema_and_integrity(&reopened, 4);
+    assert_schema_and_integrity(&reopened, 5);
 
     drop(summaries);
     reopened
@@ -238,7 +238,7 @@ fn native_summary_run_core_lifecycle_smoke() {
         .expect("meeting deletion should cancel active summaries and cascade");
     assert_eq!(reopened.get(&v3.meeting_id), Err(DataError::NotFound));
     assert_summary_rows(&reopened, 0);
-    assert_schema_and_integrity(&reopened, 4);
+    assert_schema_and_integrity(&reopened, 5);
     drop(reopened);
     workspace.cleanup();
 }
