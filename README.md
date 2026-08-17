@@ -1,12 +1,12 @@
 # MeetingLens
 
-MeetingLens is a privacy-first Windows desktop assistant with three simple entry modes backed by one shared session engine: Summary, Translation, and Meeting. Its first real-value path turns pasted or imported meeting transcripts into detailed, editable, evidence-linked minutes; live audio, translation, and screen context extend the same transcript pipeline in later small releases.
+MeetingLens is a privacy-first, Windows-first desktop assistant currently following a **Personal Edition** baseline. Its near-term product path turns pasted or imported meeting transcripts into detailed, editable, evidence-linked minutes that can be copied or saved as Markdown. Summary is the only mode under active near-term development; Translation and the independent Meeting workspace remain a shared-engine long-term vision that is frozen/deferred rather than deleted.
 
-PR #1–#21 are merged. The meeting data/UI foundation, Provider mocks, authenticated Sidecar boundary, Windows SecretStore, secure document import, isolated Docling Worker, transcript/summary specification, packaged zh-CN/en-US UI, Help page, bilingual preview guides, schema-v3 Transcript Data Core, safe Transcript Command API, Summary Mode Input UI, and Summary Run Core are complete. PR #21 delivered schema v4, persistent transcript snapshots, Summary series/revisions, run-owned evidence, recovery, and a Rust zero-network deterministic Mock. Docling is not connected to SQLite, Tauri commands, document state, or product UI; its product wiring remains after the transcript-only editing/export loop and before realtime capture. The next implementation stage is `feat/consent-data-core`. The user-facing Generate action remains disabled; real AI minutes, outbound consent, DeepSeek, and the formal result workspace are not available.
+PR #1–#22 are merged. The meeting data/UI foundation, Provider mocks, authenticated Sidecar boundary, Windows SecretStore, secure document import, isolated Docling Worker, transcript/summary specification, packaged zh-CN/en-US UI, Help page, bilingual preview guides, schema-v3 Transcript Data Core, safe Transcript Command API, Summary Mode Input UI, and Summary Run Core are complete. PR #21 delivered schema v4, persistent transcript snapshots, Summary series/revisions, run-owned evidence, recovery, and a Rust zero-network deterministic Mock; PR #22 aligned the completed-core status documentation. PR #23 is this documentation-only Personal Edition re-baseline. The sole planned next implementation stage is `feat/summary-provider-deepseek`, which has not been created or started and will require separate user approval; it will combine the Rust DeepSeek Provider with minimal outbound confirmation. The user-facing Generate action remains disabled; real DeepSeek requests, outbound confirmation, real AI minutes, and the formal result workspace are not available.
 
-The Provider runtime defines Capture, Transcription, Translation, Summary, and DocumentParser capability boundaries. Current implementations are explicit deterministic in-memory mocks: they do not access devices, files, or networks, and can be replaced through an application-owned Registry without changing page business logic.
+The TypeScript preview Provider runtime defines Capture, Transcription, Translation, Summary, and DocumentParser capability boundaries. Its current implementations are explicit deterministic in-memory mocks: they do not access devices, files, or networks, and can be replaced through an application-owned Registry without changing page business logic. Persistent Summary runs use the separate Rust deterministic Mock as their only current execution Provider.
 
-The three-mode user experience is authoritative in [the simplified three-mode specification](SIMPLIFIED_MODE_SPEC.md), product behavior in [the product specification](PRODUCT_SPEC.md), and implementation order in [the development plan](DEVELOPMENT_PLAN.md). Delivery first completes transcript-only Summary through editing/export, then connects Docling and document evidence without blocking the first minutes, and only then adds realtime capture/ASR, screen and window context, speaker enhancement, realtime translation, and final Translation/Meeting mode integration in separate reviewable PRs.
+The long-term three-mode vision is described in [the simplified three-mode specification](SIMPLIFIED_MODE_SPEC.md), product behavior in [the product specification](PRODUCT_SPEC.md), and the authoritative Personal Edition implementation order in [the development plan](DEVELOPMENT_PLAN.md). The shortest active route is the DeepSeek Provider with minimal consent, then the complete Summary minutes workspace, batch audio-file transcription, simplified Docling orchestration, and an optional user-confirmed window-context stage. Realtime capture/ASR, realtime translation, speaker diarization, Translation/Meeting workspaces, structured visuals, commercial distribution, and DOCX/PDF export are frozen/deferred.
 
 Development-preview user guides are available in [简体中文](docs/USER_GUIDE.zh-CN.md) and [English](docs/USER_GUIDE.en-US.md).
 
@@ -39,7 +39,7 @@ py -3.12 -m pip install --requirement requirements-dev.txt
 .\scripts\setup-docling-worker.ps1
 ```
 
-Keep development credentials in `.env`. The file is ignored by Git and must never be committed.
+Do not place real DeepSeek credentials in `.env` or environment variables. Configure the key through Settings so Rust stores it in Windows Credential Manager; any `.env` used for non-sensitive local flags must remain ignored and untracked.
 
 ## Commands
 
@@ -72,7 +72,7 @@ An unauthenticated direct request must fail closed:
 try { Invoke-WebRequest http://127.0.0.1:8765/health } catch { $_.Exception.Response.StatusCode.value__ }
 ```
 
-The current fixed port remains a development contract, but the host is locked to `127.0.0.1` and every route requires the current ephemeral token. Random ports, packaged Sidecar binaries, restart monitoring, crash recovery, and orphan cleanup remain in `feat/sidecar-supervisor`. The SecretStore is deliberately separate and is never used for the ephemeral Sidecar session token.
+The current fixed port remains a development contract, but the host is locked to `127.0.0.1` and every route requires the current ephemeral token. Random ports, packaged Sidecar binaries, restart monitoring, crash recovery, and orphan cleanup belong to the frozen/deferred realtime Sidecar stack and are not part of the current Personal Edition roadmap. The SecretStore is deliberately separate and is never used for the ephemeral Sidecar session token.
 
 ## Secure API key storage
 
@@ -90,13 +90,13 @@ Files are streamed into private staging storage, hashed with SHA-256, validated,
 
 ## Isolated document parser
 
-PR #14 established a separate Python 3.12 environment under `workers/docling`; it is not installed into the authenticated HTTP Sidecar. Rust owns the parser process and launches one request per process with a cleared environment, no network listener, bounded standard I/O, a 150-second timeout, and a 4 GiB Windows Job Object memory cap. Inputs and outputs remain beneath Rust-approved staging roots and are revalidated by size and SHA-256. Model downloads are explicit and versioned outside the repository; see [the worker guide](workers/docling/README.md). Database-backed parsing orchestration remains deferred to `feat/document-parsing-orchestration` and is not a prerequisite for transcript import or summary generation.
+PR #14 established a separate Python 3.12 environment under `workers/docling`; it is not installed into the authenticated HTTP Sidecar. Rust owns the parser process and launches one request per process with a cleared environment, no network listener, bounded standard I/O, a 150-second timeout, and a 4 GiB Windows Job Object memory cap. Inputs and outputs remain beneath Rust-approved staging roots and are revalidated by size and SHA-256. Model downloads are explicit and versioned outside the repository; see [the worker guide](workers/docling/README.md). Product parsing remains not yet implemented and is planned for the simplified `feat/document-parsing-orchestration` stage after batch audio-file transcription; it is not a prerequisite for transcript import or the first usable minutes.
 
 The validated local model inventory is 564,981,412 bytes. Windows CPU smoke currently reports every allowlisted format available with RapidOCR/ONNX Runtime, a final acceptance peak process-tree RSS of about 1.67 GB, and no network listener or residual Worker process. These capabilities are independent acceptance results; the product does not expose parsing until `feat/document-parsing-orchestration`.
 
 ## Transcript-first summary path
 
-MeetingLens supports bounded pasted UTF-8 text and Rust-owned native TXT/SRT/VTT import. Transcripts are distinct from reference documents: they use a lightweight local parser, do not require Docling, and persist normalized sources and ordered segments rather than copying the original transcript file indefinitely. Source paths never reach the WebView, and deleting a source does not change the user's original file. Platform-specific export adapters require sanitized real samples before support is claimed; video and audio-file transcription are future enhancements.
+MeetingLens supports bounded pasted UTF-8 text and Rust-owned native TXT/SRT/VTT import. Transcripts are distinct from reference documents: they use a lightweight local parser, do not require Docling, and persist normalized sources and ordered segments rather than copying the original transcript file indefinitely. Source paths never reach the WebView, and deleting a source does not change the user's original file. Platform-specific export adapters require sanitized real samples before support is claimed. Audio-file transcription is planned but not implemented; it will use a bounded one-shot local worker after the usable Summary loop. Video import remains deferred.
 
 The Summary input workspace reads segments through stable ordinal pagination with a production page limit of 200 rather than loading up to 20,000 rows at once. Users may correct text or set a display name for matching source labels; revisions prevent silent overwrites, and source-level naming preserves the original label without inferring identity. The meeting model does not yet have an independent editable occurrence date, so the UI labels `created_at` only as creation time.
 
@@ -110,7 +110,7 @@ The Summary Run Core Windows smoke is development-only and requires `VITE_SUMMAR
 
 Correcting a live segment marks dependent runs stale without changing their snapshots or results. Deleting a source used by a queued/running run is rejected; terminal-source deletion preserves only cited evidence, redacts full snapshot text and display metadata, and marks the result source-deleted/stale. Meeting deletion cancels active runs before the existing coordinator removes all summaries, snapshots, and evidence.
 
-The initial templates are detailed meeting minutes, concise meeting summary, and actions/decisions. Output can be Chinese, English, or bilingual. Before any DeepSeek request, the UI must preview selected sources, segment count, time range, speakers, template, output language, and outbound data type, and require explicit confirmation.
+The planned initial templates are detailed meeting minutes, concise meeting summary, and actions/decisions, with Chinese, English, or bilingual output. Before the first DeepSeek transmission, the UI must explain that the selected transcript content will be sent to the external DeepSeek Provider and offer consent for this request, remember my choice, or cancel. A request without valid confirmation must fail closed. The remembered state is a minimal Personal Edition convenience, not an enterprise compliance or audit system. The complete result UI remains a later `feat/summary-mode-minutes` capability.
 
 ## Project documents
 
@@ -142,21 +142,21 @@ The initial templates are detailed meeting minutes, concise meeting summary, and
 16. **Transcript command boundary — complete:** secure commands, the Rust-native picker, and atomic meeting + transcript creation (`feat/transcript-command-api`, PR #19).
 17. **Summary input UI — complete:** three-mode Home entry, paste/native import, paginated source review, and text/speaker corrections (`feat/summary-mode-input-ui`, PR #20).
 18. **Summary run core — complete:** schema v4, run/series/revision, immutable transcript snapshots, evidence allowlist, stable recovery, and Rust zero-network Mock (`feat/summary-run-core`, PR #21).
-19. **Next — consent and first real minutes:** implement `feat/consent-data-core`, then the DeepSeek Provider and result workspace as separate PRs.
-20. **Complete the transcript-only loop:** editing, revision/stale handling, section regeneration, DOCX, and history (`feat/summary-editing-export`).
-21. **Reference enrichment:** connect the completed Docling Worker, then add document evidence indexing; neither stage blocks the first transcript-only minutes.
-22. **Realtime foundation:** live-session data, Sidecar supervisor, Windows audio capture, then realtime ASR into the same transcript segments.
-23. **Screen and speaker context:** user-confirmed window/accessibility/OCR stages, followed by speaker data, diarization, and naming.
-24. **Realtime translation:** translation Provider, checkpoint summaries, topic suggestions, and the optional overlay.
-25. **Mode integration:** Translation and Meeting workspaces reuse the shared transcript, screen, evidence, minutes, history, and export pipelines.
+19. **Status alignment — complete:** Summary Run Core status and acceptance documentation (`docs/summary-run-core-status`, PR #22).
+20. **Current documentation re-baseline:** define the Personal Edition scope, shortest route, frozen capabilities, and risk-tiered acceptance (`docs/personal-edition-descope`, PR #23).
+21. **Next — real Provider:** add the Rust DeepSeek Provider, consume the key only through SecretStore, strictly parse responses, preserve the evidence allowlist, and provide minimal first-outbound confirmation with an optional remembered choice (`feat/summary-provider-deepseek`; expected PR #24).
+22. **Daily-use milestone:** add templates, Chinese/English/bilingual output, the formal results page, Markdown view/copy/save, body editing, and whole-result regeneration without overwriting earlier series revisions (`feat/summary-mode-minutes`; expected PR #25).
+23. **Batch audio transcription:** import a meeting recording and transcribe it locally through a one-shot, CPU-int8 faster-whisper worker into the existing transcript model (`feat/audio-file-transcription`; expected PR #26). This is not realtime capture, WASAPI, realtime ASR, or realtime diarization.
+24. **Simplified reference enrichment:** connect the completed Docling Worker, produce document chunks/evidence, retry one failed parse once, and otherwise ask the user to re-import (`feat/document-parsing-orchestration`; expected PR #27).
+25. **Optional window context:** start only after the user confirms a repeated real need, and only for an explicitly selected window (`feat/window-context`; expected PR #28 or later).
 
-The authoritative branch mapping, exclusions, and acceptance criteria are in [DEVELOPMENT_PLAN.md](DEVELOPMENT_PLAN.md). Database, UI, external Provider, audio, screen, and heavy-worker trust boundaries remain separate PRs. Screenpipe, if adopted, is an optional provider rather than a core dependency.
+Expected PR numbers are descriptive only; branch names and capability boundaries are authoritative. Realtime capture/ASR, the realtime Sidecar stack, realtime translation, speaker diarization, Translation/Meeting workspaces, checkpoints, structured visuals, installer/signing/SBOM/tray/auto-update work, and DOCX/PDF export are frozen/deferred, not deleted. When a single user capability has clear boundaries, one focused PR may include the necessary data layer, Rust commands, TypeScript API, and UI; unrelated capabilities and distinct security/network/device trust boundaries must not be bundled together.
 
 ## Pull request policy
 
-Codex may develop, test, fix CI, commit, push, and open/update a PR. Auto-merge is disabled; the repository owner makes the final merge decision. Each large phase is split into independently testable PRs.
+Codex may develop, test, fix CI, commit, push, and open/update a PR. Auto-merge is disabled; the repository owner makes the final merge decision. Each PR delivers one clear user capability, but a well-bounded feature may include its necessary data, command/API, and UI layers together.
 
-CI success is not sufficient for Windows desktop behavior. PRs that touch native windows, credentials, files, devices, permissions, sidecar lifecycle, or packaging must include user-local acceptance with `npm run tauri dev` and the stage-specific workflow.
+Acceptance is risk-tiered. Documentation PRs require Markdown/format/link/route checks and CI; ordinary features without schema changes require one local startup, their main user flow, relevant automation, and leak checks; schema, migration, security-boundary, or real-network changes retain migration/integrity/foreign-key, isolation or double-start when needed, failure-recovery, sensitive-data, and network-boundary validation. CI does not replace required Windows desktop acceptance.
 
 ## Privacy
 

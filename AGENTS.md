@@ -16,9 +16,10 @@
    - `docs/<document-name>`
    - `chore/<task-name>`
 5. 同步远端时使用普通 pull/rebase；不得使用 `--force`、`--force-with-lease`，不得绕过分支保护。
-6. 提交信息使用 Conventional Commits，例如 `feat: add audio capture`、`docs: define security model`。
-7. 分支名称和任务范围必须与 `DEVELOPMENT_PLAN.md` 一致；若计划未定义或文档互相冲突，先创建纯文档 PR 对齐，不得自行混用旧阶段名称。
-8. 一个较大阶段必须拆成可独立验收的小型 PR；禁止把数据库、UI、Provider、文档解析、模型调用或音频采集塞入同一个实现 PR。
+6. 提交信息使用 Conventional Commits，例如 `feat: add audio file transcription`、`docs: update security model`。
+7. 分支名称和任务范围必须与 `DEVELOPMENT_PLAN.md` 一致。PR #23 合并后，普通状态同步、架构说明、README、安全说明和用户指南必须随对应功能 PR 更新；只有用户明确要求或发生重大路线重构时，才单独创建纯文档 PR。
+8. 一个 PR 只交付一个明确、可独立验收的用户能力。当数据模型和边界已经清晰时，同一功能 PR 可以包含完成该能力所必需的数据层、Rust Commands、TypeScript API 和 UI；不得为了形式对称强制拆成 Data Core、Command API 和 UI 三个 PR。
+9. 不得把无关功能或多个可独立审查的高风险信任边界混入同一 PR。schema、migration、安全边界、真实网络、文件解析或设备访问范围扩大时，应按可审查性、可回滚性和风险决定是否进一步拆分。
 
 ## 自动化与合并边界
 
@@ -27,25 +28,48 @@
 - 不得启用 auto-merge，不得把“用户最终决定”解释为预先授权自动合并。
 - 只有用户针对某个明确 PR 发出当次合并指令后，才能执行该次合并；不得顺带合并其他 PR 或开始下一阶段。
 
-## 质量门槛
+## 风险分级质量门槛
 
-完成一个可验收任务后，在提交前：
+所有 PR 均须运行 `git diff --check`、人工检查完整 diff、使用合成数据、完成敏感信息门禁并等待 CI。不得把“未运行”写成“通过”，不得提交明知失败的结果。具体门槛按本次改动的最高风险确定：
 
-1. 运行与改动相关的全部测试、lint、类型检查和构建。
-2. 运行 `git diff --check`，并人工检查 `git diff`。
-3. 若工具链缺失或某项检查无法运行，必须明确说明原因；不得把“未运行”写成“通过”。
-4. 测试失败时不得声称任务完成，不得提交明知失败的结果。
-5. 当前项目的标准检查命令为：
-   - `npm run format:check`
-   - `npm run lint`
-   - `npm run typecheck`
-   - `npm run test`
-   - `npm run test:sidecar`
-   - `npm run build`
-   - Rust 可用时：`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`、`cargo test --locked --manifest-path src-tauri/Cargo.toml` 和 `cargo check --locked --manifest-path src-tauri/Cargo.toml`
-6. 直接依赖必须锁定精确版本并提交相应 lockfile；不得为解决兼容性问题擅自放宽版本范围或关闭安全检查。
-7. Windows 11 和 Python 3.12 是当前项目基线。其他平台/版本只能作为明确标注的额外验证，不得替代该基线。
-8. 涉及 Windows 桌面能力的 PR 必须在用户本机实际运行对应验收流程（至少包括 `npm run tauri dev`，并按功能验证窗口/权限/设备/进程行为）。CI 通过只能证明自动化构建与测试通过，不能替代本地桌面验收。
+### 文档 PR
+
+- 运行 Markdown/格式检查、文档链接检查和路线一致性检索。
+- 确认只修改预期文档，没有源代码、migration、依赖、lockfile 或生成文件。
+- PR #23 是重新定基线前最后一个普通独立路线文档 PR；它自身仍须执行任务开始时已有规则要求的全项目检查。
+
+### 不修改 schema 的普通功能 PR
+
+- 运行所有相关 formatter、lint、类型检查、自动测试和构建。
+- 涉及 Windows 桌面行为时，至少运行一次 `npm run tauri dev`，在用户本机走通主要用户流程。
+- 检查正文、密钥、私人路径和禁止文件没有进入 WebView 持久化、日志、测试输出或 Git；确认工作区干净。
+
+### 修改 schema、migration、安全边界或真实网络的高风险 PR
+
+- 运行相关完整自动化检查和 Windows 本机主流程。
+- migration 必须验证受支持旧版本升级、最终 schema version/checksum、`PRAGMA integrity_check` 和 `PRAGMA foreign_key_check`。
+- 按风险执行隔离 app-data、必要的双启动、故障恢复、取消、超时和清理验证；双隔离和完整双启动不是普通 UI PR 的默认要求。
+- 安全或真实网络改动必须验证缺少凭据、缺少同意和空发送范围均 fail closed，并检查网络范围、错误脱敏、日志和取消链路。
+
+当前项目的标准检查命令包括：
+
+- `npm run format:check`
+- `npm run lint`
+- `npm run typecheck`
+- `npm run test`
+- `npm run test:sidecar`
+- `npm run build`
+- Rust 可用时：`cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`、`cargo test --locked --manifest-path src-tauri/Cargo.toml` 和 `cargo check --locked --manifest-path src-tauri/Cargo.toml`
+
+只运行与风险等级和改动范围相符的检查；若现有聚合脚本是该范围的门禁，则不得绕过。直接依赖必须锁定精确版本并提交相应 lockfile，不得为解决兼容性问题放宽版本范围或关闭安全检查。Windows 11 和 Python 3.12 是当前项目基线，其他平台或版本只能作为额外验证。
+
+## 不得弱化的工程与安全规则
+
+- migration 只能追加，必须在事务中执行并记录 checksum；不得修改、替换或复用已合并 migration 版本，不得静默删除未知数据。
+- 真实 DeepSeek API Key 只能由受信任 Rust 代码从 Windows Credential Manager `SecretStore` 读取；不得进入 React、SQLite、日志、Python、环境变量或命令行。测试只使用 Mock 和明显的合成占位值。
+- React/WebView 不直接调用外部 Provider，不提交 Provider 结果或 evidence；Rust 是持久 Summary run、不可变快照、状态转换、Provider 调用、响应校验和 evidence allowlist 的执行权威。
+- 保留路径守卫、canonicalization、reparse point/symlink 防护、受控 UUID 路径、稳定错误码、错误脱敏和正文不进入普通日志的规则。
+- 当前 Rust Mock 与 MeetingLens 应用代码不外发会议内容；这不表示 WebView2 Runtime 在物理层面完全断网。
 
 ## 敏感信息与私人数据
 
@@ -62,44 +86,41 @@
 - 本地 SQLite 数据库、数据库 WAL/SHM 文件
 - 日志、崩溃转储、临时文件或构建产物
 
-规则：
-
-- 开发密钥只放在已忽略的 `.env`；发布版本使用操作系统凭据存储。
-- 不得在终端输出、测试快照、日志、错误信息或 PR 描述中回显密钥。
-- 示例、测试和文档只使用明显的占位值与合成数据。
-- 对会议数据执行最小采集、明确同意、可删除和本地优先原则。
+示例、测试和文档只使用明显的占位值与合成数据。不得在终端输出、测试快照、日志、错误信息或 PR 描述中回显密钥或会议正文。对会议数据执行最小采集、明确同意、可删除和本地优先原则。
 
 ## Push、Pull Request 与 CI
 
 1. 提交前展示 staged 文件列表和 diff 摘要。
 2. 创建清晰、单一目的的 commit，并将当前分支 push 到 `origin`。
 3. 创建或更新 Pull Request；PR 必须描述范围、测试结果、安全/隐私影响和已知限制。
-4. CI 失败时检查日志、修复、重新测试并再次 push。
-5. 所有 required checks 通过前不得把工作报告为完成。
-6. 不得启用 auto-merge，不得自动合并到 `main`；合并决定由用户作出。
+4. 功能 PR 必须同步更新受影响的架构、开发计划、安全说明、README 和中英文用户指南；中英文能力陈述必须一致。
+5. CI 失败时检查日志、修复、重新测试并再次 push。
+6. 所有 required checks 通过前不得把工作报告为完成。
+7. 不得启用 auto-merge，不得自动合并到 `main`；合并决定由用户作出。
 
-## 产品价值与近期顺序
+## Personal Edition 产品基线与近期顺序
 
-- 当前产品采用 `SIMPLIFIED_MODE_SPEC.md` 定义的“一个共享引擎、三个简约入口”：总结模式、翻译模式、会议模式。旧版未开始的路线冻结但不删除已完成基础。
-- MeetingLens 的第一核心价值仍是让用户以最少步骤把已有会议转录或粘贴文本转化为详实、可编辑、可追溯的会议纪要；总结模式必须先形成真实闭环，翻译和会议模式复用同一数据管线逐步开放。
-- 转录是纪要的第一类来源；参考文档是可选增强。`transcripts` 与 `documents` 是不同语义和信任边界，转录导入不得强制经过 DocumentService 或 Docling。
-- Docling Worker Foundation 已完成并保留；数据库/UI 编排在 transcript-only 总结闭环和编辑导出完成后由 `feat/document-parsing-orchestration` 接入，并先于真实音频阶段。不得把 Docling 恢复为第一份 transcript-only 纪要的前置依赖。
-- 国际化、Help 页面和中英文开发预览手册已通过 `feat/i18n-user-guide-foundation` / PR #16 完成并合并，必须继续保留并随产品能力同步维护。
-- 当前固定顺序为：`docs/simplified-three-mode-spec` → `feat/transcript-data-core` → `feat/transcript-command-api` → `feat/summary-mode-input-ui` → `feat/summary-run-core` → `feat/consent-data-core` → `feat/summary-provider-deepseek` → `feat/summary-mode-minutes` → `feat/summary-editing-export` → `feat/document-parsing-orchestration` → `feat/document-evidence-index` → `feat/live-session-data-core` → `feat/sidecar-supervisor` → `feat/audio-capture` → `feat/realtime-transcription` → `feat/window-context` → `feat/screen-ocr` → `feat/live-language-data-core` → `feat/speaker-diarization` → `feat/realtime-translation-provider` → `feat/checkpoint-summary-runtime` → `feat/topic-checkpoints` → `feat/translation-overlay` → `feat/translation-mode-workspace` → `feat/meeting-notes-core` → `feat/meeting-mode-workspace`。有依据的固定图表继续作为独立后续增强。分支名、停止线和更后续顺序以 `DEVELOPMENT_PLAN.md` 为准。
-- 不得恢复 `feat/transcript-import-ui`、`feat/deepseek-summary-mvp` 等已被新拆分取代的旧路线名称，也不得从未合并的旧路线分支开始新功能。
-- 第一版转录只承诺粘贴 UTF-8 文本以及 TXT/SRT/VTT。平台专用 adapter 必须取得脱敏真实样例后单独增加；视频/音频文件转录不属于近期范围。
-- 纪要资格取决于是否存在可冻结的用户确认输入，不得以 `meeting.status == ready` 作为唯一门槛。纪要运行使用不可变输入快照，重新生成创建 revision，不得静默覆盖用户编辑。
-- 三种模式只是界面和能力预设，不得建立三套会议、转录、摘要或删除模型。原始音频、逐字稿和会议纪要必须作为不同数据类型、同意范围和保留选项处理。
-- 应用启动时不得自动申请麦克风、系统音频或屏幕权限。每项采集、保存原始音频、持续翻译外发和纪要外发必须分别获得本次会话同意并持续显示状态。
+- MeetingLens 当前采用 Personal Edition / 自用版基线：Windows-first、local-first、transcript-first，优先让单个用户日常完成“粘贴或导入转录 → DeepSeek 生成纪要 → 查看和修改 → Markdown 复制或保存”。
+- PR #1–#22 已完成工程/安全基础、粘贴与 TXT/SRT/VTT 转录工作区、schema v4 Summary Run Core、不可变快照、series/revision、evidence allowlist、stale/cancel/interrupted recovery 和 Rust 零外发 Mock。真实 DeepSeek、用户外发确认、正式结果页、Markdown 复制/保存、录音文件转录、Docling 产品编排和 document evidence 尚未实现。
+- PR #23 使用 `docs/personal-edition-descope` 完成本次重新定基线；合并后唯一明确的下一阶段是 `feat/summary-provider-deepseek`，不得创建或恢复独立的 `feat/consent-data-core`。
+- 当前最短实施顺序为：`feat/summary-provider-deepseek` → `feat/summary-mode-minutes` → `feat/audio-file-transcription` → `feat/document-parsing-orchestration` → 可选 `feat/window-context`。`feat/summary-mode-minutes` 完成时达到日常可用里程碑。
+- 最小 DeepSeek 外发确认与 Provider 在同一 PR 实现：首次发送前明确说明 Provider 和本次转录范围，允许本次同意、记住选择或取消；未确认必须 fail closed。具体最小持久化设计由该 PR 决定，不预先承诺通用 `consent_events` schema。
+- 纪要编辑近期只包括修改正文、保存当前结果和整份重新生成；新结果继续使用现有 series/revision，不覆盖旧 revision。章节/段落级重生成、复杂 stale UI、完整编辑时间线、冲突合并、DOCX/PDF 导出均冻结。
+- `feat/audio-file-transcription` 只做用户主动导入录音文件、本地 faster-whisper CPU int8 一次性受控 Worker、写入既有 transcript 模型并回到现有工作区；不做 WASAPI、实时音频、实时字幕或实时 diarization。
+- Docling Worker Foundation 已完成并保留。简化版 `feat/document-parsing-orchestration` 可以在一个功能 PR 内接入解析、document chunks/evidence 和 Summary pipeline；失败自动重试一次，再失败提示手动重导，不建立通用重型调度平台。
+- `feat/window-context` 只有在用户确认实际经常需要时才启动；必须由用户选择具体窗口，身份变化时暂停/重新确认，默认不保存屏幕关键帧，不监控全部桌面。
+
+以下能力是 Frozen / Deferred：实时会议录音、实时 ASR、完整 Sidecar supervisor 路线、实时说话人分离、实时翻译及外发、checkpoint、自动话题判断、翻译浮窗、翻译模式工作区、独立会议模式工作区、screen OCR、structured visuals、安装包完善、签名、SBOM、自动更新、托盘、商业发布和企业部署。冻结不等于删除；不得删除已完成基础，也不得在用户解冻和文档更新前创建这些功能分支。
+
+转录是纪要的第一类来源；参考文档是可选增强。`transcripts` 与 `documents` 是不同语义和信任边界，粘贴/TXT/SRT/VTT 不得强制经过 DocumentService 或 Docling。PDF/DOCX 可以继续作为未来 Docling 输入格式，但不是近期导出目标。三种模式的长期愿景可以保留，但不得建立三套会议、转录、摘要或删除模型。
 
 ## 文档导入与删除边界
 
 - 用户导入文件一律视为不可信数据；“保存在本地”不代表文件可信或可以执行。
 - React/WebView 不得获得任意文件系统读取权限，不得接收源文件绝对路径，也不得直接渲染未经处理的用户文件。
-- 文件选择、类型/配额校验、私有目录路径构造、流式复制、哈希和删除协调必须由 Rust 信任边界执行；Python Sidecar 和 DeepSeek 不得绕过该边界取得原始文件。
-- 原始文件名只可作为显示元数据，不能参与目录拼接；应用内部路径必须使用受控 meeting/document UUID 并验证仍位于应用私有根目录。
-- 首次引入会议文件的实现 PR 必须同步实现可恢复、幂等的会议和文档删除协调；不得继续沿用无附件阶段的直接硬删除。
-- 文档功能必须按 `DEVELOPMENT_PLAN.md` 拆分为已完成的存储核心、导入 UI、隔离 Docling Worker，以及后续独立的解析编排和证据索引；转录数据、转录 UI、摘要 Provider 与文档增强不得在一个 PR 中合并多个信任边界。
+- 文件选择、类型/配额校验、私有目录路径构造、流式复制、哈希和删除协调必须由 Rust 信任边界执行；Python Worker、Sidecar 和 DeepSeek 不得绕过该边界取得原始文件。
+- 原始文件名只可作为显示元数据，不能参与目录拼接；应用内部路径必须使用受控 meeting/document UUID，并验证最终路径仍位于应用私有根目录且不是不受信任的 reparse point/symlink 逃逸。
+- 已完成的可恢复、幂等会议/文档删除协调必须继续覆盖新增 artifact 和派生数据；不得恢复“先删数据库再尽力删文件”的直接硬删除。
 
 ## 必须先获得批准的操作
 
@@ -119,7 +140,7 @@
 - 分支名称
 - commit hash
 - Pull Request 链接和状态
-- 测试、lint、类型检查和构建结果
+- 实际运行的测试、lint、类型检查和构建结果
 - CI 结果
 - push 结果
 - merge 状态（默认应为未合并）
