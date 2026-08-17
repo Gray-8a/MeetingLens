@@ -1,513 +1,378 @@
 # MeetingLens 开发计划
 
-## 1. 工作流与阶段规则
+## 1. 权威状态与 Personal Edition 基线
+
+本文件是 MeetingLens 当前实施顺序、分支名、停止线和验收条件的权威文档。产品行为、安全边界和数据事实分别由 `PRODUCT_SPEC.md`、`SECURITY.md`、`DATA_MODEL.md` 和 `ARCHITECTURE.md` 说明；这些文档不得形成第二条实施路线。
+
+截至 PR #22，`main` 已完成工程与安全基础、安全文件导入、隔离 Docling Worker、zh-CN/en-US 与 Help、粘贴/TXT/SRT/VTT 转录工作区，以及 schema v4 Summary Run Core。当前已经具备：
+
+- `transcript_sources` / `transcript_segments`、有界分页、正文修正和 source-scoped speaker 显示名；
+- `summaries` / `summary_sources` / `evidence_items`；
+- 不可变 transcript snapshot、series/revision、evidence allowlist；
+- queued/running/completed/failed/cancelled、stale、取消、删除协调和 interrupted recovery；
+- 由 Rust 执行的 deterministic、零会议内容外发 Mock Summary Provider。
+
+当前尚未实现真实 DeepSeek Provider、SecretStore 中 API Key 的实际消费、用户外发确认、正式纪要结果页、Markdown 复制/保存、录音文件转录、Docling 产品编排、document evidence、实时音频、实时 ASR、实时翻译或独立会议模式工作区。文档规划不得被描述为已经实现的能力。
+
+MeetingLens 现在采用 **Personal Edition / 自用版基线**：Windows-first、local-first、transcript-first，优先让单个用户尽快完成：
+
+```text
+粘贴或导入转录
+→ 用户确认后由 Rust 调用 DeepSeek
+→ 查看并修改纪要
+→ 一键复制或保存 Markdown
+```
+
+总结模式是当前唯一近期模式。翻译模式与会议模式仍是长期愿景，但属于 Frozen / Deferred，不计入 Personal Edition 的近期完成标准。
+
+## 2. 工作流与 PR 粒度
 
 `main` 始终保持可构建、可演示。Codex 可以自主开发、测试、修复 CI、提交、推送和创建/更新 PR，但不得启用 auto-merge，也不得自动合并；最终 Merge 由用户决定。
 
 每个实现 PR 必须：
 
-1. 只覆盖一个可验收范围，并使用本计划指定的分支名。
-2. 有独立的正常、失败和安全验收条件。
-3. 通过 formatter、lint、类型检查、测试、构建和敏感信息门禁。
-4. 涉及 Windows 桌面行为时，由用户本机实际运行验收，不能只凭 CI 声称完成。
-5. 合并后再从最新 `main` 创建下一个分支，不堆叠未审查的大型 PR。
+1. 只交付一个明确、可独立验收的用户能力，并使用本计划指定的分支名。
+2. 从上一个已合并阶段的最新 `main` 创建；不得堆叠未审查的大型 PR。
+3. 描述正常、失败、取消、安全和隐私边界，并按本文件的风险等级验收。
+4. 同步更新受影响的架构、数据、安全、README 和中英文用户指南。
+5. checks 全绿后停在待审状态，不开始下一阶段，直到用户明确决定是否合并。
 
-MVP 1A-2 实现前已使用 `docs/define-meeting-lifecycle` 固定会议状态转换、删除演进策略和 PR 边界。Provider 与安全基础随后通过 1A-3A、1A-3B-1 和 1A-3B-2 三个顺序 PR 完成，避免把能力契约、Sidecar 会话认证与操作系统凭据存储放入同一审查单元。MVP 1B 在任何文件实现前先使用纯文档 PR #11 固定不可信输入、私有存储和可恢复删除语义。
+当数据模型和信任边界已经清晰时，一个完整功能 PR 可以同时包含完成该能力所需的数据层、Rust Commands、TypeScript API 和 UI。不得为了形式对称强制执行：
 
-本文件是 MeetingLens 实施顺序、分支名、停止线和验收条件的权威文档。PR #16 合并后，产品方向继续以 `SIMPLIFIED_MODE_SPEC.md` 定义的“一个共享引擎、三个简约入口”收敛：先完成 transcript-only 总结、真实纪要和编辑导出闭环；随后接入 Docling 编排与文档 evidence，但 Docling 不阻塞第一份纪要；之后依次建设实时采集、实时 ASR、屏幕/窗口上下文、说话人分离与命名、实时翻译，最后集成翻译模式和会议模式。旧版未开始的路线冻结但不删除已完成基础，PR #16 交付的 zh-CN/en-US、Help 和双语开发预览手册继续作为共享横向基础。
+```text
+Data Core PR
+→ Command API PR
+→ UI PR
+```
 
-## 2. 统一路线图
+一个 PR 仍不得夹带无关能力。schema、migration、安全边界、真实网络、文件解析和设备访问等高风险范围，应根据可审查性和可回滚性决定是否进一步拆分，而不是机械地按技术层拆分。
 
-| 阶段       | 目标                                                | 计划分支                                    | 状态           |
-| ---------- | --------------------------------------------------- | ------------------------------------------- | -------------- |
-| 工程基础   | Phase 0、会议 CRUD/API/UI、Provider、安全边界       | PR #1–#10                                   | 已完成并合并   |
-| 文件基础   | 安全文件导入、可恢复删除、隔离 Docling Worker       | PR #11–#14                                  | 已完成并合并   |
-| 转录规格   | 转录、输入快照和可追溯纪要规格                      | `docs/transcript-and-summary-spec` / PR #15 | 已完成并合并   |
-| 国际化基础 | zh-CN/en-US、locale 偏好、Help 和双语预览手册       | `feat/i18n-user-guide-foundation` / PR #16  | 已完成并合并   |
-| 简约版对齐 | 三种入口、共享管线、隐私边界和新顺序                | `docs/simplified-three-mode-spec` / PR #17  | 已完成并合并   |
-| 总结数据   | schema v3、转录来源/片段、TXT/SRT/VTT/粘贴解析      | `feat/transcript-data-core` / PR #18        | 已完成并合并   |
-| 转录接口   | Commands/API、原生选择器和原子创建边界              | `feat/transcript-command-api` / PR #19      | 已完成并合并   |
-| 总结入口   | 首页入口、粘贴/导入、分页预览和说话人修正           | `feat/summary-mode-input-ui` / PR #20       | 已完成并合并   |
-| 纪要数据   | schema v4、run/series/revision、正文快照和 evidence | `feat/summary-run-core` / PR #21            | 已完成并合并   |
-| 同意数据   | 通用 consent events、会话失效与审计 API             | `feat/consent-data-core`                    | 下一阶段       |
-| 纪要服务   | SecretStore 消费、外发同意和受限 DeepSeek adapter   | `feat/summary-provider-deepseek`            | 待开始、需批准 |
-| 纪要工作区 | 输入/模板选择、外发预览、结果和 Markdown            | `feat/summary-mode-minutes`                 | 待开始         |
-| 编辑导出   | revision/stale、章节重生成和 DOCX                   | `feat/summary-editing-export`               | 待开始         |
-| 文档编排   | Docling parse jobs、状态、artifact 原子提交和恢复   | `feat/document-parsing-orchestration`       | 待开始         |
-| 文档证据   | chunks、页码/章节/表格定位和既有 Summary evidence   | `feat/document-evidence-index`              | 待开始         |
-| 实时数据   | 模式提示、capture session、音频 artifact 与删除协调 | `feat/live-session-data-core`               | 待开始         |
-| 实时进程   | Sidecar supervisor 与进程回收                       | `feat/sidecar-supervisor`                   | 待开始         |
-| 音频采集   | 麦克风/系统音频、明确同意与恢复                     | `feat/audio-capture`                        | 待开始         |
-| 实时转录   | 实时 ASR 写入统一 transcript segments               | `feat/realtime-transcription`               | 待开始         |
-| 窗口上下文 | 用户确认目标、窗口身份、accessibility text          | `feat/window-context`                       | 待开始         |
-| 屏幕 OCR   | 变化触发 OCR、screen evidence 和临时帧删除          | `feat/screen-ocr`                           | 待开始         |
-| 语言数据   | translations、speaker aliases 和 checkpoint 快照    | `feat/live-language-data-core`              | 待开始         |
-| 说话人增强 | 聚类、姓名校准、人工修改/合并和隔离 worker          | `feat/speaker-diarization`                  | 待开始         |
-| 翻译服务   | 连续片段翻译、独立同意和取消                        | `feat/realtime-translation-provider`        | 待开始、需批准 |
-| 阶段摘要   | 手动/固定时间调度、增量快照与重试                   | `feat/checkpoint-summary-runtime`           | 待开始         |
-| 话题建议   | 可确认、忽略或修正的话题边界建议                    | `feat/topic-checkpoints`                    | 待开始         |
-| 翻译浮窗   | 透明度、收起/展开、滚动、置顶和多显示器             | `feat/translation-overlay`                  | 待开始         |
-| 翻译工作区 | 主窗口字幕、手动 speaker 与 checkpoint UI           | `feat/translation-mode-workspace`           | 待开始         |
-| 重点数据   | 转录书签与用户文字笔记                              | `feat/meeting-notes-core`                   | 待开始         |
-| 会议工作区 | 重点记录、阶段摘要、最终纪要和翻译开关              | `feat/meeting-mode-workspace`               | 待开始         |
-| 图表增强   | 只基于可追溯结构化数据的固定图表                    | `feat/structured-visuals`                   | 后续           |
-| 产品化     | Windows 安装包与加固                                | 见 §15                                      | 后续           |
+PR #23 是本次重大路线重构所需的最后一个普通独立路线文档 PR。此后不得再为普通“状态同步”单独创建 PR；文档必须随对应功能 PR 更新。只有用户明确要求或发生重大路线重构时，才可再次创建纯文档 PR。
 
-除上表和各阶段明确列出的子分支外，不再使用表外的历史任务名或笼统阶段称呼。
+## 3. 已完成阶段与历史事实
 
-## 3. Phase 0：规格与技术基线（已完成）
+| 历史范围  | 主要交付                                                                                                     | 状态                                 |
+| --------- | ------------------------------------------------------------------------------------------------------------ | ------------------------------------ |
+| PR #1–#10 | Phase 0、meeting CRUD/API/UI、Provider Mock、本地 Sidecar 会话认证、Windows Credential Manager `SecretStore` | 已完成并合并                         |
+| PR #11    | 不可信文档导入、私有存储和可恢复删除规格                                                                     | 已完成并合并                         |
+| PR #12    | schema v2、DocumentService、安全存储和删除协调                                                               | 已完成并合并                         |
+| PR #13    | Rust 原生文档选择器、Commands/API 和导入/删除 UI                                                             | 已完成并合并                         |
+| PR #14    | 隔离、离线、受资源限制的 Docling Worker Foundation                                                           | 已完成并合并                         |
+| PR #15    | transcript-first 与可追溯 Summary 规格                                                                       | 已完成并合并                         |
+| PR #16    | zh-CN/en-US、locale 偏好、Help 和双语开发预览手册                                                            | 已完成并合并                         |
+| PR #17    | 三模式共享管线与当时路线的文档对齐                                                                           | 已完成并合并；现由 PR #23 重新定基线 |
+| PR #18    | schema v3、粘贴/TXT/SRT/VTT parser、转录来源/片段和修正/删除语义                                             | 已完成并合并                         |
+| PR #19    | 安全 Transcript Commands/API、Rust 原生选择器和原子 meeting + transcript 创建                                | 已完成并合并                         |
+| PR #20    | Summary 输入 UI、分页预览、正文和 speaker 显示名修正                                                         | 已完成并合并                         |
+| PR #21    | schema v4 Summary Run Core、不可变快照、series/revision、evidence、Mock、取消和恢复                          | 已完成并合并                         |
+| PR #22    | Summary Run Core 合并后状态与路线文档同步                                                                    | 已完成并合并                         |
 
-交付：核心规格文档、Tauri 2 + React + TypeScript 基线、Python 3.12 `/health`、React → Rust → Python 健康调用、精确依赖版本、lockfile 和 CI。
+历史阶段曾按 Data/API/UI 或多个安全基础 PR 拆分，这是已完成工作的审查记录，不再构成所有新功能必须采用相同拆法的通用规则。
 
-完成证据：PR #1 已通过前端/Python 和 Windows Rust CI；Windows 本机已实际运行 `npm run tauri dev` 并显示 MeetingLens 窗口。
+PR #21 的 Windows 验收使用 development-only 系统 Temp 直属隔离 app-data 根，并让两次 Tauri 启动使用与根 UUID 匹配的合成 identifier，从而隔离 SQLite 和 WebView2 profile。两次启动覆盖 run/result/revision/stale/evidence、running recovery、SQLite integrity、零 MeetingLens 应用层外发、无正文浏览器持久化及最终清理。该记录必须保留为 Summary Run Core 的历史验收证据，但双隔离 app-data 和完整双启动不是普通 UI PR 的默认门槛。
 
-## 4. MVP 1A-1：会议数据核心（已完成）
+当前 SQLite schema 版本仍是 v4。PR #23 不修改代码、schema、migration、依赖、lockfile、权限或 CSP。
 
-分支：`feat/meeting-data-core`
+## 4. 当前：Personal Edition Re-baseline
 
-范围仅限：
+分支：`docs/personal-edition-descope`
 
-- SQLite 连接与事务边界
-- `schema_migrations` 与首批迁移
-- meeting repository/service 的创建、读取、更新、列表和删除语义
-- 应用私有数据目录和规范化路径基础
-- 重启后的持久化验证、失败回滚和合成数据测试
-
-不得包含：页面 UI、模拟转写、Provider、SecretStore、文档处理、音频或屏幕能力。
-
-验收：迁移可从空库执行且可重复检测；CRUD 与删除语义有 Rust 测试；数据库文件保持本地并被 Git 忽略；应用重启后数据仍存在；本机运行最小持久化验收。
-
-完成证据：PR #3 已 squash merge；Rust 数据层测试覆盖迁移、CRUD、回滚、路径守卫和重启持久化，Windows 本机已生成并重启验证应用私有 SQLite 数据库。
-
-## 5. MVP 1A-2：Command API、桌面 UI 与模拟会议
-
-MVP 1A-2 固定拆成以下两个顺序 PR。前一个 PR 合并后，后一个 PR 才能从最新 `main` 开始。
-
-### 5.1 MVP 1A-2-1：Meeting Tauri Command API
-
-分支：`feat/meeting-command-api`
+实际 PR：PR #23。
 
 范围：
 
-- 将现有 meeting service 暴露为 `create_meeting`、`get_meeting`、`list_meetings`、`update_meeting`、`start_meeting`、`end_meeting` 和 `delete_meeting`
-- 使用明确的 command/response DTO；command 不写 SQL，也不接受数据库路径
-- 在 React/TypeScript 侧提供集中、严格类型且可 mock 的 `meetingApi`
-- 使用稳定、脱敏的错误码，不向 WebView 泄漏 SQL、数据库路径或底层错误
-- 通过专用 command 执行状态转换和后端 UTC 时间戳写入
-
-生命周期契约：
-
-- 创建会议得到 `draft`，`started_at` 与 `ended_at` 均为空
-- `start_meeting` 只允许 `draft → recording`，并由 Rust 后端写入 `started_at`
-- 在合成会议阶段，`end_meeting` 只允许 `recording → ready`，并由 Rust 后端写入 `ended_at`
-- `processing` 保留给后续真实异步处理，只能由受信任后端进入；普通前端更新不能修改状态或生命周期时间戳
-- 重复开始、重复结束、`draft → ready` 和 `ready → recording` 等转换使用稳定错误码 `meeting_invalid_state` 拒绝
-- `delete_meeting` 只允许硬删除 `draft` 或 `ready`；`recording` 及当前不可进入的保留状态返回 `meeting_invalid_state`
-- 删除不存在的会议返回 `meeting_not_found`；不得新增含义重复的 `invalid_state_transition` 错误码
-
-不得包含：完整页面、表单、模拟字幕、participants、真实音频、Provider、SecretStore、Docling、DeepSeek、OCR 或 sidecar supervisor。
-
-验收：Rust 测试覆盖每个 command、校验、合法/非法转换、删除状态限制和脱敏失败；TypeScript 测试覆盖 command 名称、序列化、响应解析和统一错误转换；Windows 本机实际调用 `create → list → start → end → delete`，重启后验证持久化。
-
-### 5.2 MVP 1A-2-2：桌面 UI 与模拟会议
-
-分支：`feat/meeting-ui-mock`
-
-范围：
-
-- 首页、新建会议、会议中、会议结果、设置等桌面页面和导航
-- 使用合成数据的模拟转写流
-- UI → Tauri command → 数据核心的完整模拟会议流程
-- 加载、空状态、错误、取消与可访问性
-
-不得包含真实音频、外部 Provider、Docling 或 DeepSeek。
-
-验收：React 测试覆盖关键状态；用户在 Windows 本机通过 `npm run tauri dev` 完成“新建 → 模拟会议 → 结束 → 查看 → 删除”流程；刷新/重启后状态符合数据层定义。
-
-完成证据：Meeting Command API 已由 PR #6 squash merge；桌面 UI 与模拟会议闭环已由 PR #7 squash merge。Windows 本机已验证创建、开始、模拟字幕暂停/恢复、结束、重启持久化和删除，数据库完整性检查通过。
-
-## 6. MVP 1A-3：Provider 与安全基础
-
-该阶段固定拆成三个顺序 PR。1A-3A 合并后，1A-3B-1 才能从最新 `main` 开始；1A-3B-1 合并后才能开始 1A-3B-2。
-
-### 6.1 MVP 1A-3A：Provider 契约与 Mock Runtime
-
-分支：`feat/provider-contracts-mocks`
-
-范围：
-
-- 定义 Capture、Transcription、Translation、Summary 和 DocumentParser Provider 的输入、输出、状态、错误、取消与清理契约
-- 提供确定性的纯内存 Mock，实现正常、失败和取消路径
-- 使用轻量 Registry 进行应用层生命周期管理和测试注入
-- 将模拟会议字幕迁移到 Transcription Provider，设置页明确显示 Mock 与未启用状态
-- 当前契约位于 TypeScript UI/业务边界；在没有真实 Rust/Python 调用链前不复制无用途的 Provider 层
-
-不得包含：SecretStore、会话令牌、认证、安全日志、真实设备/文件/网络访问、数据库 migration、DeepSeek、Docling、Whisper、Screenpipe 或 sidecar 改造。
-
-验收：Mock 状态机、取消、清理、稳定错误与 Registry 注入有自动化测试；旧模拟字幕架构被完整替换；Windows 本机验证两场连续模拟会议没有重复订阅或计时器残留。
-
-完成证据：PR #8 已 squash merge；五类 Provider 契约、Registry、纯内存 Mock、模拟字幕迁移和 Windows 双会话验收均已完成，Provider/UI 不访问真实设备、文件或网络。
-
-### 6.2 MVP 1A-3B-1：本地 Sidecar 会话认证
-
-分支：`feat/local-sidecar-auth`
-
-范围：
-
-- Rust 每次应用启动使用操作系统 CSPRNG 生成临时会话令牌，只通过子进程环境传给 Python
-- Rust 取得安全传递令牌所需的最小 Sidecar 启动所有权和退出清理，不实现 supervisor 重启/恢复循环
-- Python 只允许 `127.0.0.1`，全部路由（包括 `/health`）统一验证 Bearer 令牌
-- Rust `SidecarClient` 集中注入认证 Header，并提供超时、401、无效响应等稳定脱敏错误
-- 设置页只显示已认证/不可用/错误、仅本机绑定、当前会话和 SecretStore 未实现状态
-- 当前固定开发端口可继续使用；随机端口与完整生命周期接线留给 `feat/sidecar-supervisor`
-
-不得包含：SecretStore、Windows Credential Manager、DeepSeek/API Key、真实 Provider、文档、音频、屏幕、完整日志系统、崩溃重启或孤儿进程恢复。
-
-验收：无 Header、错误 scheme/令牌和非 loopback Host 全部 fail closed；令牌不出现在命令行、WebView DTO、SQLite 或日志；应用重启生成新会话且旧测试令牌失效；Windows 本机完成认证、绑定、进程、日志、模拟会议和清理验证。
-
-### 6.3 MVP 1A-3B-2：SecretStore 与安全配置
-
-分支：`feat/provider-security-foundation`
-
-范围：
-
-- Rust `SecretStore` 抽象和 Tauri App State；测试不得读取或覆盖正式凭据
-- Windows Credential Manager `CRED_TYPE_GENERIC` 后端；非 Windows 平台 fail closed，不提供明文回退
-- 只允许 `deepseek_api_key`，正式 target 固定为 `com.gray.meetinglens/secret/deepseek-api-key`
-- React 只可调用 status、set 和 delete；已保存的值不能读取、显示、复制或回填
-- `main` 窗口的最小 Tauri permission set；不授权远程 WebView 或通用 shell/fs/http/process 能力
-- 凭据安全写入、读取状态、替换和幂等删除接口；当前不调用 DeepSeek，也不把 key 传给 Python Sidecar
-- 稳定脱敏错误协议；完整结构化日志框架仍属于后续阶段
-
-不得调用真实付费 API，也不得实现 Docling、DeepSeek、音频或屏幕采集。
-
-验收：空白或超长输入失败关闭；WebView 不能读回凭据；SQLite、浏览器存储、日志、命令行和构建输出中不出现密钥；Windows 本机使用隔离测试 target 验证写入/读取/替换/删除，并通过设置页验证正式 target 的重启持久化和最终清理，但任何位置都不显示值。
-
-## 7. 转录优先的纪要主路径与文档增强
-
-### 7.1 已完成：定义文档导入与删除生命周期
-
-分支：`docs/define-document-import-lifecycle`
-
-仅更新规格，固定：不可信文件边界、原生选择器来源、格式 allowlist、配额、meeting/document 状态、UUID 私有路径、staging/原子 rename、同会议 SHA-256 去重、会议/文档删除 tombstone、稳定错误码和后续分支。
-
-不得修改 Rust、React、Python、migration、依赖或 lockfile，不得声称文件导入、Docling 或删除协调已实现。
-
-验收：七份项目文档没有格式/配额/状态/分支冲突；Prettier、Markdown 链接、全项目检查、敏感信息和禁止文件扫描通过；PR 保持未合并等待用户决定。
-
-### 7.2 已完成：文档存储核心
-
-分支：`feat/document-storage-core`
-
-范围：
-
-- documents migration 与元数据 service
-- 应用私有 `meeting-data` 布局和受控相对路径
-- 安全流式复制、100 MiB/数量/累计配额和 UTF-8 文件名限制
-- allowlist、扩展/签名基础识别、OOXML 基础容器识别和未知类型 fail closed
-- SHA-256、同会议重复文件检测和原子 staging → 正式目录
-- 文档删除协调、会议删除 tombstone、`deleting/delete_failed` 与启动重试基础
-- 只使用合成文件，无正式 UI
-
-验收：覆盖大小变化/复制中超限、类型不一致、双重扩展、路径逃逸、重复内容、事务/rename 失败、删除失败和崩溃恢复；Windows 本机验证私有路径、原子移动、源文件不变和无孤儿文件。本 PR 不引入 Docling。
-
-完成基线：schema migration v2 创建 `documents`/`deletion_jobs`；Rust 内部 `DocumentService` 执行流式复制、SHA-256、签名/OOXML 中央目录/UTF-8 检查、固定配额、UUID 私有路径、删除协调和启动对账。应用生命周期文件锁拒绝第二写入实例，进程内 mutex 串行化 mutation；PR #12 没有 Document command、picker 或 React 文件 API。
-
-### 7.3 已完成：文档导入 UI
-
-分支：`feat/document-import-ui`
-
-范围：
-
-- Rust/Tauri Document Commands 和集中式、可 mock 的 `documentApi`
-- MeetingLens 原生文件选择器；WebView 不取得任意文件系统权限或绝对路径
-- 会议详情和会议中页面的文档列表、添加、导入进度、安全错误
-- 删除确认、pending/failed 状态和重试交互
-- Rust 最终执行状态、类型和配额规则；页面不能直接写状态
-
-验收：Windows 本机通过原生选择器导入 allowlist 合成文件，验证重启持久化、状态冻结、重复检测、删除/重试及无路径泄漏。本 PR 不解析文件。
-
-实现基线：React 只通过集中、可替换的 `documentApi` 调用六个自定义 commands；`select_and_import_documents` 在 Rust 中打开原生多选对话框，并通过有类型的 Tauri channel 回传有界进度。DTO 不包含源路径、存储路径、哈希或内部错误。会议详情提供完整列表、导入、删除和重试，会议中页面提供紧凑状态；最终状态、格式、去重和配额仍由 `DocumentService` 执行。
-
-### 7.4 已完成：Docling Worker 基础
-
-分支：`feat/docling-worker`
-
-范围：
-
-- 独立 Python Worker 环境、精确 lockfile、许可与模型下载门槛
-- 只接收 Rust 注册的受控文档引用，不接受任意绝对路径
-- 单请求进程、取消、超时、Windows Job Object 内存限制和完整子进程树回收
-- 页数、输入、协议和解析产物输出限制；固定相对产物清单及 Rust 二次完整性校验
-- 明确离线、CPU-only、无插件/远程服务/隐式模型下载；模型来源、revision 和本地 manifest 固定
-- 畸形协议、路径逃逸、篡改、崩溃、超时、取消和资源耗尽自动化测试
-
-验收：只使用合成文档；Windows/Python 3.12 本机验证 TXT/Markdown/CSV/Office/PDF/图片/OCR、内存、冷启动、取消和清理。CI 不下载模型，不能替代本地 PDF/OCR 验收。本 PR 不迁移数据库、不注册 Tauri command、不改 UI 或文档状态、不调用 DeepSeek。
-
-完成证据：PR #14 已合并。Worker 具备独立 Python 3.12/uv lock、显式离线模型、JSONL stdio、Windows Job Object、4 GiB 限制、超时/取消/崩溃回收及 TXT/Markdown/CSV/Office/PDF/图片/OCR 本机 Smoke；尚未接数据库、Provider、Commands 或 UI。Docling 作为后续参考文档增强保留，不是 transcript-only 纪要的前置依赖。
-
-### 7.5 转录与纪要规格对齐（已完成，PR #15）
-
-分支：`docs/transcript-and-summary-spec`
-
-纯文档范围：冻结产品核心价值、`transcript_sources`/`transcript_segments`、相对 offset、输入/删除/修正语义、Summary 输入快照、evidence 规则、三个模板和首页快速入口。不得修改代码、migration、Provider 契约实现、依赖或 lockfile。
-
-验收：PR #1–#14 状态正确；七份核心文档与 Worker README 不再保留旧路线、阶段、数据模型或时间语义冲突；格式、链接、全项目和敏感信息检查通过。PR #15 已完成并合并。
-
-### 7.6 国际化与开发预览手册（已完成，PR #16）
-
-分支：`feat/i18n-user-guide-foundation`
-
-横向范围：一个安装包内提供 `zh-CN` 与 `en-US`，以 `en-US` 可靠回退；设置页即时切换并只将允许的 `meetinglens.uiLocale` 枚举保存为非敏感 WebView 偏好；当前 UI 状态、稳定错误码、日期、数字和文件大小集中本地化；提供安全静态 Help 页面和结构一致的中英文开发预览使用手册。
-
-该阶段没有创建 migration，没有改变会议、文档或 Provider 数据，也没有自动把 UI locale 当作未来纪要输出语言；它未实现 transcript、DeepSeek、Docling 编排、音频或屏幕能力。PR #16 已完成并合并。
-
-### 7.7 简约三模式规格对齐（已完成，PR #17）
-
-分支：`docs/simplified-three-mode-spec`
-
-纯文档范围：冻结三种入口、共享数据流、“原始音频/逐字稿/会议纪要”术语、阶段摘要触发器、权限降级、首轮明确不做和新的小 PR 顺序。不得修改 React、Rust、Python、migration、依赖或 lockfile。
-
-验收：`SIMPLIFIED_MODE_SPEC.md` 与 `AGENTS.md`、`PRODUCT_SPEC.md`、`ARCHITECTURE.md`、`DATA_MODEL.md`、`SECURITY.md`、`README.md` 使用相同分支名和边界；旧版未实现路线被明确冻结；PR #16 的 i18n、Help 和双语手册继续保留且与三模式现状说明一致。PR #17 已完成并合并。
-
-## 8. 总结模式
-
-### 8.1 Transcript Data Core（已完成，PR #18）
-
-分支：`feat/transcript-data-core`
-
-范围：
-
-- schema v3：`transcript_sources`、`transcript_segments` 和必要索引
-- 粘贴 UTF-8、TXT、SRT、VTT 的轻量同步 parser，不调用 Docling/网络
-- `pasted_text/imported_txt/imported_srt/imported_vtt`；`live_asr/platform_export` 仅保留
-- 2 MiB 粘贴、10 MiB 文件、20,000 segments/source、64 KiB/segment 和严格控制字符限制
-- 同会议来源 SHA-256 去重、revision、source/segment 删除语义
-- 相对 `start_offset_ms/end_offset_ms` 与可空 source `base_started_at`
-
-本阶段不做 UI、Commands、DeepSeek、平台专用 adapters 或原始转录文件长期存储。实现时同步调整 Provider/API 的 `TranscriptionSegment` 时间字段，不能保留 ISO 与 offset 两套真相。
-
-完成证据：PR #18 已完成 schema v3、四类轻量输入解析、同会议去重、segment revision、source 删除、稳定 Summary 输入 DTO、v2 → v3 升级与 Windows 本机持久化 Smoke，并已合并。
-
-### 8.2 Transcript Command API（已完成，PR #19）
-
-分支：`feat/transcript-command-api`
-
-范围：
-
-- Transcript Tauri Commands、集中式 `transcriptApi` 和严格无路径 DTO
-- Rust 原生单文件 TXT/SRT/VTT 选择器；取消为无副作用的正常结果
-- 原子创建 draft meeting 与 transcript，或向可接受状态的既有 meeting 添加 transcript
-- source/segment 查询、乐观 revision 修正、source 删除和固定导入策略
-- WebView 不获得文件路径或 dialog/fs/shell/process/http 权限
-
-本 PR 不实现正式页面、首页快速入口、DeepSeek、Summary schema/Provider、平台专用导出、视频/音频文件转录、真实音频、屏幕或 Docling 接线。
-
-完成证据：PR #19 已交付 10 个安全 Transcript Commands、集中式 `transcriptApi`、Rust 原生 TXT/SRT/VTT 选择器、原子 meeting + transcript 创建、向既有 meeting 添加、source/segment 查询、乐观 revision 修正与 source 删除；路径不进入 WebView，取消不创建空 meeting。Windows 本机、SQLite 完整性和 CI 验收通过后已合并。
-
-### 8.3 Summary Mode Input UI（已完成，PR #20）
-
-分支：`feat/summary-mode-input-ui`
-
-范围：首页三个模式入口中的总结模式、粘贴/原生导入交互、来源/片段预览、基础 speaker/正文修正，以及不承诺可用的实时模式状态说明。只消费已合并的 `transcriptApi`；页面不得直接调用 `invoke`，不得取得路径或引入第二套 parser。单个来源最多允许 20,000 个 segments，因此本 PR 必须通过稳定 `ordinal` 顺序和生产单页上限 200 的后端分页读取，不能先取得全量再在 React 切片。为避免逐条修改同一来源中的重复标签，可以增加 source-scoped 批量说话人显示名修正：只更新匹配 segment 的 `speaker_name`、revision 和 `corrected_at`，保留 `speaker_label`，不得跨 source/meeting，也不得引入声纹或身份推断。
-
-本 PR 不调用 DeepSeek，不新增 transcript/Summary schema，不实现 Docling 接线、真实音频、屏幕、翻译或平台专用 adapter。
-
-完成证据：PR #20 已交付三模式首页、总结模式粘贴与 Rust 原生 TXT/SRT/VTT 导入、来源与后端有界分页、正文修正和 source-scoped speaker 显示名修正；禁用的纪要入口不调用网络，Windows 本机、SQLite 持久化和 CI 验收通过后已合并。
-
-### 8.4 Summary Run Core（已完成，PR #21）
-
-分支：`feat/summary-run-core`
-
-范围：schema v4 的 `summaries`、`summary_sources` 与 `evidence_items`，Summary run/series/revision、transcript-only 不可变 input snapshot、稳定状态/错误、资格校验和 Rust `SummaryProvider` 边界。每个新系列从 revision 1 开始，`series_id + revision` 唯一；重新生成在事务内分配下一 revision 并重新冻结当前输入，不覆盖旧 run。快照实际复制 source/segment IDs、segment revision、source/segment/global ordinal、source 显示元数据、speaker label/name、offset、规范化正文、language、confidence、`is_final` 和快照时间；Provider 运行时只读快照，不回读 live segment。
-
-本阶段只创建 `run_purpose=final`、`trigger_kind=manual`，每个 run 最多冻结 20,000 个 final segments 和 10 MiB UTF-8 正文，超限整体拒绝、不截断。状态机固定为 `queued → running → completed/failed/cancelled` 和 `queued → cancelled`；启动恢复把遗留 `running` 标为 `failed + summary_interrupted`。确定性 Rust Mock 不读取 SecretStore、环境凭据、文件、Sidecar 或网络；Provider 输出必须先在 Rust 中完成结构、大小和 evidence allowlist 校验，再原子写入结果与当次实际引用的 evidence，未知或跨 run ID 必须拒绝。
-
-本 PR 交付 `get_summary_policy`、`create_summary_run`、`create_summary_revision`、`execute_summary_run`、`get_summary_run`、`list_summary_runs`、`cancel_summary_run` 和 `list_summary_evidence` 八个最小 Tauri Commands，以及集中式 TypeScript `summaryApi`。WebView 只提交用户选择和 run ID，不能提交 Provider 结果或 evidence，也不获得 dialog/fs/shell/process/http 权限。生成资格允许 `draft/recording/ready + transcript`，禁止 `deleting/delete_failed`、空输入和无法安全冻结的输入；不得新增 summary 型 meeting 状态。
-
-所有 command/result DTO（含嵌套结构化结果）统一 camelCase；run/evidence 列表均使用默认 50、最大 100 的 keyset 分页。schema 独立保存 `provider_mode`，当前固定 `mock`；revision lineage 由数据库约束同 meeting/series 的直接前驱，再由 Service 在 IMMEDIATE 事务中保证 terminal/latest。竞态 stale base 与未知/重复/跨 run evidence 分别返回 `summary_revision_conflict` 和 `summary_evidence_invalid`。
-
-segment 修正只把依赖旧 revision 的 run 标记 stale，不改变其快照或结果；queued/running run 使用的 source 删除稳定拒绝，terminal source 删除清理完整正文/显示元数据快照，只保留已引用的最小 evidence 并标记 `source_deleted`/stale。会议删除先取消 active Summary run，再通过既有协调器删除该会议的 summaries、snapshots 和 evidence。当前 PR 不实现 Consent、DeepSeek、正式纪要页面、持久编辑/导出、Docling、document/screen/manual-note evidence、checkpoint、音频、翻译或屏幕能力。
-
-验收必须用 development-only、系统 Temp 直属隔离 app-data 根完成两次 `npm run tauri dev`，并为两次启动合并与根目录 UUID 相同的合成 Tauri identifier，隔离 SQLite 与 WebView2 profile，不得触碰用户正常数据库或浏览器存储。第一次覆盖 queued/completed/evidence/stale/revision/cancel/source 删除与零外网/零正文浏览器持久化；第二次复验 run/result/revision/stale/evidence、遗留 running 恢复、SQLite integrity 和全部合成数据/文件/profile/进程/端口清理。production dist 不得包含 harness。完成证据：PR #21 在 CI 与 Windows 双启动隔离验收通过后已合并；下一阶段为 `feat/consent-data-core`。
-
-### 8.5 当前：Consent Data Core
-
-分支：`feat/consent-data-core`
-
-范围：通用 `consent_events` migration、capability allowlist、grant/revoke、当前应用会话失效、审计查询和稳定 commands/API。不得访问设备、调用外部 Provider、保存正文/凭据或增加产品工作区。后续 Summary、音频、翻译、checkpoint 和屏幕阶段只复用并在文档先行的前提下扩展该能力，不得各建一套授权记录。
-
-### 8.6 DeepSeek Summary Provider
+- 定义 Personal Edition 当前目标；
+- 将实时翻译、实时采集、独立会议模式、Structured Visuals 和商业分发能力标为 Frozen / Deferred；
+- 取消独立 Consent Data Core；
+- 简化编辑、Docling 编排、PR 粒度和本机验收；
+- 统一后续最短路线。
+
+本 PR 只修改权威文档。不得修改 Rust、TypeScript/React、Python、SQL、migration、依赖、lockfile、Tauri Commands、权限或 CSP；不得添加 DeepSeek、Consent 表、faster-whisper、音频依赖或 Docling 产品接线；不得创建下一阶段分支。
+
+## 5. 下一阶段：DeepSeek Summary Provider
 
 分支：`feat/summary-provider-deepseek`
 
-范围：Rust 从 SecretStore 取得 key、受限 DeepSeek adapter、超时/重试/取消、请求/响应 schema、外发同意记录和日志脱敏。不得新增 schema、修改转录持久化或实现正式结果 UI。
+预期顺序：PR #24；PR 编号只是预期，分支名与能力边界才是权威标识。
 
-真实 DeepSeek 调用会产生外部数据处理和潜在费用；实现前必须重新向用户确认 Provider、模型、价格/条款和发送范围。测试只使用 Mock 与合成数据，不得消费用户曾在聊天中提供的测试 key。
+这是 PR #23 合并后唯一明确的下一阶段。范围可以在一个完整功能 PR 内包含：
 
-### 8.7 Summary Mode Minutes Workspace
+- Rust `SummaryProvider` 的受限 DeepSeek adapter；
+- 只由受信任 Rust 代码从 Windows Credential Manager `SecretStore` 读取 API Key；
+- 真实 DeepSeek HTTPS 请求、超时、取消和安全错误；
+- 严格、版本化的响应解析与大小/数量限制；
+- 继续由 Rust 验证 run-local evidence allowlist，并原子提交结果；
+- 第一次准备外发时显示明确确认，说明 Provider 为 DeepSeek，且只发送用户本次选择的规范化转录内容；
+- “本次同意”“记住我的选择”“取消”；
+- 本地保留实现所需的最小时间戳或状态；未确认、没有 Key 或发送范围为空时 fail closed；
+- 与实现同步更新架构、安全、README、开发计划和中英文用户指南。
+
+Personal Edition 当前不建立通用 `consent_events` 审计体系，不创建 Consent 查询页、多用户 Consent、复杂会话失效矩阵或企业合规导出。最小确认状态的具体持久化设计由本 PR 根据实际实现决定；不得修改既有 migration，也不得破坏 schema v4 的不可变快照、series/revision、状态机或 Rust Provider 权威边界。
+
+这套最小 Consent 只适用于单人自用版，不是面向团队、客户或公众分发的企业合规方案。真实 Provider 会产生外部数据处理和潜在费用；开始实现前仍须用户明确批准 Provider、模型、价格/条款和发送范围。测试只使用 Mock 与合成数据，不得读取聊天中出现过的 key，不得从 `.env`、环境变量、Python 或命令行消费真实 DeepSeek 凭据。
+
+本阶段不实现完整纪要结果页面、Markdown 文件保存、持久正文编辑、Docling、录音文件转录、实时功能或独立 Consent schema。
+
+里程碑：
+
+```text
+真实 AI Provider 接通，但正式日常纪要工作区尚未完成
+```
+
+## 6. 随后：Summary Mode Minutes
 
 分支：`feat/summary-mode-minutes`
 
-范围：来源/模板/语言选择、外发前的 segment 数/时间范围/speaker/数据类型预览、本次确认、运行状态、结果、有效 evidence 导航，以及 Markdown 查看、复制和下载。只集成已合并的 Summary core/Provider，不新增数据库、Provider、Docling、DOCX 或持久编辑。
+预期顺序：PR #25。
 
-模板为详实会议纪要、简洁会议总结、行动项与决定清单；输出为中文、英文或双语。不得发明参会人、负责人、截止日期或共识；缺负责人标“未分配”，缺截止日期为空。每项关键决定、行动项和争议必须带当前快照中的有效 evidence。
+范围：
 
-### 8.8 Summary Editing and Export
+- 来源、模板和中文/英文/双语输出选择；
+- 正式生成入口、运行状态和安全错误；
+- 纪要结果页、Markdown 展示和有效 evidence 导航；
+- 一键复制和 Markdown 文件保存；
+- 修改纪要正文并保存当前结果；
+- 整份重新生成；新结果继续使用既有 series/revision，不覆盖旧 revision；
+- 对已实现 stale 字段提供满足当前用户流程的最小说明；
+- 同步更新所有受影响文档和中英文用户说明。
 
-分支：`feat/summary-editing-export`
+本阶段不开发章节/段落级 regenerate、自动局部更新、复杂 stale 提示、编辑历史时间线、多人协作、冲突合并、DOCX/PDF 导出、Office 兼容性矩阵、Docling 或音频转录。
 
-范围：用户编辑保存、summary revision、输入变化 stale 提示、speaker 修正后显式重新生成、章节级重生成、DOCX 和完整历史。重新生成不能覆盖用户编辑章节，后台不得静默重生成；PDF 留到产品化阶段。
+模型不得发明参会人、负责人、截止日期或会议共识；关键决定、行动项和争议必须引用当前 run 的有效 evidence。重新生成不得静默覆盖旧 revision 或用户已保存的结果。
 
-## 9. 总结模式参考材料增强
+日常可用里程碑：
 
-该阶段只在 transcript-only 纪要、工作区和编辑导出闭环完成后开始，并固定拆为两个顺序 PR。Docling 不得成为第一份 transcript-only 纪要的前置条件。
+```text
+★ 粘贴或导入转录
+→ 生成真实纪要
+→ 查看和修改
+→ 复制或保存 Markdown
+```
 
-### 9.1 Document Parsing Orchestration
+## 7. 然后：Audio-file Transcription
+
+分支：`feat/audio-file-transcription`
+
+预期顺序：PR #26。
+
+范围：
+
+- 用户通过 Rust 原生选择器主动导入会议录音文件；
+- 本地 faster-whisper、CPU int8；
+- 每个受控请求使用一次性 Worker 进程，复用 Docling Worker 已验证的进程隔离、清理和协议原则；
+- Rust 控制路径、输入校验、资源上限、取消、进程树回收和安全错误；
+- 转写结果写入既有 `transcript_sources` / `transcript_segments`，进入现有 Transcript Workspace 和 Summary pipeline；
+- 如需 schema 变化，基于合并时最新版本追加 migration 并完成高风险验收；不得复用或修改 v1–v4。
+
+本阶段不做实时音频、WASAPI、麦克风/系统音频采集、实时字幕、实时 ASR、实时 diarization、说话人身份推断、实时翻译或第二套 transcript 模型。
+
+里程碑：
+
+```text
+覆盖使用其他软件录制、会后批量转写并生成纪要的场景
+```
+
+## 8. 再后：简化 Docling 编排
 
 分支：`feat/document-parsing-orchestration`
 
-范围：基于合并时最新 schema 顺序递增 migration，建立 parse jobs、调用已完成的隔离 Docling Worker、持久化文档状态转换、原子提交受控 artifacts，并实现取消、重试、崩溃恢复和安全 UI。本 PR 不调用 Summary Provider，不创建 document evidence，不实现音频。
+预期顺序：PR #27。
 
-### 9.2 Document Evidence Index
+该阶段在一个明确用户能力内完成必要的数据、Rust 编排、Commands/API 和 UI：
 
-分支：`feat/document-evidence-index`
+- 将已完成的隔离 Docling Worker 接入正式文档生命周期；
+- 只允许 Rust 注册、校验且位于受控私有根的文档进入 Worker；
+- 原子提交经过 Rust 二次验证的解析产物；
+- 生成 document chunks 和 document evidence，并接入既有 Summary pipeline；
+- 解析失败自动重试一次；再次失败后显示稳定安全错误并提示用户手动重新导入；
+- 维持 transcript 与 document 的不同语义和 evidence 边界；
+- 同步实现必要的删除协调和文档更新。
 
-范围：创建 `document_chunks` 及页码、章节、表格和结构位置，生成经过 allowlist 校验的 document evidence，并接入既有 Summary pipeline。文档提供背景和材料，不能在没有 transcript 或人工确认时自动证明会议决定。本 PR 不创建第二套 Summary 或 transcript 体系。
+本阶段不建立通用 processing job 调度器、多级自动恢复、长期 checkpoint、复杂取消矩阵、崩溃后自动续跑、多次指数退避或企业级监控面板。不得向 React 暴露路径，不得静默外发文件，不得让文档在缺少 transcript 或用户确认时自动证明会议决定。
 
-两个 PR 完成后，总结模式可在同一纪要管线中使用 PPT、PDF、Word 等参考材料；粘贴/TXT/SRT/VTT 仍使用 Rust 轻量 parser。文档中写着某项计划不等于会议已经确认该计划。
+PDF、DOCX、PPTX 等继续是参考文档输入格式；冻结的是 DOCX/PDF 纪要导出，不得混淆输入解析与输出格式。
 
-## 10. 共享实时采集与 ASR
+里程碑：
 
-### 10.1 Realtime Capture Foundation
+```text
+会议材料可以作为受控背景证据进入既有纪要管线
+```
 
-该基础固定拆为三个顺序 PR：
-
-1. `feat/live-session-data-core`：可空 workflow mode 提示、capture session、可选音频 artifact/保留策略和删除协调；复用已有 consent service，不访问设备、不启动进程。
-2. `feat/sidecar-supervisor`：sidecar 打包、随机端口接线、健康恢复、崩溃重启、退出清理、孤儿进程回收和生命周期安全日志。
-3. `feat/audio-capture`：WASAPI 系统音频与麦克风、设备枚举、分别同意、明确开始/停止、持续采集指示和异常恢复；只消费既有数据/删除能力，不新增 schema。
-
-保存完整听录文本、保存原始音频和保存屏幕关键帧是三个独立选项；原始音频默认关闭。“不导出逐字稿”不能被实现为“没有规范化转录”。
-
-### 10.2 Real-time ASR
-
-分支：`feat/realtime-transcription`
-
-范围：实时 ASR 直接写入既有 `transcript_sources/transcript_segments`，实现片段顺序/去重、相对 offset、CPU 回退、取消与会后校正入口。不得创建第二套转录模型，也不得顺带实现翻译、屏幕或说话人分离。
-
-验收：`feat/live-session-data-core` 使用合成会话与保留/删除场景验证数据边界；`feat/sidecar-supervisor` 使用故障注入并在 Windows 本机验证启动、恢复和进程回收；只有 `feat/audio-capture` 与 `feat/realtime-transcription` 使用合成音频自动测试，并在 Windows 本机验证真实设备、权限、采集与 ASR 行为。所有涉及进程或文件句柄的阶段在应用退出或崩溃后都不得留下孤儿进程或句柄，日志不得包含音频、转录正文、设备 ID 或绝对用户路径。
-
-## 11. 屏幕与窗口上下文
-
-### 11.1 Window Context
+## 9. 可选：Window Context
 
 分支：`feat/window-context`
 
-范围：用户显式选择单个目标窗口、验证窗口身份、持续显示正在读取的应用、支持暂停/撤销并提取 accessibility text。目标窗口关闭、身份变化或捕获对象被替换时必须立即暂停并要求重新确认；不得默认监控全部屏幕。
+预期顺序：PR #28 或更后。只有用户确认实际经常需要屏幕分享上下文时才启动。
 
-### 11.2 Screen OCR
+要求：
 
-分支：`feat/screen-ocr`
+- 用户明确选择一个具体窗口；
+- 持续显示当前目标，窗口身份变化、关闭或被替换时立即暂停并重新确认；
+- 优先使用可控的 accessibility text；
+- 默认不保存屏幕关键帧，不监控全部桌面；
+- screen evidence 与 transcript/document evidence 保持不同语义；
+- 不顺带实现 screen OCR、实时录音、翻译或会议模式工作区。
 
-范围：本地变化检测与 OCR 回退、敏感内容遮蔽、screen events 与 transcript 时间线对齐、用户确认的 evidence 和临时帧删除。屏幕关键帧默认不保存，画面变化本身不得自动确认决定或触发最终总结。
+## 10. Frozen / Deferred
 
-Screenpipe 只能是可替换的可选 Capture Provider，不得成为核心强依赖。采用前必须获得用户批准，并复审商业许可、默认采集范围、本地 API 暴露和 Windows 资源占用。
+以下能力当前不开发、不计入 Personal Edition 日常可用门槛，但不删除已完成基础，也不表示永久取消：
 
-## 12. 说话人分离与命名
+### 实时采集与实时语言栈
 
-### 12.1 Live Language Data Core
+- `feat/live-session-data-core`；
+- 完整 `feat/sidecar-supervisor` 路线；
+- `feat/audio-capture` 与 WASAPI 麦克风/系统音频采集；
+- `feat/realtime-transcription`；
+- `feat/live-language-data-core`；
+- `feat/speaker-diarization`；
+- `feat/realtime-translation-provider`；
+- `feat/checkpoint-summary-runtime`；
+- `feat/topic-checkpoints`；
+- `feat/translation-overlay`；
+- `feat/translation-mode-workspace`。
 
-分支：`feat/live-language-data-core`
+已完成的认证 Sidecar、Provider 契约和进程安全基础继续保留；冻结的是把它们扩展成完整实时产品栈。
 
-范围：权威 `translations` 表、segment revision 对应关系、会话级 `speaker_aliases`、checkpoint 增量快照/游标和必要索引。该纯数据阶段不得访问外部 Provider、调度定时任务或增加正式 UI；译文不得写回 `transcript_segments`。
+### 独立会议模式与屏幕增强
 
-### 12.2 Speaker Diarization and Naming
+- `feat/meeting-notes-core`；
+- `feat/meeting-mode-workspace`；
+- `feat/screen-ocr`；
+- 自动屏幕变化判断、持续全桌面监控和屏幕关键帧长期保存。
 
-分支：`feat/speaker-diarization`
+未来如恢复会议模式，必须优先复用录音文件/转录输入、现有 Transcript Workspace 与现有 Summary pipeline，不得建立第二套会议数据库、转录模型或 Summary pipeline。
 
-范围：会话级匿名 speaker 聚类、开场姓名校准、会后人工修改/合并，以及隔离的实时/会后校正 worker。不得默认保存 voice sample，不承诺跨会议声纹自动复用。Diart 与 WhisperX 必须保持独立环境、进程和 lockfile，采用模型前须审查条款和资源预算。
+### 复杂编辑、视觉与导出
 
-## 13. 实时翻译
+- 独立 `feat/summary-editing-export`；
+- 章节/段落级重生成、自动局部更新、复杂编辑时间线与协作冲突合并；
+- 独立 `feat/document-evidence-index`；document evidence 已并入简化 Docling 编排；
+- `feat/structured-visuals`、自动图表、自动流程图和模型生成可执行可视化；
+- DOCX/PDF 纪要导出、复杂版式模板和 Office 兼容性矩阵。
 
-### 13.1 Realtime Translation Provider
+### 商业分发
 
-分支：`feat/realtime-translation-provider`
+- 安装包完善、代码签名、SBOM、自动更新和托盘；
+- 商业发布、企业部署、企业审计与多人/账号体系。
 
-范围：只消费最终转录片段的实时 Translation Provider、持续外发的独立同意、关闭/取消、顺序、重试和错误脱敏。不得新增 schema、checkpoint 调度或正式 UI。真实外部 Provider 启用前必须重新取得用户对费用、条款和持续发送范围的批准。
+已有构建能力、依赖许可证记录和安全设计不得删除。未来若恢复分发，仍须补齐签名、许可证/SBOM、升级回滚、安装卸载和残留数据验收。
 
-### 13.2 Checkpoint Summary Runtime
+### 已取消的独立阶段
 
-分支：`feat/checkpoint-summary-runtime`
+`feat/consent-data-core` 不再作为独立阶段，也不属于 Frozen 功能分支。最小外发确认并入 `feat/summary-provider-deepseek`；不得重新创建通用 Consent schema PR，除非未来产品从 Personal Edition 扩展到需要重新设计合规模型，并先获得用户批准和更新权威文档。
 
-范围：用户手动触发和“每 5 分钟且存在新最终片段”的调度；每次只冻结上一个成功 checkpoint 后的新片段，失败重试复用同一快照；独立 `checkpoint_external_ai` 同意、关闭后取消排队任务。不得实现自动话题判断或正式页面。
+冻结阶段不得自行创建。只有用户明确解冻并先更新本文件的范围、数据边界和验收条件后，才可进入实现。
 
-### 13.3 Topic Checkpoints
+## 11. 风险分级测试与验收
 
-分支：`feat/topic-checkpoints`
+所有测试数据必须是合成数据。所有 PR 都必须运行 `git diff --check`、人工检查完整 diff、执行敏感信息门禁并等待 CI 全绿；未运行的检查必须明确报告。
 
-范围：在真实转录质量稳定后提供可确认、忽略或修正的话题边界建议。不得静默切段，不得把建议自动写成会议决定，也不得替代手动重点标记。
+### 11.1 文档 PR
 
-### 13.4 Translation Overlay
+最低要求：
 
-分支：`feat/translation-overlay`
+- Markdown/格式检查；
+- 文档链接检查；
+- 全仓路线、分支名和状态一致性检索；
+- `git diff --check`；
+- 确认没有代码、migration、依赖、lockfile、生成文件或禁止文件；
+- CI。
 
-范围：Windows 置顶、透明度、收起/展开、滚动、点击穿透和多显示器/DPI 验收。只消费已合并的转录和翻译能力，不新增 schema、Provider 或采集范围。
+PR #23 是迁移到新流程的文档 PR，自身仍须遵守任务开始时已有质量门；如果仓库现有规则要求 `npm run check`，本 PR 必须运行，不能用新写入的分级规则反过来跳过本次验收。
 
-## 14. 翻译模式与会议模式集成
+### 11.2 不修改 schema 的普通功能 PR
 
-### 14.1 Translation Mode Workspace
+最低要求：
 
-分支：`feat/translation-mode-workspace`
+- 所有相关 formatter、lint、typecheck、自动测试和构建；
+- 在 Windows 11 本机至少启动一次 `npm run tauri dev`；
+- 跑通主要用户流程以及关键失败/取消路径；
+- 检查 WebView 持久化、日志、错误和测试输出没有正文、密钥或私人路径；
+- 确认没有孤儿进程、临时文件或工作区残留。
 
-范围：只集成已合并的数据、Provider、speaker、checkpoint 和 overlay；显示原文/译文并允许手动改名，展示阶段摘要和会后从原始转录快照生成的最终纪要。不得新增 schema 或 Provider。
+### 11.3 修改 schema、migration、安全边界或真实网络的高风险 PR
 
-### 14.2 Meeting Notes Core
+除普通功能要求外，还必须按实际风险覆盖：
 
-分支：`feat/meeting-notes-core`
+- 从受支持旧版本升级到最新 migration；
+- schema version 与 migration checksum；
+- `PRAGMA integrity_check` 返回 `ok`；
+- `PRAGMA foreign_key_check` 无记录；
+- migration 中途失败、事务回滚和再次启动；
+- 必要的隔离 app-data、双启动或恢复验证；
+- 缺少 Key、缺少同意、空发送范围、超时、取消和错误响应均 fail closed；
+- MeetingLens 应用代码与 Mock 的网络边界、真实 Provider 的唯一允许目标，以及错误/日志不含 key、请求正文或外部响应正文；
+- 合成数据、文件、数据库、WebView profile、Worker、进程、句柄和端口清理。
 
-范围：可追溯的转录片段范围书签、独立用户文字笔记、修正/删除、Summary snapshot/evidence 接入和稳定 commands/API。不得增加会议模式页面、屏幕、OCR 或模型调用。
+双隔离 app-data 和完整双启动只在 migration、恢复、持久状态或安全边界确实需要时执行，不是所有普通 UI PR 的默认要求。CI 不能替代 Windows Credential Manager、原生文件选择器、Worker 进程、真实网络取消或窗口身份等本机行为验收。
 
-### 14.3 Meeting Mode Workspace
+当前标准检查命令包括：
 
-分支：`feat/meeting-mode-workspace`
+- `npm run format:check`
+- `npm run lint`
+- `npm run typecheck`
+- `npm run test`
+- `npm run test:sidecar`
+- `npm run build`
+- `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`
+- `cargo test --locked --manifest-path src-tauri/Cargo.toml`
+- `cargo check --locked --manifest-path src-tauri/Cargo.toml`
 
-范围：只集成已合并的实时转录、屏幕上下文、speaker、翻译、checkpoint 和 meeting notes；加入可选翻译、手动重点记录、阶段摘要、可选逐字稿导出和最终纪要。没有屏幕权限时仍必须可正常完成音频会议；没有音频时允许切换到总结模式。不得新增 schema 或 Provider。
+根据改动和最高风险选择相关检查；不得绕过适用的聚合门禁。
 
-### 14.4 后续结构化视觉
+## 12. 永久工程、安全与隐私约束
 
-`feat/structured-visuals` 只能从校验过且可追溯的数据生成固定时间线、行动项表或决定表，不执行模型生成代码，默认不生成图表。
+### Git 与 Merge
 
-## 15. 产品化：安装包与加固
+- 不直接在 `main` 开发、提交或 push；不 force push，不绕过分支保护。
+- auto-merge 默认关闭；只有用户针对明确 PR 发出当次合并指令后才可合并。
+- 合并一个 PR 不授权开始、合并或清理其他阶段。
 
-- `chore/windows-packaging`：Windows 安装包、签名、SBOM、升级/回滚、安装与卸载冒烟测试。
-- `feat/product-hardening`：托盘、诊断/隐私设置、长期稳定性、性能、崩溃恢复和删除完整性。
+### Migration 与数据
 
-验收必须包含用户本机安装、启动、升级、卸载和残留数据检查；仅有 CI bundle 成功不算完成。
+- migration 只能追加、在事务中执行并记录 checksum；不得修改、替换或复用已合并的 v1–v4 或任何后续 migration。
+- 数据层变化必须有自动测试；破坏性 migration、数据删除或不可逆转换必须先备份并获得用户批准。
+- schema v4 的 Summary series/revision、不可变 input snapshot、stale 字段、evidence 和 completed/failed/cancelled 状态机必须保留。
 
-## 16. 测试与验收矩阵
+### 凭据、网络与 Provider
 
-| 层级   | 自动化                              | 本地人工验收                 |
-| ------ | ----------------------------------- | ---------------------------- |
-| 文档   | Prettier、链接与冲突扫描            | 路线图/分支名审阅            |
-| React  | Vitest、Testing Library、typecheck  | Tauri 窗口完整流程           |
-| Python | unittest、Ruff、Python 3.12         | worker 启停、模型/资源行为   |
-| Rust   | fmt、test/check `--locked`          | 权限、文件、进程、设备行为   |
-| 安全   | secret/path/upload/fail-closed 测试 | 凭据库、同意、日志和删除验证 |
+- DeepSeek API Key 只能保存在 Windows Credential Manager，并由 Rust `SecretStore` 读取；不得进入 React、SQLite、日志、Python、环境变量或命令行。
+- React/WebView 不直接请求 DeepSeek，不提交 Provider 结果或 evidence，也不获得通用 HTTP、shell、process 或文件系统权限。
+- Rust 是持久 Summary run、快照、状态转换、Provider 调用、响应 schema、evidence allowlist 和原子提交的执行权威。
+- 未确认外发必须 fail closed。当前 Mock 和 MeetingLens 应用代码不外发会议内容；这不等于声称 WebView2 Runtime 在物理层面完全断网。
 
-所有测试数据均为合成数据。CI 失败时不得声称完成；Windows 桌面能力未做本机验收时，必须明确标记“自动化通过，本地验收待完成”。
+### 路径、文件与进程
 
-## 17. Definition of Done
+- 所有导入文件视为不可信数据。Rust 负责原生选择、类型/配额、流式复制、哈希、受控 UUID 路径和删除协调。
+- 源绝对路径不得进入 React、SQLite 或日志；原始文件名只作显示元数据，不参与路径拼接。
+- 所有文件访问必须确认最终路径仍位于批准私有根，并防止 traversal、UNC、ADS、reparse point 和 symlink 逃逸。
+- Worker 使用清理后的环境、受控输入/输出根、资源限制和完整进程树回收；不得静默外发文件。
 
-1. PR 范围与本计划对应阶段一致，且没有夹带下一阶段功能。
-2. 正常、失败、取消和安全路径有测试或明确的本机验收记录。
-3. 文档、类型、迁移和实现同步，直接依赖精确锁定。
-4. staged files 不含凭据、会议数据、录音、截图、上传文件、数据库或日志。
-5. diff 已检查，提交清晰，分支已 push，PR 描述包含测试与限制。
-6. CI 全绿；涉及 Windows 桌面行为时本机验收完成。
-7. PR 保持未自动合并，等待用户决定。
+### 错误、日志与 Git 内容
 
-## 18. 当前下一步
+- Commands/API 使用稳定错误码和安全消息；未知错误 fail closed，不返回 SQL、原生异常、绝对路径、key 或正文。
+- 普通日志只记录 allowlist 中的事件类型、安全 ID、状态码和耗时；转录正文、prompt、speaker、文件名、凭据和 Provider 请求/响应正文不得进入日志。
+- 用户文件、会议媒体、转录、截图、数据库、WAL/SHM、日志、崩溃转储、临时文件和构建产物不得进入 Git。
+- 提交前必须展示 staged 文件列表、检查完整 staged diff，并执行不回显疑似秘密原文的 secret/private-path/禁止扩展名扫描。
 
-PR #1–#21 已合并；三模式路线、i18n、Help、中英文开发预览手册、Docling Worker Foundation、Transcript Data Core、Transcript Command API、Summary Mode Input UI 和 Summary Run Core 已完成，Docling 尚未接入产品。PR #21 已交付 schema v4、持久不可变 transcript snapshot、run/series/revision、Rust zero-network Mock、evidence allowlist、稳定状态/错误/恢复、删除协调和开发 API；普通用户的“生成会议纪要”仍禁用，真实 AI 与正式结果 UI 仍不可用。下一阶段为 `feat/consent-data-core`。
+## 13. Definition of Done
 
-`feat/consent-data-core` 必须从已合并 PR #21 的最新 `main` 独立完成并停在待审 PR，不得夹带外部 Provider、正式纪要 UI、Docling、设备访问、音频、翻译或屏幕功能。只有该 PR 经用户审查并明确合并后，才进入仍需用户单独批准费用、条款和外发范围的 `feat/summary-provider-deepseek`。首个 transcript-only 纪要与编辑导出闭环完成后，必须先完成 `feat/document-parsing-orchestration` 和 `feat/document-evidence-index`，再进入实时采集与 ASR；Docling 仍不阻塞第一份纪要。未来 GitHub PR 编号只在实际创建后记录，不是计划契约。
+1. PR 只交付本计划中的一个明确能力，没有夹带下一阶段或 Frozen 能力。
+2. Data/API/UI 如在同一 PR 中交付，必须共同服务同一用户流程，并保持 Rust 与 WebView 信任边界清晰。
+3. 已按最高风险等级完成自动化和 Windows 本机验收；未运行项和限制明确报告。
+4. 文档、中英文用户说明、类型、schema 和实现同步；直接依赖精确锁定。
+5. staged 内容不含凭据、会议数据、录音、截图、上传文件、数据库、日志或私人路径。
+6. diff 已检查，提交清晰，分支已 push，PR 描述包含范围、测试、安全/隐私影响和限制。
+7. CI 全绿，auto-merge 关闭，PR 保持未合并等待用户决定。
+
+## 14. 当前下一步
+
+当前任务是完成并审查 `docs/personal-edition-descope` / PR #23，只修改权威文档并停在待审状态。
+
+PR #23 合并后，唯一明确下一阶段为：
+
+```text
+feat/summary-provider-deepseek
+```
+
+在用户明确批准并开始该阶段前，不得创建该分支、接入 DeepSeek 或实现最小 Consent。不得创建 `feat/consent-data-core`。Frozen / Deferred 阶段不得提前启动。

@@ -4,7 +4,7 @@
 
 MeetingLens 处理录音、转录、文档、屏幕上下文和 API 凭据，这些都属于高敏感数据。安全目标是：未经同意不采集、未经确认不外发、最小化本地暴露、允许完整删除，并让每个权限边界可检查。
 
-三模式的用户体验和能力边界以 `SIMPLIFIED_MODE_SPEC.md` 为准；本文件继续统一约束总结、翻译和会议模式的同意、外发、保留、删除和安全降级，不允许各模式另建安全例外。
+MeetingLens 当前采用 Personal Edition 基线，近期只推进总结模式；翻译、实时能力和独立会议模式工作区为 Frozen / Deferred。未来如解冻其他模式，仍必须复用本文件的同意、外发、保留、删除和安全降级边界，不得另建安全例外。
 
 ## 2. 保护资产
 
@@ -21,10 +21,10 @@ MeetingLens 处理录音、转录、文档、屏幕上下文和 API 凭据，这
 | -------------------- | ------------------------------------- | --------------------------------------------------- |
 | 意外提交             | `.env`、数据库或录音进入 Git          | 严格 `.gitignore`、staged 扫描、PR 检查             |
 | WebView 被利用       | XSS 调用本地命令                      | CSP、无远程内容、最小 Tauri capabilities            |
-| 本机进程访问 sidecar | 猜测端口并读取任务                    | loopback、随机端口、临时令牌、短超时                |
+| 本机进程访问 sidecar | 猜测端口并读取任务                    | loopback、临时令牌、短超时；随机端口当前 Deferred   |
 | 恶意上传文件         | 路径穿越、解析器漏洞、压缩炸弹        | MIME/大小/扩展联合校验、隔离目录、资源限制          |
 | 恶意转录文本         | 超大输入、控制字符、提示/URL/代码诱导 | 严格 UTF-8、有界同步解析、内容只作数据、不执行/联网 |
-| 外部数据泄漏         | 完整转录被默认发送                    | 明示同意、发送预览、裁剪和脱敏                      |
+| 外部数据泄漏         | 完整转录被默认发送                    | 明示确认、用户所选范围、Rust 最小化和 fail closed   |
 | 日志泄漏             | 错误堆栈包含正文或 key                | 结构化 allowlist 日志、集中脱敏                     |
 | 供应链风险           | npm/Python/Rust 依赖被劫持            | lockfile、依赖审计、最小依赖、CI 可复现安装         |
 | 不完整删除           | WAL、临时文件仍保留                   | 删除协调、WAL checkpoint、临时目录清理测试          |
@@ -33,14 +33,14 @@ MVP 1A-3B-1 的本地会话认证防止局域网设备、普通网页和未持�
 
 ## 4. 凭据管理
 
-### 开发阶段
+### 当前与开发阶段
 
-- API key 只存放于根目录 `.env`，该文件必须保持 Git ignored/untracked。
-- 代码从进程环境读取 `DEEPSEEK_API_KEY`，不得提供硬编码回退值。
-- `.env.example` 只能包含空值或明显占位符。
+- 当前真实 DeepSeek Provider 尚未接入，应用代码不消费真实 API key，也不发起 DeepSeek 请求。
+- 真实 DeepSeek 凭据不得保存在 `.env` 或环境变量中；未来 Rust Provider 不提供明文开发回退，只能通过 `SecretStore` 消费 key。
+- `.env.example` 只能包含空值或明显的非秘密占位符，不得暗示 Provider 会从环境中读取 key。
 - 测试使用 fake provider，不调用真实付费 API。
 
-### 发布阶段
+### SecretStore 基线
 
 - API key 存入当前 Windows 用户的 Credential Manager Generic Credential，并通过可替换的 Rust `SecretStore` 接口访问；正式 target 固定为 `com.gray.meetinglens/secret/deepseek-api-key`。
 - WebView 只可 set/status/delete，不能读回、显示、复制或回填 key；`get_for_backend` 不注册为 Tauri command，当前也不把 key 传给 Python Sidecar。
@@ -50,13 +50,17 @@ MVP 1A-3B-1 的本地会话认证防止局域网设备、普通网页和未持�
 - Windows 11 发布版使用 Windows Credential Manager；不得把 key 放入 WebView 的 localStorage、前端 bundle 或 sidecar 命令行参数。
 - 非 Windows 平台 fail closed，不使用文件、SQLite、注册表明文或浏览器存储回退。
 
+下一阶段的真实 Provider 必须由 Rust 通过 `get_for_backend` 从 SecretStore 取得 key。API key 不得进入 React 读取面、SQLite、日志、Python、Sidecar 或命令行；缺少 key 时请求 fail closed。
+
 界面语言是非敏感本地偏好。WebView 只可在命名空间键 `meetinglens.uiLocale` 保存允许的 `zh-CN` 或 `en-US` 枚举；不得在该存储中写入会议、文档、转录、纪要、凭据或路径。未知、损坏或不可访问的值安全回退到系统语言规则和 `en-US`，不得用任意值构造语言包路径、远程请求或动态 import。清除 WebView 存储只重置界面语言，不影响 SQLite、私有文件或 SecretStore。
 
-当前边界不防御取得同等 Windows 用户权限、可读取进程内存或用户 Credential Manager 的恶意软件，也不防御管理员/内核级攻击者。DeepSeek 网络有效性测试、真实调用和 Provider 消费凭据均不属于本阶段。
+当前边界不防御取得同等 Windows 用户权限、可读取进程内存或用户 Credential Manager 的恶意软件，也不防御管理员/内核级攻击者。DeepSeek 网络有效性测试、真实调用和 Provider 消费凭据均尚未实现。
 
 任何已经出现在聊天、日志或提交中的 key 都应视为已泄漏并立即撤销，而不是仅删除文件。
 
-## 5. 录音与同意
+## 5. 实时录音与设备同意（Frozen / Deferred）
+
+当前 Personal Edition 的近期音频路线是用户主动导入录音文件后执行本地一次性批量转录，不申请麦克风或系统音频权限。以下规则保留给未来可能解冻的实时采集能力：
 
 - 应用启动或仅选择模式时不得自动申请、打开或探测音频/屏幕内容。
 - 麦克风、系统音频和保存原始音频是三个独立选择；开始采集必须由明确点击触发，并持续显示不可忽略的来源指示。
@@ -69,38 +73,39 @@ MVP 1A-3B-1 的本地会话认证防止局域网设备、普通网页和未持�
 
 MVP 1A-3A 的 `MockCaptureProvider` 不访问真实设备、不申请权限，也不生成媒体文件；“microphone/systemAudio/window/screen”只作为未来契约类型和显式 Mock 来源存在。真实权限与同意流程只能在对应后续阶段实现。
 
-## 6. 屏幕上下文
+## 6. 屏幕上下文（可选）
 
-- 默认关闭，只采集用户选定窗口或区域。
-- 单应用选择优先于全屏；全屏捕获属于后续高级选项。
-- 首选本地变化检测和 OCR 后保存用户确认的文字片段，不长期保存原始截图。
-- 保存前提供预览、编辑和取消；密码框、通知和常见敏感模式应自动遮蔽。
+- 默认关闭，当前可选阶段只读取用户明确选定的具体窗口。
+- 当前可选阶段只允许用户明确选择具体窗口。全屏捕获和持续监控整个桌面属于 Frozen / Deferred，不属于 `feat/window-context`。
+- 当前首选受控 accessibility text，只保存用户确认的文字片段或 screen evidence，默认不保存屏幕关键帧。
+- screen OCR、区域/全屏捕获、截图缓存和自动敏感区域遮蔽属于 Frozen / Deferred；未来解冻时仍须在保存前提供预览、编辑和取消。
 - 不对屏幕数据执行后台连续上传。
 - 只允许捕获用户显式选定的窗口；以稳定窗口句柄和进程身份复核目标，窗口关闭、句柄/进程身份失效或权限撤销时立即暂停。普通标题变化不能单独撤销捕获。
 - 屏幕变化本身不能直接证明话题变化、决定或行动项，也不能单独触发最终总结。
-- Screenpipe 只能作为可替换的可选 Capture Provider。采用前必须先复核商业授权、版本、默认采集行为、本地 API 暴露和资源占用；未经批准不得把它作为常驻全局采集器或核心依赖。
+- Screenpipe 只保留为未来解冻时可重新评估的 Capture Provider 候选。采用前必须先复核商业授权、版本、默认采集行为、本地 API 暴露和资源占用；未经批准不得把它作为常驻全局采集器或核心依赖。
 
 ## 7. 外部 AI 数据流
 
-PR #21 已完成的 `feat/summary-run-core` 不属于外部 AI 数据流：Rust `DeterministicMockSummaryProvider` 只读取 SQLite 中已经冻结的 transcript snapshot，不读取 SecretStore、环境凭据、文件、Sidecar 或网络。它产生的持久结果只用于开发/协议验证，不能被 UI 描述为真实 AI 纪要。下列要求从后续真实 DeepSeek Provider 阶段开始适用。
+PR #21 已完成的 `feat/summary-run-core` 不属于外部 AI 数据流：Rust `DeterministicMockSummaryProvider` 只读取 SQLite 中已经冻结的 transcript snapshot，不读取 SecretStore、环境凭据、文件、Sidecar 或网络。它产生的持久结果只用于开发/协议验证，不能被 UI 描述为真实 AI 纪要。这里的“零网络”只表示 MeetingLens 应用代码和 Mock Provider 不外发数据，不代表 WebView2 Runtime 在物理层面完全断网。真实 DeepSeek 尚未接入；下列要求从 `feat/summary-provider-deepseek` 开始适用。
 
 调用 DeepSeek 前必须：
 
-1. 显示 provider、将发送的数据范围和用途。
-2. 让用户确认本次发送；同意范围写入 `consent_events`。
-3. 显示选定 transcript sources、segment 数量、时间范围、speaker、模板、输出语言、是否包含文档来源和外发内容类型，并允许取消选择来源。
-4. 优先发送不可变输入快照中的规范化转录片段，不发送音频、截图、原始转录文件或原始参考文档。
-5. 执行可配置脱敏，并让用户查看最终文本预览。
-6. 设置连接/读取超时和最大重试，错误中不得包含请求正文或 key。
-7. 将 AI 输出标记为草稿，并保留来源链接供核验。
+1. 界面显示 Provider、用途以及将发送的用户所选转录范围，明确数据会发送给 DeepSeek；Rust 对该范围和确认状态作最终校验。
+2. 第一次准备外发时让用户选择“本次同意”“记住我的选择”或“取消”；没有有效确认时 fail closed。
+3. 只发送不可变输入快照中的用户所选规范化转录片段，不发送音频、截图、原始转录文件或原始参考文档。
+4. 只有 Rust Provider 可以从 SecretStore 读取 key 和发起 HTTPS 请求；React/WebView、Python 和 Sidecar 不持有 key，也不直接请求 DeepSeek。
+5. 设置连接/读取超时、受限重试和取消；错误、日志和 command response 不得包含请求正文、响应全文或 key。
+6. 严格解析和验证 Provider 响应，继续由 Rust 验证 evidence allowlist，再原子提交结果。
 
-持续实时翻译、定时 checkpoint 和一次性纪要生成是三个不同的外发目的，必须分别同意。checkpoint 同意必须显示频率、发送窗口和 Provider；每次只冻结上一个成功 checkpoint 后的新增最终片段，失败重试复用同一快照。实时界面需持续显示 Provider、目标语言、发送内容类型和停止入口；关闭对应能力后不得继续排队或发送新片段。阶段摘要和最终纪要都不能把原始音频、截图或用户文件直接发送给外部 Provider。
+持续实时翻译和定时 checkpoint 当前为 Frozen / Deferred。若未来解冻，它们仍是区别于一次性纪要生成的外发目的，必须分别同意并提供持续状态与停止入口；任何阶段都不能把原始音频、截图或用户文件直接发送给外部 Provider。
 
-采集和持续外发同意只对当前应用会话有效，重启后必须重新确认；历史 `granted` 事件仅用于审计，不能自动重新打开设备或恢复发送。
+未来设备采集和持续外发的同意仍只对当前应用会话有效，不能因历史状态自动重新打开设备或恢复发送。Personal Edition 的一次性 DeepSeek Summary 确认可以由用户明确选择“记住我的选择”；本地只保留实现所需的最小时间或状态，不建立通用 Consent 审计体系。
 
 提供商的保留政策和地区处理条款必须在启用生产集成前重新审查。
 
-DeepSeek 生产适配器必须使用当前模型名 `deepseek-v4-flash` / `deepseek-v4-pro`，base URL 仅允许 HTTPS；自定义地址需由用户明确配置并重新显示数据接收方。
+DeepSeek Provider PR 必须重新复核可用模型、价格、数据条款和 endpoint；base URL 仅允许 HTTPS，自定义地址需由用户明确配置并重新显示数据接收方。
+
+这套最小 Consent 只适用于单人自用版本，不足以作为向团队、客户或公众分发时的企业合规方案。
 
 ## 8. Tauri 安全基线
 
@@ -118,15 +123,17 @@ DeepSeek 生产适配器必须使用当前模型名 `deepseek-v4-flash` / `deeps
 ## 9. Sidecar 安全基线
 
 - 默认只监听 `127.0.0.1`，启动失败时不得退回 `0.0.0.0`。
-- 发布模式使用随机高位端口和高熵会话 token。
+- 当前使用 loopback 和高熵会话 token；随机高位端口属于 Deferred 的完整 supervisor 加固。
 - `/health` 只返回状态和版本；所有端点（包括 `/health`）默认要求认证。
 - MVP 1A-3B-1 继续使用固定开发端口，但只允许 `127.0.0.1`，并由 Rust 每次启动生成至少 32 bytes 随机数据的临时 bearer token。
 - Token 只通过子进程环境传递，不写入命令行、URL、文件、SQLite、WebView、日志或凭据库；应用重启后旧会话失效。
 - Rust 是唯一授权业务调用方并集中注入 Authorization Header；React/WebView 不直接请求 Sidecar，也不持有 token。
-- 随机端口、打包二进制、崩溃重启、健康监控和孤儿进程回收由 `feat/sidecar-supervisor` 完成。
+- 随机端口、打包二进制、崩溃重启、健康监控和孤儿进程回收属于 Deferred，不是当前 Personal Edition 日常可用的前置条件。
 - 限制请求体大小、并发任务数、单任务运行时间和临时磁盘使用量。
 - 任务只引用由 Rust 注册的 artifact ID，不接受任意绝对路径。
 - 进程退出时清理临时文件；启动时清理已过期 job 目录。
+
+计划中的录音文件转录不通过常驻 HTTP Sidecar，而由 Rust 每次启动一个 CPU int8 faster-whisper Worker。该 Worker 不监听端口、不继承凭据，并复用 Docling 已建立的程序 allowlist、受控文件引用、资源/超时、取消、输出校验和进程树回收边界。
 
 ## 10. 文本转录与参考文档输入防护
 
@@ -154,7 +161,7 @@ DeepSeek 生产适配器必须使用当前模型名 `deepseek-v4-flash` / `deeps
 
 删除 source 时同时处理其 segments。queued/running Summary run 使用该 source 时稳定拒绝 `transcript_source_in_use`；不采用隐式 pending，也不在 run 中途移除输入。terminal run 不阻塞删除：同一事务先把依赖结果标记 `source_deleted` stale，保留实际引用且最多 1,024 UTF-8 bytes 的 evidence excerpt、speaker、offset/ordinal 和 revision，清空完整 snapshot 正文与非必要显示元数据，再删除 live source/segments。segment 修正产生新 revision，并把依赖旧 revision 的 run 标记 `segment_revised` stale；旧快照和结果保持不变，不得后台静默重新生成或覆盖用户编辑。
 
-Summary Run Core 的 development-only Windows harness 必须使用 Rust 校验过的系统 Temp 直属隔离 app-data 根，并让两次启动合并 UUID 相同的 `com.gray.meetinglens.summarysmoke.<uuid>` 合成 Tauri identifier；Rust 对根目录与 identifier 失配 fail closed，SQLite 和 WebView2 profile 都不得落入用户正常 MeetingLens 位置。跨启动状态只保存合成 UUID/阶段；harness 必须把 `*.localhost` Tauri IPC 视为本机通信、计数真实外网 fetch/XHR/WebSocket 为 0，并复验 completed result、revision、stale、evidence、running recovery 和最终清理。release 不包含前端 harness 或 debug app-data override。
+PR #21 的 Summary Run Core 已使用 development-only Windows 双启动 harness：Rust 校验系统 Temp 直属隔离 app-data 根和匹配的 `com.gray.meetinglens.summarysmoke.<uuid>` 合成 Tauri identifier，验证 SQLite/WebView2 profile 隔离、completed result、revision、stale、evidence、running recovery、应用代码零外发和最终清理；release 不包含该 harness 或 debug app-data override。这是已完成高风险阶段的历史验收证据，不是以后所有普通 UI PR 的默认矩阵。
 
 ### 10.2 参考文档上传
 
@@ -183,7 +190,7 @@ Rust 是文件选择、校验、复制和私有存储的信任边界。React/Web
 - 文档内容解析只允许隔离的 Docling Worker 执行；PR #14 已建立独立锁定环境、Rust 注册且带哈希的受控引用、单请求进程、取消、超时、Windows Job Object 内存限制、页数/输出限制和畸形协议测试。`feat/document-parsing-orchestration` 才把该 Worker 接入文档状态与持久化。
 - Worker 不监听端口、不继承凭据/proxy/session token、不访问 SQLite；Docling 的远程服务、插件、VLM 和隐式模型下载均关闭。模型只通过显式脚本下载到仓库外目录，并用固定 revision 和逐文件 SHA-256 manifest 验证。
 - Worker 输出只能位于 Rust 批准的 parser staging 根并使用固定相对文件名；Rust 在持久化前重新验证路径、文件类型、大小、总量与 SHA-256。稳定错误不得包含原文、文件名、绝对路径、环境值或原生异常。
-- Docling Worker Foundation 已完成；产品接线在 transcript-only 纪要和编辑导出闭环后由 `feat/document-parsing-orchestration` 开始，并在真实音频前由 `feat/document-evidence-index` 完成文档证据接入。Docling 只增强参考文档证据，不是粘贴/TXT/SRT/VTT 或第一份 transcript-only Summary 的前置依赖。
+- Docling Worker Foundation 已完成；产品接线排在 `feat/audio-file-transcription` 之后，由简化的 `feat/document-parsing-orchestration` 同时完成解析、document chunks/evidence 和现有 Summary pipeline 接线。每次失败自动重试一次，再失败提示用户手动重新导入；当前不建立通用调度器、多级恢复、长期 checkpoint 或企业监控面板。Docling 只增强参考文档证据，不是粘贴/TXT/SRT/VTT 或第一份 transcript-only Summary 的前置依赖。
 
 ## 11. 本地存储与删除
 
@@ -196,7 +203,7 @@ Rust 是文件选择、校验、复制和私有存储的信任边界。React/Web
 - 单文档删除先进入 `deleting`，文件和 artifacts 清理成功后才移除元数据，失败进入 `delete_failed`。`importing`/`parsing` 必须先取消或等待；删除不影响用户源文件。
 - transcript source 不长期复制原始文件；删除协调其 segments、summary snapshot 引用和 stale 状态，但不删除用户源文件。正在使用该 source 的 Summary run 读取不可变快照，不得因并发删除产生不可解释证据。
 - schema v4 的完整 snapshot 正文只为 run 执行和可重建性保存在本地 SQLite；显式 source 删除会安全清理 terminal snapshot 正文，而整场 meeting 删除会通过 meeting FK/删除协调器清理 summaries、snapshots 与 evidence。会议删除开始前 queued/running Summary runs 先转为 cancelled，避免留下孤立运行。
-- 应用启动时把遗留 `running` Summary run 转为 `failed + summary_interrupted`；不得自动重放可能已经部分执行的 Provider，也不得把旧 `granted` 事件当成未来外发授权。
+- 应用启动时把遗留 `running` Summary run 转为 `failed + summary_interrupted`；不得自动重放可能已经部分执行的 Provider。未来设备采集或持续外发不得因旧状态自动恢复；用户明确选择记住的 Personal Edition DeepSeek Summary 确认除外，并仍须通过 Rust 最小状态校验。
 - 不允许先删除数据库再尽力删除文件，也不允许先删除文件再尝试数据库删除；崩溃后不得留下无法识别的孤儿文件。
 - 临时文件必须有 TTL 和崩溃恢复清理机制。
 - 应用生命周期内独占锁定 `meeting-data/.meetinglens-storage.lock`；第二写入实例 fail closed。启动恢复与正常写操作还由同一进程内 mutation mutex 串行化，未知文件只移动到隔离区而不直接删除。
@@ -221,9 +228,9 @@ SecretStore command 不记录请求 DTO、凭据值、长度、首尾字符、Cr
 - GitHub Actions 权限设为 `contents: read`，除非任务明确需要更多权限。
 - PR 中运行前端测试/构建、Python 测试和 Rust 检查。
 - 定期运行 npm、Cargo 和 Python 依赖审计；升级需经过测试，不自动跳过失败。
-- 发布产物后续需要签名、校验和与可追溯构建。
+- 安装包完善、签名、SBOM、自动更新和商业分发当前为 Frozen / Deferred；未来如解冻，发布产物仍需要校验和与可追溯构建。
 - 所有直接 npm、Cargo 和 Python 依赖使用精确版本；升级在独立 PR 中完成并记录兼容性验证。
-- Diart 与 WhisperX 使用相互隔离的 worker 环境和 lockfile，不得通过放宽 NumPy/pyannote 约束强行共存。
+- Diart、WhisperX 与实时 diarization 当前为 Deferred；未来如解冻，仍必须使用相互隔离的 Worker 环境和 lockfile，不得通过放宽 NumPy/pyannote 约束强行共存。
 - AI 模型下载记录来源与校验和；模型、缓存和 Hugging Face token 不得进入 Git。
 
 ## 14. 提交前敏感信息检查
@@ -238,51 +245,29 @@ SecretStore command 不记录请求 DTO、凭据值、长度、首尾字符、Cr
 
 ## 15. 分阶段安全交付
 
-| 阶段        | 必须完成的安全控制                                                                                                          |
-| ----------- | --------------------------------------------------------------------------------------------------------------------------- |
-| MVP 1A-1    | SQLite 事务/迁移、路径规范化、删除语义、数据库与 WAL/SHM Git 忽略测试                                                       |
-| MVP 1A-2-1  | DTO/UUID/状态校验、后端时间戳、最小 Tauri commands、稳定脱敏错误以及禁止前端路径或 SQL                                      |
-| MVP 1A-2-2  | 只用合成数据、集中调用 command、UI 错误不泄漏内部路径或正文                                                                 |
-| MVP 1A-3A   | Provider 稳定状态/错误、Mock 无设备/文件/网络访问、Registry 生命周期与清理测试                                              |
-| MVP 1A-3B-1 | Sidecar 会话 token、Loopback、全路由认证、稳定错误、最小日志脱敏和 fail-closed 测试                                         |
-| MVP 1A-3B-2 | SecretStore、Windows Credential Manager、安全配置与跨层日志 allowlist                                                       |
-| MVP 1B-0    | 文件威胁边界、格式/配额、状态机、存储布局和可恢复删除规范                                                                   |
-| MVP 1B-1A   | Rust 安全导入、私有 staging、签名/配额、去重、删除 tombstone 与恢复测试                                                     |
-| MVP 1B-1B   | 最小 Document commands、原生选择器、无路径 DTO、UI 安全错误和删除/重试交互                                                  |
-| PR #14      | 隔离 Docling Worker、锁定供应链、离线模型门槛、资源上限、取消和产物完整性校验（完成）                                       |
-| 转录规格    | 转录输入、纪要快照、外部发送和证据的安全规格（PR #15 已完成）                                                               |
-| 国际化基础  | 仅保存允许的 UI locale 枚举、打包语言资源、无动态 HTML、稳定状态/错误本地化（PR #16 已完成）                                |
-| 三模式对齐  | 独立 capability 同意、权限降级、屏幕最小化和三类输出保留规则                                                                |
-| 转录数据    | 严格 UTF-8、大小/片段上限、同步 parser、source/segment 修正删除与 schema v3（PR #18 已完成）                                |
-| 转录接口    | Rust 原生转录选择器、原子工作流、无路径 DTO、revision 和最小 capability（PR #19 已完成）                                    |
-| 总结入口    | 内存粘贴、后端有界分页、纯文本预览、source-scoped speaker 修正和无正文/路径浏览器持久化（PR #20 已完成）                    |
-| 纪要数据    | PR #21 已完成：schema v4、series/revision、20k/10 MiB 正文快照、Rust zero-network Mock、evidence allowlist、stale/删除/恢复 |
-| 同意数据    | 下一阶段：capability allowlist、grant/revoke、重启失效、最小 scope、审计和无正文/凭据                                       |
-| 纪要服务    | SecretStore key、独立外发同意、HTTPS、超时/取消、响应 schema 和日志脱敏                                                     |
-| 纪要工作区  | 外发预览、本次确认、安全状态/错误和 evidence 导航                                                                           |
-| 编辑导出    | 用户编辑保护、revision/stale、章节重生成隔离和 DOCX 导出                                                                    |
-| 文档编排    | Rust-only Docling 调用、状态恢复、artifact 原子提交、解析/删除竞态和无网络 Worker                                           |
-| 文档证据    | page/section/table 位置验证、document evidence allowlist 和 transcript 语义隔离                                             |
-| 实时数据    | 复用同意服务、capture session、音频 artifact 保留、删除协调和 mode 提示不越权                                               |
-| 实时进程    | sidecar supervisor、崩溃恢复、孤儿进程回收、临时文件和生命周期安全日志                                                      |
-| 音频采集    | 麦克风/系统音频/保存分别同意、可见状态、句柄释放和权限拒绝降级                                                              |
-| 实时转录    | 只写统一 transcript segments、来源/顺序校验、取消、CPU 回退和正文日志禁止                                                   |
-| 窗口上下文  | 单应用目标约束、窗口身份复核、暂停/撤销和 accessibility 内容最小化                                                          |
-| 屏幕 OCR    | 敏感内容遮蔽、临时帧 TTL/删除、screen evidence 验证和可选 Provider 权限边界                                                 |
-| 语言数据    | 译文单一真相、segment revision、匿名 speaker 映射、checkpoint 增量快照                                                      |
-| 说话人增强  | voice sample 明示同意/删除、会话级匿名标签、人工修正和模型 worker 隔离                                                      |
-| 翻译服务    | 持续外发独立同意、只发最终片段、关闭后停止发送、重试与日志脱敏                                                              |
-| 阶段摘要    | 独立同意、频率/窗口预览、新片段游标、失败重试复用快照和停止后取消                                                           |
-| 话题建议    | 只建议不确认、可忽略/修正、不得自动写入最终决定                                                                             |
-| 翻译浮窗    | 透明度/收起/滚动不扩大采集范围；关闭只停止展示，不得隐式改变独立的翻译外发开关                                              |
-| 翻译工作区  | 主窗口安全展示、匿名 speaker 改名、状态和停止入口                                                                           |
-| 重点数据    | 书签引用同会议最终片段、用户文字校验、manual_note evidence 和删除                                                           |
-| 会议工作区  | 翻译开关、checkpoint 与原始转录快照分离、无屏幕安全降级                                                                     |
-| 产品化      | 签名、升级/回滚、SBOM、诊断导出脱敏和卸载残留检查                                                                           |
+| 状态            | 阶段                                     | 必须完成的安全控制                                                                                               |
+| --------------- | ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| Implemented     | 基础、文件与 Worker（MVP 1A/1B、PR #14） | SQLite/migration、路径守卫、SecretStore、Sidecar auth、安全文件导入、可恢复删除、隔离 Docling Worker             |
+| Implemented     | 转录与总结入口（PR #18–#20）             | 严格 UTF-8、有界解析/分页、Rust 原生选择器、无路径 DTO、浏览器不持久化正文                                       |
+| Implemented     | Summary Run Core（PR #21）               | schema v4、series/revision、不可变快照、Rust 零网络 Mock、evidence allowlist、stale/删除/取消/恢复               |
+| Next            | `feat/summary-provider-deepseek`         | Rust-only 请求、SecretStore、首次明确确认、记住选择、无确认 fail closed、HTTPS/超时/取消、响应严格校验和日志脱敏 |
+| Planned         | `feat/summary-mode-minutes`              | 安全结果展示、正文修改、整份重新生成、既有 revision/stale 保护、Markdown 复制/保存；不实现章节重生成或 DOCX/PDF  |
+| Planned         | `feat/audio-file-transcription`          | Rust 原生文件边界、一次性 faster-whisper Worker、CPU int8、资源/取消/输出校验、只写既有 transcript 模型          |
+| Planned         | `feat/document-parsing-orchestration`    | Rust-only Docling 调用、一次自动重试、artifact 原子提交、document evidence allowlist、再次失败后提示重新导入     |
+| Optional        | `feat/window-context`                    | 用户明确选择窗口、身份复核、权限撤销即暂停、默认不保存帧、screen evidence 与其他来源隔离                         |
+| Frozen/Deferred | 实时与商业能力                           | 实时采集/ASR/翻译/diarization、checkpoint、浮窗、独立会议工作区、structured visuals、DOCX/PDF、签名和商业分发    |
 
-Docling 的进程/依赖攻击面已由 PR #14 隔离；数据库/状态/UI 编排在首个 transcript-only 总结与编辑导出闭环后由 `feat/document-parsing-orchestration` 引入，并在真实音频前由独立的 `feat/document-evidence-index` 接入文档 evidence。transcript-only 外部数据流仍只能在 `feat/summary-provider-deepseek` 引入，正式纪要页面由 `feat/summary-mode-minutes` 集成；Docling 不得成为第一份纪要的前置条件。不得在同一 PR 同时扩大转录持久化、外部 AI、文件解析和证据索引信任边界。
+Docling 的进程/依赖攻击面已由 PR #14 隔离；它不成为第一份 transcript-only 纪要的前置条件。真实外部数据流只能在合并最小 Consent 的 `feat/summary-provider-deepseek` 中引入，正式纪要页面由 `feat/summary-mode-minutes` 集成。一个功能 PR 可以同时包含必要的 Data/API/UI，但不得把无关的转录持久化、外部 AI、文件解析或其他信任边界混入同一能力。
 
 ## 16. 安全验收门槛
+
+验收按风险分级：
+
+- 文档 PR：Markdown/格式、链接、路线一致性、敏感信息扫描和 CI。
+- 不修改 schema 的普通功能 PR：一次本机启动、主要用户流程、相关自动测试、正文/密钥/路径/禁止文件泄漏检查和干净工作区。
+- 修改 schema、migration、安全边界或真实网络的高风险 PR：升级与 checksum、integrity/foreign-key、必要的双启动或隔离 app-data、故障恢复、敏感信息和网络边界验证。
+
+以下硬性安全门槛按改动范围继续适用：
 
 - CSP 非空且没有不必要的远程源。
 - Tauri capability 中没有通用 shell/文件系统权限。
@@ -291,4 +276,4 @@ Docling 的进程/依赖攻击面已由 PR #14 隔离；数据库/状态/UI 编�
 - 删除测试覆盖数据库与文件派生物。
 - 外部 AI 集成在没有 key、没有同意或发送范围为空时均 fail closed。
 - 仓库和 staged 内容通过敏感信息扫描。
-- Windows 凭据库、文件对话框、录音权限、窗口选择、sidecar 回收或安装/卸载等桌面安全行为必须在用户本机实际验收；CI 通过不能替代。
+- PR 实际触及 Windows 凭据库、文件对话框、权限、窗口选择、Worker/Sidecar 回收等桌面安全行为时，必须在用户本机验收；CI 通过不能替代。双隔离和完整双启动不再是普通 UI PR 的默认要求。

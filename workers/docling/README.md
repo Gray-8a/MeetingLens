@@ -14,7 +14,7 @@ This PR provides only the parser foundation:
 - explicit local-model provisioning and compatibility verification;
 - Rust process control, timeout, cancellation, memory limit, and output revalidation.
 
-It does **not** add Tauri commands, WebView access, database migrations, parsing jobs, document state transitions, product UI, background supervision, packaging, DeepSeek calls, or remote model access. The foundation was merged in PR #14 and is retained as an optional reference-document enhancement. Product orchestration is scheduled for `feat/document-parsing-orchestration` after the first transcript-only minutes and editing/export loop, followed by `feat/document-evidence-index`, and before realtime capture work. Neither stage is a prerequisite for pasted/TXT/SRT/VTT transcripts or the first transcript-only summary. Future PR numbers are assigned only when their branches are created.
+It does **not** add Tauri commands, WebView access, database migrations, parsing jobs, document state transitions, product UI, background supervision, packaging, DeepSeek calls, or remote model access. The foundation was merged in PR #14 and is retained as an optional reference-document enhancement. Under the Personal Edition roadmap, product wiring is planned for the single simplified `feat/document-parsing-orchestration` stage after `feat/audio-file-transcription`. That stage may add document chunks/evidence and one automatic retry; a second failure asks the user to re-import rather than introducing a general scheduler, long-lived checkpoints, multi-level recovery, or an enterprise monitoring surface. It is not a prerequisite for pasted/TXT/SRT/VTT transcripts or the first usable transcript-only minutes. Realtime capture work is Frozen/Deferred, and future PR numbers are descriptive rather than authoritative.
 
 ## Locked environment
 
@@ -70,4 +70,4 @@ The validated model set contains 14 inventoried files (564,981,412 bytes). The W
 - Responses and errors never contain source text, absolute paths, SQL, raw exceptions, environment values, or credentials.
 - Output is limited to `document.json`, `content.md`, `content.txt`, and `manifest.json`, written atomically beneath the approved parser-staging root.
 
-The current adapter handles TXT, Markdown, CSV, DOCX, PPTX, and XLSX without model weights. PDF, PNG, JPEG, and OCR require the compatible local model set. The later orchestration PR must persist only Rust-revalidated artifacts and stable status/error data.
+The current adapter handles TXT, Markdown, CSV, DOCX, PPTX, and XLSX without model weights. PDF, PNG, JPEG, and OCR require the compatible local model set. The later simplified orchestration PR must persist only Rust-revalidated artifacts and stable status/error data, keep paths hidden from React, retry a failed parse at most once automatically, and never send source files externally without an explicit future scope change.
