@@ -11,11 +11,17 @@ import {
   toSecretError,
   type SecretErrorCode,
 } from "../api/secret";
+import {
+  toSummaryError,
+  type DeepSeekProviderStatusResponse,
+  type SummaryErrorCode,
+} from "../api/summary";
 import { AppLink } from "../app/navigation";
 import { useServices } from "../app/services";
 import { APP_VERSION } from "../app/version";
 import { changeUiLocale, currentUiLocale, type UiLocale } from "../i18n";
-import { secretErrorMessage } from "../i18n/errors";
+import { summaryErrorMessage, secretErrorMessage } from "../i18n/errors";
+import { formatLocalDate } from "../i18n/formatters";
 import { safeProviderStatus, type ProviderKind } from "../providers/types";
 import type { DatabaseStatus } from "./HomePage";
 
@@ -34,6 +40,7 @@ type SecretUiStatus =
   | "error";
 
 type SecretFeedback = "saved" | "deleted" | { error: SecretErrorCode } | null;
+type ConsentFeedback = "revoked" | { error: SummaryErrorCode } | null;
 
 export function SettingsPage({
   databaseStatus,
@@ -43,7 +50,7 @@ export function SettingsPage({
   localServiceStatus: LocalServiceStatus;
 }) {
   const { t } = useTranslation();
-  const { providers, secretApi } = useServices();
+  const { providers, secretApi, summaryApi } = useServices();
   const [providerSnapshots, setProviderSnapshots] = useState(() =>
     providers.snapshots(),
   );
@@ -55,6 +62,24 @@ export function SettingsPage({
   );
   const [secretFeedback, setSecretFeedback] = useState<SecretFeedback>(null);
   const [confirmSecretDelete, setConfirmSecretDelete] = useState(false);
+  const consentActionRef = useRef(false);
+  const [deepSeekStatus, setDeepSeekStatus] =
+    useState<DeepSeekProviderStatusResponse | null>(null);
+  const [deepSeekStatusError, setDeepSeekStatusError] =
+    useState<SummaryErrorCode | null>(null);
+  const [consentAction, setConsentAction] = useState(false);
+  const [consentFeedback, setConsentFeedback] = useState<ConsentFeedback>(null);
+
+  async function refreshDeepSeekStatus() {
+    try {
+      const status = await summaryApi.getDeepSeekProviderStatus();
+      setDeepSeekStatus(status);
+      setDeepSeekStatusError(null);
+    } catch (reason: unknown) {
+      setDeepSeekStatus(null);
+      setDeepSeekStatusError(toSummaryError(reason).code);
+    }
+  }
 
   useEffect(() => {
     const refresh = () => setProviderSnapshots(providers.snapshots());
@@ -87,6 +112,25 @@ export function SettingsPage({
     };
   }, [secretApi]);
 
+  useEffect(() => {
+    let active = true;
+    void summaryApi
+      .getDeepSeekProviderStatus()
+      .then((status) => {
+        if (!active) return;
+        setDeepSeekStatus(status);
+        setDeepSeekStatusError(null);
+      })
+      .catch((reason: unknown) => {
+        if (!active) return;
+        setDeepSeekStatus(null);
+        setDeepSeekStatusError(toSummaryError(reason).code);
+      });
+    return () => {
+      active = false;
+    };
+  }, [summaryApi]);
+
   useLayoutEffect(
     () => () => {
       if (secretInput.current !== null) secretInput.current.value = "";
@@ -111,6 +155,7 @@ export function SettingsPage({
       setHasSecretInput(false);
       setSecretStatus(status.configured ? "configured" : "unconfigured");
       setSecretFeedback("saved");
+      void refreshDeepSeekStatus();
     } catch (reason: unknown) {
       const error = toSecretError(reason);
       setSecretStatus(secretErrorStatus(error));
@@ -130,6 +175,7 @@ export function SettingsPage({
       setHasSecretInput(false);
       setSecretStatus("unconfigured");
       setSecretFeedback("deleted");
+      void refreshDeepSeekStatus();
     } catch (reason: unknown) {
       const error = toSecretError(reason);
       setSecretStatus(secretErrorStatus(error));
@@ -137,6 +183,25 @@ export function SettingsPage({
     } finally {
       setConfirmSecretDelete(false);
       setSecretAction(null);
+    }
+  }
+
+  async function revokeDeepSeekConsent() {
+    if (consentActionRef.current) return;
+    consentActionRef.current = true;
+    setConsentAction(true);
+    setConsentFeedback(null);
+    try {
+      const status = await summaryApi.revokeDeepSeekConsent();
+      setDeepSeekStatus(status);
+      setDeepSeekStatusError(null);
+      setConsentFeedback("revoked");
+    } catch (reason: unknown) {
+      const error = toSummaryError(reason);
+      setConsentFeedback({ error: error.code });
+    } finally {
+      consentActionRef.current = false;
+      setConsentAction(false);
     }
   }
 
@@ -337,6 +402,75 @@ export function SettingsPage({
           <p aria-live="polite" className="field-help" role="status">
             {feedbackMessage()}
           </p>
+          <hr className="settings-divider" />
+          <h3>{t("settings.deepseek.externalSharing")}</h3>
+          {deepSeekStatus === null ? (
+            <p
+              aria-live="polite"
+              className={
+                deepSeekStatusError === null ? "field-help" : "field-error"
+              }
+              role={deepSeekStatusError === null ? "status" : "alert"}
+            >
+              {deepSeekStatusError === null
+                ? t("settings.deepseek.consentChecking")
+                : summaryErrorMessage(deepSeekStatusError)}
+            </p>
+          ) : (
+            <>
+              <dl className="detail-list deepseek-status-list">
+                <div>
+                  <dt>{t("settings.deepseek.provider")}</dt>
+                  <dd>{deepSeekStatus.provider}</dd>
+                </div>
+                <div>
+                  <dt>{t("settings.deepseek.host")}</dt>
+                  <dd>{deepSeekStatus.endpointHost}</dd>
+                </div>
+                <div>
+                  <dt>{t("settings.deepseek.model")}</dt>
+                  <dd>{deepSeekStatus.model}</dd>
+                </div>
+                <div>
+                  <dt>{t("settings.deepseek.rememberedConsent")}</dt>
+                  <dd>
+                    {deepSeekStatus.consentRemembered
+                      ? t("settings.deepseek.consentRemembered")
+                      : t("settings.deepseek.consentNotRemembered")}
+                  </dd>
+                </div>
+                <div>
+                  <dt>{t("settings.deepseek.consentedAt")}</dt>
+                  <dd>{formatLocalDate(deepSeekStatus.consentedAt)}</dd>
+                </div>
+              </dl>
+              <button
+                className="button button--danger-outline"
+                data-acceptance="revoke-deepseek-consent"
+                disabled={consentAction}
+                onClick={() => void revokeDeepSeekConsent()}
+                type="button"
+              >
+                {consentAction
+                  ? t("settings.deepseek.revokingConsent")
+                  : t("settings.deepseek.revokeConsent")}
+              </button>
+              <p className="field-help">{t("settings.deepseek.revokeHelp")}</p>
+            </>
+          )}
+          {consentFeedback === null ? null : (
+            <p
+              aria-live="polite"
+              className={
+                consentFeedback === "revoked" ? "field-help" : "field-error"
+              }
+              role={consentFeedback === "revoked" ? "status" : "alert"}
+            >
+              {consentFeedback === "revoked"
+                ? t("settings.deepseek.consentRevoked")
+                : summaryErrorMessage(consentFeedback.error)}
+            </p>
+          )}
         </article>
       </div>
     </section>

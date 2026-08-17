@@ -1,5 +1,6 @@
 import appSource from "../App.tsx?raw";
 import documentSource from "../components/DocumentPanel.tsx?raw";
+import deepSeekConsentSource from "../components/DeepSeekConsentDialog.tsx?raw";
 import speakerRenameSource from "../components/SpeakerRenamePanel.tsx?raw";
 import transcriptInputSource from "../components/TranscriptInputPanel.tsx?raw";
 import transcriptSegmentSource from "../components/TranscriptSegmentPanel.tsx?raw";
@@ -29,6 +30,7 @@ import zhCN from "./locales/zh-CN.json";
 const uiSources = [
   appSource,
   documentSource,
+  deepSeekConsentSource,
   speakerRenameSource,
   transcriptInputSource,
   transcriptSegmentSource,
@@ -206,14 +208,36 @@ describe("MeetingLens i18n foundation", () => {
     }
   });
 
-  it("describes transcript input as available while real minutes remain unavailable", async () => {
+  it("describes transcript input as available while formal generation remains disabled", async () => {
     await i18n.changeLanguage("en-US");
     expect(i18n.t("help.availableBody")).toContain("TXT, SRT and VTT");
-    expect(i18n.t("help.unavailableBody")).toContain("Real AI minutes");
+    expect(i18n.t("help.unavailableBody")).toContain(
+      "User-facing DeepSeek generation",
+    );
+    expect(i18n.t("help.deepseekBody")).toContain(
+      "Rust-only DeepSeek provider",
+    );
 
     await i18n.changeLanguage("zh-CN");
     expect(i18n.t("help.availableBody")).toContain("TXT、SRT、VTT");
-    expect(i18n.t("help.unavailableBody")).toContain("真实 AI 纪要");
+    expect(i18n.t("help.unavailableBody")).toContain(
+      "面向用户的 DeepSeek 生成",
+    );
+    expect(i18n.t("help.deepseekBody")).toContain(
+      "Rust-only DeepSeek Provider",
+    );
+  });
+
+  it("keeps the DeepSeek disclosure meaning aligned in both locales", async () => {
+    await i18n.changeLanguage("en-US");
+    expect(i18n.t("summaryConsent.title")).toContain("DeepSeek");
+    expect(i18n.t("summaryConsent.warning")).toContain("cannot recall");
+    expect(i18n.t("settings.deepseek.revokeHelp")).toContain("future sends");
+
+    await i18n.changeLanguage("zh-CN");
+    expect(i18n.t("summaryConsent.title")).toContain("DeepSeek");
+    expect(i18n.t("summaryConsent.warning")).toContain("无法召回");
+    expect(i18n.t("settings.deepseek.revokeHelp")).toContain("未来发送");
   });
 
   it("detects every literal translation key used by the main UI", () => {
@@ -258,6 +282,13 @@ describe("MeetingLens i18n foundation", () => {
     );
     expect(transcriptUiSources).not.toContain("invoke(");
     expect(transcriptUiSources).not.toContain("dangerouslySetInnerHTML");
+  });
+
+  it("keeps the consent dialog out of storage, logs and direct transports", () => {
+    expect(deepSeekConsentSource).not.toMatch(
+      /localStorage|sessionStorage|indexedDB|console\.|\binvoke\s*\(|\bfetch\s*\(|XMLHttpRequest|WebSocket/,
+    );
+    expect(deepSeekConsentSource).not.toContain("dangerouslySetInnerHTML");
   });
 });
 

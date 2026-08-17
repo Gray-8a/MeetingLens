@@ -1,5 +1,6 @@
 import type { DocumentErrorCode } from "../api/document";
 import type { SecretErrorCode } from "../api/secret";
+import type { SummaryErrorCode } from "../api/summary";
 import type { TranscriptErrorCode } from "../api/transcript";
 import type { SidecarErrorCode } from "../lib/sidecar";
 import type { ProviderErrorCode } from "../providers/errors";
@@ -37,6 +38,45 @@ const secretErrorKeys = {
   secret_unsupported_platform: "error.secret.secret_unsupported_platform",
   internal_error: "error.secret.internal_error",
 } as const satisfies Record<SecretErrorCode, string>;
+
+const summaryErrorKeys = {
+  deepseek_access_denied: "error.summary.deepseek_access_denied",
+  deepseek_api_key_missing: "error.summary.deepseek_api_key_missing",
+  deepseek_auth_failed: "error.summary.deepseek_auth_failed",
+  deepseek_consent_invalid: "error.summary.deepseek_consent_invalid",
+  deepseek_consent_required: "error.summary.deepseek_consent_required",
+  deepseek_content_filtered: "error.summary.deepseek_content_filtered",
+  deepseek_insufficient_balance: "error.summary.deepseek_insufficient_balance",
+  deepseek_model_unavailable: "error.summary.deepseek_model_unavailable",
+  deepseek_network_failed: "error.summary.deepseek_network_failed",
+  deepseek_output_truncated: "error.summary.deepseek_output_truncated",
+  deepseek_rate_limited: "error.summary.deepseek_rate_limited",
+  deepseek_request_invalid: "error.summary.deepseek_request_invalid",
+  deepseek_response_empty: "error.summary.deepseek_response_empty",
+  deepseek_response_invalid: "error.summary.deepseek_response_invalid",
+  deepseek_service_unavailable: "error.summary.deepseek_service_unavailable",
+  deepseek_timeout: "error.summary.deepseek_timeout",
+  summary_input_insufficient: "error.summary.summary_input_insufficient",
+  summary_input_too_large: "error.summary.summary_input_too_large",
+  summary_provider_input_too_large:
+    "error.summary.summary_provider_input_too_large",
+  summary_evidence_invalid: "error.summary.summary_evidence_invalid",
+  internal_error: "error.summary.internal_error",
+  summary_invalid_input: "error.summary.summary_invalid_input",
+  summary_invalid_state: "error.summary.summary_invalid_state",
+  meeting_invalid_state: "error.summary.meeting_invalid_state",
+  meeting_not_found: "error.summary.meeting_not_found",
+  summary_persistence_failed: "error.summary.summary_persistence_failed",
+  summary_provider_failed: "error.summary.summary_provider_failed",
+  summary_provider_output_invalid:
+    "error.summary.summary_provider_output_invalid",
+  summary_revision_conflict: "error.summary.summary_revision_conflict",
+  summary_run_not_found: "error.summary.summary_run_not_found",
+  summary_segment_limit_exceeded:
+    "error.summary.summary_segment_limit_exceeded",
+  summary_snapshot_missing: "error.summary.summary_snapshot_missing",
+  summary_source_not_found: "error.summary.summary_source_not_found",
+} as const satisfies Record<SummaryErrorCode, string>;
 
 const providerErrorKeys = {
   provider_not_ready: "error.provider.provider_not_ready",
@@ -95,6 +135,10 @@ export function documentErrorMessage(code: DocumentErrorCode): string {
 
 export function secretErrorMessage(code: SecretErrorCode): string {
   return i18n.t(secretErrorKeys[code]);
+}
+
+export function summaryErrorMessage(code: SummaryErrorCode): string {
+  return i18n.t(summaryErrorKeys[code]);
 }
 
 export function providerErrorMessage(code: ProviderErrorCode): string {

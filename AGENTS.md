@@ -66,10 +66,10 @@
 ## 不得弱化的工程与安全规则
 
 - migration 只能追加，必须在事务中执行并记录 checksum；不得修改、替换或复用已合并 migration 版本，不得静默删除未知数据。
-- 真实 DeepSeek API Key 只能由受信任 Rust 代码从 Windows Credential Manager `SecretStore` 读取；不得进入 React、SQLite、日志、Python、环境变量或命令行。测试只使用 Mock 和明显的合成占位值。
+- 真实 DeepSeek API Key 只能由受信任 Rust 代码从 Windows Credential Manager `SecretStore` 读取；不得进入 React、SQLite、日志、Python、环境变量或命令行。自动测试只使用 Mock/fake transport 和明显的合成占位值。
 - React/WebView 不直接调用外部 Provider，不提交 Provider 结果或 evidence；Rust 是持久 Summary run、不可变快照、状态转换、Provider 调用、响应校验和 evidence allowlist 的执行权威。
 - 保留路径守卫、canonicalization、reparse point/symlink 防护、受控 UUID 路径、稳定错误码、错误脱敏和正文不进入普通日志的规则。
-- 当前 Rust Mock 与 MeetingLens 应用代码不外发会议内容；这不表示 WebView2 Runtime 在物理层面完全断网。
+- Rust Mock 不外发会议内容；production 只有受信任 Rust DeepSeek Provider 可把已明确确认的冻结范围发送到固定目标。不得把该应用层边界描述为 WebView2 Runtime 在物理层面完全断网。
 
 ## 敏感信息与私人数据
 
@@ -101,10 +101,10 @@
 ## Personal Edition 产品基线与近期顺序
 
 - MeetingLens 当前采用 Personal Edition / 自用版基线：Windows-first、local-first、transcript-first，优先让单个用户日常完成“粘贴或导入转录 → DeepSeek 生成纪要 → 查看和修改 → Markdown 复制或保存”。
-- PR #1–#22 已完成工程/安全基础、粘贴与 TXT/SRT/VTT 转录工作区、schema v4 Summary Run Core、不可变快照、series/revision、evidence allowlist、stale/cancel/interrupted recovery 和 Rust 零外发 Mock。真实 DeepSeek、用户外发确认、正式结果页、Markdown 复制/保存、录音文件转录、Docling 产品编排和 document evidence 尚未实现。
-- PR #23 使用 `docs/personal-edition-descope` 完成本次重新定基线；合并后唯一明确的下一阶段是 `feat/summary-provider-deepseek`，不得创建或恢复独立的 `feat/consent-data-core`。
-- 当前最短实施顺序为：`feat/summary-provider-deepseek` → `feat/summary-mode-minutes` → `feat/audio-file-transcription` → `feat/document-parsing-orchestration` → 可选 `feat/window-context`。`feat/summary-mode-minutes` 完成时达到日常可用里程碑。
-- 最小 DeepSeek 外发确认与 Provider 在同一 PR 实现：首次发送前明确说明 Provider 和本次转录范围，允许本次同意、记住选择或取消；未确认必须 fail closed。具体最小持久化设计由该 PR 决定，不预先承诺通用 `consent_events` schema。
+- PR #1–#23 已完成工程/安全基础、Personal Edition 重定基线、粘贴与 TXT/SRT/VTT 转录工作区，以及 schema v4 Summary Run Core 的不可变快照、series/revision、evidence allowlist、stale/cancel/interrupted recovery 和 Rust 零外发 Mock。
+- `feat/summary-provider-deepseek` 在同一功能阶段增加 Rust-only DeepSeek Provider、固定官方 host/`deepseek-v4-pro`、SecretStore 消费、严格 JSON/evidence 校验、取消/超时/稳定错误，以及本次同意、记住选择和撤销。schema v5 只追加 `provider_consent_preferences` 最小当前偏好表；一次性确认仅在内存中保留 10 分钟并单次消费，不恢复独立 `feat/consent-data-core` 或通用 `consent_events`。
+- 正式生成按钮、结果页、正文编辑和 Markdown 复制/保存仍未开放；当前唯一明确的下一阶段是 `feat/summary-mode-minutes`。之后依次为 `feat/audio-file-transcription` → `feat/document-parsing-orchestration` → 可选 `feat/window-context`；`feat/summary-mode-minutes` 完成时达到日常可用里程碑。
+- production Summary run 固定使用 DeepSeek；确定性 Mock 只允许测试/debug 隔离，历史 Mock run 仍可读取。没有 Key、没有有效确认、空范围、响应不合法或 evidence 越界时必须 fail closed；真实付费 API smoke 未执行时不得声称已完成真实账户联网验收。
 - 纪要编辑近期只包括修改正文、保存当前结果和整份重新生成；新结果继续使用现有 series/revision，不覆盖旧 revision。章节/段落级重生成、复杂 stale UI、完整编辑时间线、冲突合并、DOCX/PDF 导出均冻结。
 - `feat/audio-file-transcription` 只做用户主动导入录音文件、本地 faster-whisper CPU int8 一次性受控 Worker、写入既有 transcript 模型并回到现有工作区；不做 WASAPI、实时音频、实时字幕或实时 diarization。
 - Docling Worker Foundation 已完成并保留。简化版 `feat/document-parsing-orchestration` 可以在一个功能 PR 内接入解析、document chunks/evidence 和 Summary pipeline；失败自动重试一次，再失败提示手动重导，不建立通用重型调度平台。

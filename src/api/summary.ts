@@ -3,6 +3,10 @@ import type { InvokeAdapter, InvokeArguments } from "./meeting";
 
 export const summaryCommandNames = {
   getPolicy: "get_summary_policy",
+  getDeepSeekProviderStatus: "get_deepseek_provider_status",
+  getExternalDisclosure: "get_summary_external_disclosure",
+  confirmExternalDisclosure: "confirm_summary_external_disclosure",
+  revokeDeepSeekConsent: "revoke_deepseek_consent",
   createRun: "create_summary_run",
   createRevision: "create_summary_revision",
   executeRun: "execute_summary_run",
@@ -23,6 +27,51 @@ export type SummaryStatus =
 export type SummaryDecisionStatus = "confirmed" | "proposed" | "superseded";
 export type SummaryActionStatus = "assigned" | "suggested" | "unconfirmed";
 export type SummaryStaleReason = "segment_revised" | "source_deleted";
+export type SummaryProvider = "deepseek" | "deterministic_mock";
+export type SummaryProviderMode = "external" | "mock";
+
+export type SummaryExternalDataCategory =
+  | "evidence_ids"
+  | "output_language"
+  | "speaker_labels_and_names"
+  | "summary_template"
+  | "time_offsets"
+  | "transcript_text";
+
+export interface DeepSeekProviderStatusResponse {
+  keyConfigured: boolean;
+  provider: "deepseek";
+  endpointHost: "api.deepseek.com";
+  model: "deepseek-v4-pro";
+  consentRemembered: boolean;
+  consentedAt: string | null;
+  policyVersion: string;
+  executionAvailable: boolean;
+}
+
+export interface SummaryExternalDisclosureResponse {
+  provider: "deepseek";
+  endpointHost: "api.deepseek.com";
+  model: "deepseek-v4-pro";
+  sourceCount: number;
+  segmentCount: number;
+  inputBytes: number;
+  template: SummaryTemplate;
+  outputLanguage: SummaryOutputLanguage;
+  dataCategories: SummaryExternalDataCategory[];
+  rememberedConsentValid: boolean;
+  requiresConfirmation: boolean;
+  policyVersion: string;
+}
+
+export interface ConfirmSummaryExternalDisclosureRequest {
+  summaryId: string;
+  remember: boolean;
+}
+
+export interface SummaryExternalDisclosureRequest {
+  summaryId: string;
+}
 
 export interface CreateSummaryRunRequest {
   meetingId: string;
@@ -73,24 +122,7 @@ export interface SummaryContent {
   openQuestions: SummaryClaim[];
 }
 
-export type SummaryRunFailureCode =
-  | "internal_error"
-  | "meeting_invalid_state"
-  | "meeting_not_found"
-  | "summary_input_insufficient"
-  | "summary_input_too_large"
-  | "summary_interrupted"
-  | "summary_evidence_invalid"
-  | "summary_invalid_input"
-  | "summary_invalid_state"
-  | "summary_persistence_failed"
-  | "summary_provider_failed"
-  | "summary_provider_output_invalid"
-  | "summary_revision_conflict"
-  | "summary_run_not_found"
-  | "summary_segment_limit_exceeded"
-  | "summary_snapshot_missing"
-  | "summary_source_not_found";
+export type SummaryRunFailureCode = SummaryErrorCode | "summary_interrupted";
 
 export interface SummaryRunResponse {
   id: string;
@@ -103,8 +135,8 @@ export interface SummaryRunResponse {
   template: SummaryTemplate;
   outputLanguage: SummaryOutputLanguage;
   status: SummaryStatus;
-  provider: "deterministic_mock";
-  providerMode: "mock";
+  provider: SummaryProvider;
+  providerMode: SummaryProviderMode;
   model: string;
   promptVersion: string;
   content: SummaryContent | null;
@@ -162,7 +194,7 @@ export interface SummaryPolicyResponse {
   outputLanguages: SummaryOutputLanguage[];
   runPurpose: "final";
   triggerKind: "manual";
-  provider: "deterministic_mock";
+  provider: SummaryProvider;
   maxSegments: number;
   maxInputBytes: number;
   maxEvidenceExcerptBytes: number;
@@ -173,8 +205,25 @@ export interface SummaryPolicyResponse {
 }
 
 export type SummaryErrorCode =
+  | "deepseek_access_denied"
+  | "deepseek_api_key_missing"
+  | "deepseek_auth_failed"
+  | "deepseek_consent_invalid"
+  | "deepseek_consent_required"
+  | "deepseek_content_filtered"
+  | "deepseek_insufficient_balance"
+  | "deepseek_model_unavailable"
+  | "deepseek_network_failed"
+  | "deepseek_output_truncated"
+  | "deepseek_rate_limited"
+  | "deepseek_request_invalid"
+  | "deepseek_response_empty"
+  | "deepseek_response_invalid"
+  | "deepseek_service_unavailable"
+  | "deepseek_timeout"
   | "summary_input_insufficient"
   | "summary_input_too_large"
+  | "summary_provider_input_too_large"
   | "summary_evidence_invalid"
   | "internal_error"
   | "summary_invalid_input"
@@ -191,9 +240,29 @@ export type SummaryErrorCode =
   | "summary_source_not_found";
 
 const safeMessages: Record<SummaryErrorCode, string> = {
+  deepseek_access_denied: "DeepSeek denied access to this request.",
+  deepseek_api_key_missing: "Configure the DeepSeek API key before sending.",
+  deepseek_auth_failed: "DeepSeek could not authenticate this request.",
+  deepseek_consent_invalid:
+    "The DeepSeek sharing confirmation is no longer valid.",
+  deepseek_consent_required: "Review and confirm the DeepSeek sharing details.",
+  deepseek_content_filtered: "DeepSeek could not return this summary.",
+  deepseek_insufficient_balance:
+    "The DeepSeek account has insufficient balance.",
+  deepseek_model_unavailable: "The configured DeepSeek model is unavailable.",
+  deepseek_network_failed: "MeetingLens could not reach DeepSeek.",
+  deepseek_output_truncated: "DeepSeek returned an incomplete summary.",
+  deepseek_rate_limited: "DeepSeek is receiving too many requests.",
+  deepseek_request_invalid: "DeepSeek rejected the summary request.",
+  deepseek_response_empty: "DeepSeek returned an empty response.",
+  deepseek_response_invalid: "DeepSeek returned an invalid response.",
+  deepseek_service_unavailable: "DeepSeek is temporarily unavailable.",
+  deepseek_timeout: "DeepSeek did not respond in time.",
   summary_input_insufficient:
     "The selected sources do not contain usable final transcript segments.",
   summary_input_too_large: "The selected summary input is too large.",
+  summary_provider_input_too_large:
+    "The selected summary input is too large for DeepSeek.",
   summary_evidence_invalid:
     "The summary result contains invalid evidence references.",
   internal_error: "An internal error occurred.",
@@ -263,6 +332,22 @@ const frozenOutputLanguages: readonly SummaryOutputLanguage[] = [
   "en",
   "bilingual",
 ];
+const deepSeekPolicyVersion = "deepseek-transcript-external-v1";
+const deepSeekProvider = "deepseek";
+const deepSeekEndpointHost = "api.deepseek.com";
+const deepSeekModel = "deepseek-v4-pro";
+const deepSeekPromptVersion = "summary-deepseek-v1";
+const deepSeekMaxInputBytes = 1024 * 1024;
+const deterministicMockModel = "meetinglens-deterministic-mock-v1";
+const deterministicMockPromptVersion = "summary-core-mock-v1";
+const frozenExternalDataCategories: readonly SummaryExternalDataCategory[] = [
+  "transcript_text",
+  "speaker_labels_and_names",
+  "time_offsets",
+  "evidence_ids",
+  "summary_template",
+  "output_language",
+];
 
 const summaryLimits = {
   maxSegments: 20_000,
@@ -287,7 +372,7 @@ export const summaryEvidencePageLimits = {
 
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const utcIsoPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/;
+const utcIsoPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
 
 export class SummaryApiError extends Error {
   readonly code: SummaryErrorCode;
@@ -307,6 +392,14 @@ const tauriInvokeAdapter: InvokeAdapter = {
 
 export interface SummaryApi {
   getPolicy(): Promise<SummaryPolicyResponse>;
+  getDeepSeekProviderStatus(): Promise<DeepSeekProviderStatusResponse>;
+  getExternalDisclosure(
+    request: SummaryExternalDisclosureRequest,
+  ): Promise<SummaryExternalDisclosureResponse>;
+  confirmExternalDisclosure(
+    request: ConfirmSummaryExternalDisclosureRequest,
+  ): Promise<SummaryExternalDisclosureResponse>;
+  revokeDeepSeekConsent(): Promise<DeepSeekProviderStatusResponse>;
   createRun(request: CreateSummaryRunRequest): Promise<SummaryRunResponse>;
   createRevision(
     request: SummaryRunReferenceRequest,
@@ -330,6 +423,57 @@ export function createSummaryApi(
         summaryCommandNames.getPolicy,
         undefined,
         parsePolicy,
+      ),
+    getDeepSeekProviderStatus: () =>
+      invokeAndParse(
+        adapter,
+        summaryCommandNames.getDeepSeekProviderStatus,
+        undefined,
+        parseDeepSeekProviderStatus,
+      ),
+    getExternalDisclosure: async (request) => {
+      validateDisclosureRequest(request);
+      return invokeAndParse(
+        adapter,
+        summaryCommandNames.getExternalDisclosure,
+        { request: { summaryId: request.summaryId } },
+        parseExternalDisclosure,
+      );
+    },
+    confirmExternalDisclosure: async (request) => {
+      validateDisclosureRequest(request);
+      if (typeof request.remember !== "boolean") throw invalidInput();
+      const disclosure = await invokeAndParse(
+        adapter,
+        summaryCommandNames.confirmExternalDisclosure,
+        {
+          request: {
+            summaryId: request.summaryId,
+            remember: request.remember,
+          },
+        },
+        parseExternalDisclosure,
+      );
+      if (
+        disclosure.requiresConfirmation ||
+        disclosure.rememberedConsentValid !== request.remember
+      ) {
+        throw internalError();
+      }
+      return disclosure;
+    },
+    revokeDeepSeekConsent: () =>
+      invokeAndParse(
+        adapter,
+        summaryCommandNames.revokeDeepSeekConsent,
+        undefined,
+        (value) => {
+          const status = parseDeepSeekProviderStatus(value);
+          if (status.consentRemembered || status.consentedAt !== null) {
+            throw internalError();
+          }
+          return status;
+        },
       ),
     createRun: async (request) => {
       validateCreateRequest(request);
@@ -472,6 +616,12 @@ function validateReferenceRequest(request: SummaryRunReferenceRequest): void {
   ) {
     throw invalidInput();
   }
+}
+
+function validateDisclosureRequest(
+  request: SummaryExternalDisclosureRequest,
+): void {
+  if (!isRecord(request) || !isUuid(request.summaryId)) throw invalidInput();
 }
 
 interface NormalizedRunPage {
@@ -618,8 +768,7 @@ function parseRun(value: unknown): SummaryRunResponse {
     !outputLanguages.has(value.outputLanguage as SummaryOutputLanguage) ||
     typeof value.status !== "string" ||
     !summaryStatuses.has(value.status as SummaryStatus) ||
-    value.provider !== "deterministic_mock" ||
-    value.providerMode !== "mock" ||
+    !hasValidProviderIdentity(value) ||
     !isSafeBoundedText(value.model, summaryLimits.maxResultMetadataBytes) ||
     !isSafeBoundedText(
       value.promptVersion,
@@ -668,8 +817,8 @@ function parseRun(value: unknown): SummaryRunResponse {
     template: value.template as SummaryTemplate,
     outputLanguage: value.outputLanguage as SummaryOutputLanguage,
     status,
-    provider: "deterministic_mock",
-    providerMode: "mock",
+    provider: value.provider as SummaryProvider,
+    providerMode: value.providerMode as SummaryProviderMode,
     model: value.model,
     promptVersion: value.promptVersion,
     content,
@@ -1024,6 +1173,10 @@ function parseEvidence(value: unknown): SummaryEvidenceResponse {
 }
 
 function parsePolicy(value: unknown): SummaryPolicyResponse {
+  const expectedMaxInputBytes =
+    isRecord(value) && value.provider === deepSeekProvider
+      ? deepSeekMaxInputBytes
+      : summaryLimits.maxInputBytes;
   if (
     !isRecord(value) ||
     !hasExactlyKeys(value, [
@@ -1044,9 +1197,10 @@ function parsePolicy(value: unknown): SummaryPolicyResponse {
     !hasExactArray(value.outputLanguages, frozenOutputLanguages) ||
     value.runPurpose !== "final" ||
     value.triggerKind !== "manual" ||
-    value.provider !== "deterministic_mock" ||
+    (value.provider !== "deterministic_mock" &&
+      value.provider !== deepSeekProvider) ||
     value.maxSegments !== summaryLimits.maxSegments ||
-    value.maxInputBytes !== summaryLimits.maxInputBytes ||
+    value.maxInputBytes !== expectedMaxInputBytes ||
     value.maxEvidenceExcerptBytes !== summaryLimits.maxEvidenceExcerptBytes ||
     value.listDefaultLimit !== summaryRunPageLimits.default ||
     value.listMaxLimit !== summaryRunPageLimits.maximum ||
@@ -1060,15 +1214,126 @@ function parsePolicy(value: unknown): SummaryPolicyResponse {
     outputLanguages: [...frozenOutputLanguages],
     runPurpose: "final",
     triggerKind: "manual",
-    provider: "deterministic_mock",
+    provider: value.provider as SummaryProvider,
     maxSegments: summaryLimits.maxSegments,
-    maxInputBytes: summaryLimits.maxInputBytes,
+    maxInputBytes: expectedMaxInputBytes,
     maxEvidenceExcerptBytes: summaryLimits.maxEvidenceExcerptBytes,
     listDefaultLimit: summaryRunPageLimits.default,
     listMaxLimit: summaryRunPageLimits.maximum,
     evidenceDefaultLimit: summaryEvidencePageLimits.default,
     evidenceMaxLimit: summaryEvidencePageLimits.maximum,
   };
+}
+
+function parseDeepSeekProviderStatus(
+  value: unknown,
+): DeepSeekProviderStatusResponse {
+  if (
+    !isRecord(value) ||
+    !hasExactlyKeys(value, [
+      "keyConfigured",
+      "provider",
+      "endpointHost",
+      "model",
+      "consentRemembered",
+      "consentedAt",
+      "policyVersion",
+      "executionAvailable",
+    ]) ||
+    typeof value.keyConfigured !== "boolean" ||
+    value.provider !== deepSeekProvider ||
+    value.endpointHost !== deepSeekEndpointHost ||
+    value.model !== deepSeekModel ||
+    typeof value.consentRemembered !== "boolean" ||
+    !isNullableUtcIso(value.consentedAt) ||
+    value.policyVersion !== deepSeekPolicyVersion ||
+    typeof value.executionAvailable !== "boolean" ||
+    value.executionAvailable !== value.keyConfigured ||
+    (value.consentRemembered
+      ? value.consentedAt === null
+      : value.consentedAt !== null)
+  ) {
+    throw internalError();
+  }
+  return {
+    keyConfigured: value.keyConfigured,
+    provider: deepSeekProvider,
+    endpointHost: deepSeekEndpointHost,
+    model: deepSeekModel,
+    consentRemembered: value.consentRemembered,
+    consentedAt: value.consentedAt,
+    policyVersion: deepSeekPolicyVersion,
+    executionAvailable: value.executionAvailable,
+  };
+}
+
+function parseExternalDisclosure(
+  value: unknown,
+): SummaryExternalDisclosureResponse {
+  if (
+    !isRecord(value) ||
+    !hasExactlyKeys(value, [
+      "provider",
+      "endpointHost",
+      "model",
+      "sourceCount",
+      "segmentCount",
+      "inputBytes",
+      "template",
+      "outputLanguage",
+      "dataCategories",
+      "rememberedConsentValid",
+      "requiresConfirmation",
+      "policyVersion",
+    ]) ||
+    value.provider !== deepSeekProvider ||
+    value.endpointHost !== deepSeekEndpointHost ||
+    value.model !== deepSeekModel ||
+    !isPositiveSafeInteger(value.sourceCount) ||
+    !isPositiveSafeInteger(value.segmentCount) ||
+    value.sourceCount > value.segmentCount ||
+    value.segmentCount > summaryLimits.maxSegments ||
+    !isPositiveSafeInteger(value.inputBytes) ||
+    value.inputBytes > deepSeekMaxInputBytes ||
+    typeof value.template !== "string" ||
+    !summaryTemplates.has(value.template as SummaryTemplate) ||
+    typeof value.outputLanguage !== "string" ||
+    !outputLanguages.has(value.outputLanguage as SummaryOutputLanguage) ||
+    !hasExactArray(value.dataCategories, frozenExternalDataCategories) ||
+    typeof value.rememberedConsentValid !== "boolean" ||
+    typeof value.requiresConfirmation !== "boolean" ||
+    (value.rememberedConsentValid && value.requiresConfirmation) ||
+    value.policyVersion !== deepSeekPolicyVersion
+  ) {
+    throw internalError();
+  }
+  return {
+    provider: deepSeekProvider,
+    endpointHost: deepSeekEndpointHost,
+    model: deepSeekModel,
+    sourceCount: value.sourceCount,
+    segmentCount: value.segmentCount,
+    inputBytes: value.inputBytes,
+    template: value.template as SummaryTemplate,
+    outputLanguage: value.outputLanguage as SummaryOutputLanguage,
+    dataCategories: [...frozenExternalDataCategories],
+    rememberedConsentValid: value.rememberedConsentValid,
+    requiresConfirmation: value.requiresConfirmation,
+    policyVersion: deepSeekPolicyVersion,
+  };
+}
+
+function hasValidProviderIdentity(value: Record<string, unknown>): boolean {
+  return (
+    (value.provider === "deterministic_mock" &&
+      value.providerMode === "mock" &&
+      value.model === deterministicMockModel &&
+      value.promptVersion === deterministicMockPromptVersion) ||
+    (value.provider === deepSeekProvider &&
+      value.providerMode === "external" &&
+      value.model === deepSeekModel &&
+      value.promptVersion === deepSeekPromptVersion)
+  );
 }
 
 function parseSummaryError(value: unknown): SummaryApiError {
@@ -1083,6 +1348,11 @@ function parseSummaryError(value: unknown): SummaryApiError {
     return new SummaryApiError(value.code as SummaryErrorCode, value.retryable);
   }
   return internalError();
+}
+
+export function toSummaryError(value: unknown): SummaryApiError {
+  if (value instanceof SummaryApiError) return value;
+  return parseSummaryError(value);
 }
 
 function invalidInput(): SummaryApiError {
@@ -1165,11 +1435,9 @@ function utf8Length(value: string): number {
 }
 
 function isUtcIso(value: unknown): value is string {
-  return (
-    typeof value === "string" &&
-    utcIsoPattern.test(value) &&
-    Number.isFinite(Date.parse(value))
-  );
+  if (typeof value !== "string" || !utcIsoPattern.test(value)) return false;
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString() === value;
 }
 
 function isNullableUtcIso(value: unknown): value is string | null {

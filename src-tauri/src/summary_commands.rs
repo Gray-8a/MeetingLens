@@ -3,16 +3,27 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+#[cfg(test)]
+use crate::data::MeetingService;
 use crate::data::{
-    CreateSummaryRevision, CreateSummaryRun, MeetingService, SummaryActionItem,
-    SummaryActionStatus, SummaryClaim, SummaryContent, SummaryDecision, SummaryDecisionStatus,
-    SummaryError, SummaryEvidence, SummaryEvidencePage, SummaryOutputLanguage, SummaryPolicy,
-    SummaryRun, SummaryRunPage, SummaryStatus, SummaryTemplate,
+    CreateSummaryRevision, CreateSummaryRun, SummaryActionItem, SummaryActionStatus, SummaryClaim,
+    SummaryContent, SummaryDecision, SummaryDecisionStatus, SummaryError, SummaryEvidence,
+    SummaryEvidencePage, SummaryOutputLanguage, SummaryPolicy, SummaryRun, SummaryRunPage,
+    SummaryStatus, SummaryTemplate,
+};
+use crate::summary_runtime::{
+    DeepSeekProviderStatus, SummaryExternalDisclosure, SummaryRuntimeService,
+    deepseek_data_categories, deepseek_endpoint_host, deepseek_model, deepseek_policy_version,
+    deepseek_provider_name,
 };
 
 #[cfg(test)]
 const SUMMARY_COMMAND_NAMES: &[&str] = &[
     "get_summary_policy",
+    "get_deepseek_provider_status",
+    "get_summary_external_disclosure",
+    "confirm_summary_external_disclosure",
+    "revoke_deepseek_consent",
     "create_summary_run",
     "create_summary_revision",
     "execute_summary_run",
@@ -36,6 +47,19 @@ pub struct CreateSummaryRunRequest {
 pub struct SummaryRunRequest {
     pub meeting_id: String,
     pub summary_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SummaryExternalDisclosureRequest {
+    pub summary_id: String,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ConfirmSummaryExternalDisclosureRequest {
+    pub summary_id: String,
+    pub remember: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -87,6 +111,70 @@ impl From<SummaryPolicy> for SummaryPolicyResponse {
             list_max_limit: policy.list_max_limit,
             evidence_default_limit: policy.evidence_default_limit,
             evidence_max_limit: policy.evidence_max_limit,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct DeepSeekProviderStatusResponse {
+    pub key_configured: bool,
+    pub provider: &'static str,
+    pub endpoint_host: &'static str,
+    pub model: &'static str,
+    pub consent_remembered: bool,
+    pub consented_at: Option<String>,
+    pub policy_version: &'static str,
+    pub execution_available: bool,
+}
+
+impl From<DeepSeekProviderStatus> for DeepSeekProviderStatusResponse {
+    fn from(status: DeepSeekProviderStatus) -> Self {
+        Self {
+            key_configured: status.key_configured,
+            provider: deepseek_provider_name(),
+            endpoint_host: deepseek_endpoint_host(),
+            model: deepseek_model(),
+            consent_remembered: status.consent_remembered,
+            consented_at: status.consented_at,
+            policy_version: deepseek_policy_version(),
+            execution_available: status.key_configured,
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SummaryExternalDisclosureResponse {
+    pub provider: &'static str,
+    pub endpoint_host: &'static str,
+    pub model: &'static str,
+    pub source_count: u64,
+    pub segment_count: u64,
+    pub input_bytes: u64,
+    pub template: SummaryTemplate,
+    pub output_language: SummaryOutputLanguage,
+    pub data_categories: Vec<&'static str>,
+    pub remembered_consent_valid: bool,
+    pub requires_confirmation: bool,
+    pub policy_version: &'static str,
+}
+
+impl From<SummaryExternalDisclosure> for SummaryExternalDisclosureResponse {
+    fn from(disclosure: SummaryExternalDisclosure) -> Self {
+        Self {
+            provider: deepseek_provider_name(),
+            endpoint_host: deepseek_endpoint_host(),
+            model: deepseek_model(),
+            source_count: disclosure.source_count,
+            segment_count: disclosure.segment_count,
+            input_bytes: disclosure.input_bytes,
+            template: disclosure.template,
+            output_language: disclosure.output_language,
+            data_categories: deepseek_data_categories(),
+            remembered_consent_valid: disclosure.remembered_consent_valid,
+            requires_confirmation: disclosure.requires_confirmation,
+            policy_version: deepseek_policy_version(),
         }
     }
 }
@@ -506,71 +594,148 @@ impl From<SummaryError> for SummaryCommandError {
 type CommandResult<T> = Result<T, SummaryCommandError>;
 
 #[tauri::command]
-pub fn get_summary_policy(service: State<'_, MeetingService>) -> SummaryPolicyResponse {
-    SummaryPolicyResponse::from(service.summaries().policy())
+pub fn get_summary_policy(service: State<'_, SummaryRuntimeService>) -> SummaryPolicyResponse {
+    SummaryPolicyResponse::from(service.policy())
+}
+
+#[tauri::command]
+pub fn get_deepseek_provider_status(
+    service: State<'_, SummaryRuntimeService>,
+) -> CommandResult<DeepSeekProviderStatusResponse> {
+    service
+        .provider_status()
+        .map(DeepSeekProviderStatusResponse::from)
+        .map_err(SummaryCommandError::from)
+}
+
+#[tauri::command]
+pub fn get_summary_external_disclosure(
+    request: SummaryExternalDisclosureRequest,
+    service: State<'_, SummaryRuntimeService>,
+) -> CommandResult<SummaryExternalDisclosureResponse> {
+    service
+        .disclosure(&request.summary_id)
+        .map(SummaryExternalDisclosureResponse::from)
+        .map_err(SummaryCommandError::from)
+}
+
+#[tauri::command]
+pub fn confirm_summary_external_disclosure(
+    request: ConfirmSummaryExternalDisclosureRequest,
+    service: State<'_, SummaryRuntimeService>,
+) -> CommandResult<SummaryExternalDisclosureResponse> {
+    service
+        .confirm_disclosure(&request.summary_id, request.remember)
+        .map(SummaryExternalDisclosureResponse::from)
+        .map_err(SummaryCommandError::from)
+}
+
+#[tauri::command]
+pub fn revoke_deepseek_consent(
+    service: State<'_, SummaryRuntimeService>,
+) -> CommandResult<DeepSeekProviderStatusResponse> {
+    service
+        .revoke_consent()
+        .map(DeepSeekProviderStatusResponse::from)
+        .map_err(SummaryCommandError::from)
 }
 
 #[tauri::command]
 pub fn create_summary_run(
     request: CreateSummaryRunRequest,
-    service: State<'_, MeetingService>,
+    service: State<'_, SummaryRuntimeService>,
 ) -> CommandResult<SummaryRunResponse> {
-    create_summary_run_with_service(&service, request)
+    service
+        .create_run(CreateSummaryRun {
+            meeting_id: request.meeting_id,
+            source_ids: request.source_ids,
+            template: request.template,
+            output_language: request.output_language,
+        })
+        .map(SummaryRunResponse::from)
+        .map_err(SummaryCommandError::from)
 }
 
 #[tauri::command]
 pub fn create_summary_revision(
     request: SummaryRunRequest,
-    service: State<'_, MeetingService>,
+    service: State<'_, SummaryRuntimeService>,
 ) -> CommandResult<SummaryRunResponse> {
-    create_summary_revision_with_service(&service, request)
+    service
+        .create_revision(CreateSummaryRevision {
+            meeting_id: request.meeting_id,
+            summary_id: request.summary_id,
+        })
+        .map(SummaryRunResponse::from)
+        .map_err(SummaryCommandError::from)
 }
 
 #[tauri::command]
 pub async fn execute_summary_run(
     request: SummaryRunRequest,
-    service: State<'_, MeetingService>,
+    service: State<'_, SummaryRuntimeService>,
 ) -> CommandResult<SummaryRunResponse> {
-    let service = service.inner().clone();
-    tauri::async_runtime::spawn_blocking(move || {
-        execute_summary_run_with_service(&service, request)
-    })
-    .await
-    .map_err(|_| SummaryCommandError::from(SummaryError::Internal))?
+    service
+        .execute(&request.meeting_id, &request.summary_id)
+        .await
+        .map(SummaryRunResponse::from)
+        .map_err(SummaryCommandError::from)
 }
 
 #[tauri::command]
 pub fn get_summary_run(
     request: SummaryRunRequest,
-    service: State<'_, MeetingService>,
+    service: State<'_, SummaryRuntimeService>,
 ) -> CommandResult<SummaryRunResponse> {
-    get_summary_run_with_service(&service, request)
+    service
+        .get(&request.meeting_id, &request.summary_id)
+        .map(SummaryRunResponse::from)
+        .map_err(SummaryCommandError::from)
 }
 
 #[tauri::command]
 pub fn list_summary_runs(
     request: ListSummaryRunsRequest,
-    service: State<'_, MeetingService>,
+    service: State<'_, SummaryRuntimeService>,
 ) -> CommandResult<ListSummaryRunsResponse> {
-    list_summary_runs_with_service(&service, request)
+    service
+        .list(
+            &request.meeting_id,
+            request.cursor.as_deref(),
+            request.limit,
+        )
+        .map(ListSummaryRunsResponse::from)
+        .map_err(SummaryCommandError::from)
 }
 
 #[tauri::command]
 pub fn cancel_summary_run(
     request: SummaryRunRequest,
-    service: State<'_, MeetingService>,
+    service: State<'_, SummaryRuntimeService>,
 ) -> CommandResult<SummaryRunResponse> {
-    cancel_summary_run_with_service(&service, request)
+    service
+        .cancel(&request.meeting_id, &request.summary_id)
+        .map(SummaryRunResponse::from)
+        .map_err(SummaryCommandError::from)
 }
 
 #[tauri::command]
 pub fn list_summary_evidence(
     request: ListSummaryEvidenceRequest,
-    service: State<'_, MeetingService>,
+    service: State<'_, SummaryRuntimeService>,
 ) -> CommandResult<ListSummaryEvidenceResponse> {
-    list_summary_evidence_with_service(&service, request)
+    service
+        .list_evidence(
+            &request.meeting_id,
+            &request.summary_id,
+            request.cursor,
+            request.limit,
+        )
+        .map(ListSummaryEvidenceResponse::from)
+        .map_err(SummaryCommandError::from)
 }
 
+#[cfg(test)]
 fn create_summary_run_with_service(
     service: &MeetingService,
     request: CreateSummaryRunRequest,
@@ -587,6 +752,7 @@ fn create_summary_run_with_service(
         .map_err(SummaryCommandError::from)
 }
 
+#[cfg(test)]
 fn create_summary_revision_with_service(
     service: &MeetingService,
     request: SummaryRunRequest,
@@ -601,6 +767,7 @@ fn create_summary_revision_with_service(
         .map_err(SummaryCommandError::from)
 }
 
+#[cfg(test)]
 fn execute_summary_run_with_service(
     service: &MeetingService,
     request: SummaryRunRequest,
@@ -612,6 +779,7 @@ fn execute_summary_run_with_service(
         .map_err(SummaryCommandError::from)
 }
 
+#[cfg(test)]
 fn get_summary_run_with_service(
     service: &MeetingService,
     request: SummaryRunRequest,
@@ -623,6 +791,7 @@ fn get_summary_run_with_service(
         .map_err(SummaryCommandError::from)
 }
 
+#[cfg(test)]
 fn list_summary_runs_with_service(
     service: &MeetingService,
     request: ListSummaryRunsRequest,
@@ -638,6 +807,7 @@ fn list_summary_runs_with_service(
         .map_err(SummaryCommandError::from)
 }
 
+#[cfg(test)]
 fn cancel_summary_run_with_service(
     service: &MeetingService,
     request: SummaryRunRequest,
@@ -649,6 +819,7 @@ fn cancel_summary_run_with_service(
         .map_err(SummaryCommandError::from)
 }
 
+#[cfg(test)]
 fn list_summary_evidence_with_service(
     service: &MeetingService,
     request: ListSummaryEvidenceRequest,
@@ -823,6 +994,35 @@ mod tests {
             }))
             .is_err()
         );
+        let disclosure: SummaryExternalDisclosureRequest = serde_json::from_value(json!({
+            "summaryId": summary_id
+        }))
+        .expect("disclosure accepts only the run ID");
+        assert_eq!(disclosure.summary_id, summary_id);
+        let confirmed: ConfirmSummaryExternalDisclosureRequest = serde_json::from_value(json!({
+            "summaryId": summary_id,
+            "remember": true
+        }))
+        .expect("confirmation accepts the run ID and remember choice");
+        assert!(confirmed.remember);
+        for forbidden in [
+            json!({"summaryId": summary_id, "provider": "deepseek"}),
+            json!({"summaryId": summary_id, "model": "deepseek-v4-pro"}),
+            json!({"summaryId": summary_id, "endpoint": "https://example.invalid"}),
+            json!({"summaryId": summary_id, "prompt": "private"}),
+            json!({"summaryId": summary_id, "remember": false, "policyVersion": "v1"}),
+        ] {
+            if forbidden.get("remember").is_some() {
+                assert!(
+                    serde_json::from_value::<ConfirmSummaryExternalDisclosureRequest>(forbidden)
+                        .is_err()
+                );
+            } else {
+                assert!(
+                    serde_json::from_value::<SummaryExternalDisclosureRequest>(forbidden).is_err()
+                );
+            }
+        }
     }
 
     #[test]
@@ -1015,6 +1215,22 @@ mod tests {
     #[test]
     fn error_registration_and_minimum_capability_are_safe_and_stable() {
         let errors = [
+            SummaryError::DeepSeekAccessDenied,
+            SummaryError::DeepSeekApiKeyMissing,
+            SummaryError::DeepSeekAuthFailed,
+            SummaryError::DeepSeekConsentInvalid,
+            SummaryError::DeepSeekConsentRequired,
+            SummaryError::DeepSeekContentFiltered,
+            SummaryError::DeepSeekInsufficientBalance,
+            SummaryError::DeepSeekModelUnavailable,
+            SummaryError::DeepSeekNetworkFailed,
+            SummaryError::DeepSeekOutputTruncated,
+            SummaryError::DeepSeekRateLimited,
+            SummaryError::DeepSeekRequestInvalid,
+            SummaryError::DeepSeekResponseEmpty,
+            SummaryError::DeepSeekResponseInvalid,
+            SummaryError::DeepSeekServiceUnavailable,
+            SummaryError::DeepSeekTimeout,
             SummaryError::EvidenceInvalid,
             SummaryError::InputInsufficient,
             SummaryError::InputTooLarge,
@@ -1025,6 +1241,7 @@ mod tests {
             SummaryError::MeetingNotFound,
             SummaryError::PersistenceFailed,
             SummaryError::ProviderFailed,
+            SummaryError::ProviderInputTooLarge,
             SummaryError::ProviderOutputInvalid,
             SummaryError::RevisionConflict,
             SummaryError::RunNotFound,
@@ -1073,7 +1290,7 @@ mod tests {
             assert!(!production.contains(forbidden));
         }
         assert!(production.contains("pub async fn execute_summary_run"));
-        assert!(production.contains("tauri::async_runtime::spawn_blocking"));
+        assert!(!production.contains("tauri::async_runtime::spawn_blocking"));
 
         let app_builder = include_str!("lib.rs");
         let build_script = include_str!("../build.rs");
@@ -1087,7 +1304,7 @@ mod tests {
             .split("[[set]]")
             .find(|set| set.contains("summary-run-commands"))
             .expect("summary permission set should exist");
-        assert_eq!(summary_set.matches("\"allow-").count(), 8);
+        assert_eq!(summary_set.matches("\"allow-").count(), 12);
 
         let capability = include_str!("../capabilities/default.json");
         assert!(capability.contains("summary-run-commands"));

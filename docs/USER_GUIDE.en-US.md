@@ -1,10 +1,10 @@
 # MeetingLens Development Preview User Guide
 
-> Development Preview: this guide describes the local desktop workflows that the current repository actually provides. It is not a production manual; existing transcripts can be imported, reviewed, and corrected, while the merged Summary Run Core remains a developer-only zero-network foundation and real AI minutes are not available.
+> Development Preview: this guide describes the local desktop workflows that the current repository actually provides. It is not a production manual; transcripts can be imported, reviewed, and corrected, while the Rust DeepSeek/consent foundation is implemented but not yet connected to the user-facing Generate and results workflow.
 
 ## 1. Introduction to MeetingLens
 
-MeetingLens is a local-first Personal Edition meeting workspace for Windows 11. Its near-term goal is to turn pasted or imported meeting transcripts into detailed, editable, traceable minutes that can be copied or saved as Markdown. The current development preview can safely accept, persist, review, and correct transcripts. PR #21 established the persistent Summary run/snapshot boundary and PR #22 aligned its completed status, but ordinary users still cannot generate real minutes.
+MeetingLens is a local-first Personal Edition meeting workspace for Windows 11. Its near-term goal is to turn pasted or imported meeting transcripts into detailed, editable, traceable minutes that can be copied or saved as Markdown. The current development preview can safely accept, persist, review, and correct transcripts. The immutable Summary core and underlying Rust-only DeepSeek, SecretStore, consent, validation, and cancellation path are present, but ordinary users still cannot generate or view real minutes until the next UI stage.
 
 The same application includes Simplified Chinese (`zh-CN`) and English (`en-US`); two installations are not required.
 
@@ -21,9 +21,11 @@ The current version is a development preview. Available capabilities include:
 - viewing Mock Provider, local Sidecar, and database status;
 - storing a DeepSeek API key in Windows Credential Manager without allowing the WebView to read it back;
 - running development validation of the isolated offline Docling Worker, which is not connected to the product UI.
-- in the current build, validating schema-v4 Summary series/revisions, immutable transcript snapshots, run-owned evidence, and a deterministic Rust Mock through development-only APIs and synthetic data.
+- validating schema-v4 Summary series/revisions, immutable transcript snapshots, and run-owned evidence, plus schema-v5 minimal remembered consent;
+- using Settings to see the fixed DeepSeek host/model, remembered-consent state and time, and to revoke future authorization;
+- validating the Rust DeepSeek protocol, strict JSON/evidence checks, failures, and cancellation with synthetic transports; the deterministic Mock remains test/debug-only and historical Mock runs remain readable.
 
-The user-facing application cannot currently generate real AI meeting minutes, call DeepSeek, transcribe recording files, process live recordings, or run realtime transcription. Generate meeting minutes remains disabled. Translation and Meeting still display Coming soon in the current UI, but their roadmap status is Frozen/Deferred. The Rust Mock makes no network request and is not a production AI result.
+The user-facing application cannot currently initiate DeepSeek generation, show real AI meeting minutes, transcribe recording files, process live recordings, or run realtime transcription. Generate meeting minutes remains disabled. Translation and Meeting still display Coming soon in the current UI, but their roadmap status is Frozen/Deferred. The Rust production provider is fixed to DeepSeek; Mock is isolated to tests/debug and makes no network request. A real paid DeepSeek API smoke has not been performed.
 
 ## 3. System requirements
 
@@ -93,7 +95,7 @@ Transcript review shows the meeting title, transcript sources, segment totals, a
 - Source deletion requires confirmation. Deleting the final source shows no usable input; it never deletes the user's source file or changes the meeting-file area.
 - A source used by a queued or running development Summary run cannot be deleted until that run is terminal. Deleting it afterwards keeps only cited evidence, redacts the full snapshot text, and marks the historical result stale/source deleted.
 
-Generate meeting minutes remains disabled and makes no network request. The next stage adds only the DeepSeek Provider and minimal outbound confirmation; the formal result workspace follows in `feat/summary-mode-minutes`.
+Generate meeting minutes remains disabled and makes no network request from this page. The reusable outbound-consent dialog and Rust provider path are implemented underneath; the sole next stage, `feat/summary-mode-minutes`, wires them to the formal Generate and result workspace.
 
 ## 8. Advanced mock meeting and meeting files
 
@@ -121,7 +123,9 @@ Reference files and transcript sources are different data types. Reference files
 3. Select Save API key.
 4. Confirm that the status is Configured and the input remains empty.
 
-The key is stored in the current Windows user's Credential Manager, not SQLite, WebView storage, or the repository. The UI can query configuration status, set, and delete the key, but cannot read it back. No real DeepSeek Provider uses the key in this preview.
+The key is stored in the current Windows user's Credential Manager, not SQLite, WebView storage, or the repository. The UI can query configuration status, set, and delete the key, but cannot read it back. Only the trusted Rust DeepSeek Provider may read it immediately before an authorized request; saving a key does not validate it or send anything.
+
+Settings also shows the fixed provider (`deepseek`), host (`api.deepseek.com`), model (`deepseek-v4-pro`), and whether Remember my choice is active. Select Revoke sharing consent to require confirmation again for future sends and clear both remembered authorization and every unused one-time confirmation. Revocation cannot recall data already delivered to DeepSeek. There is deliberately no button to authorize without a specific frozen Summary run and no model or base-URL editor.
 
 Never paste a key into issue reports, logs, screenshots, meeting notes, or version control. Revoke an exposed key immediately.
 
@@ -169,13 +173,14 @@ Deletion is irreversible. Confirm that the selected meeting and files are correc
 
 - Meeting metadata is stored in the private application SQLite database.
 - Submitted transcript sources and normalized segments are stored in the same private database.
-- In the current build, schema v4 stores developer Summary runs and immutable transcript snapshots locally. A run is limited to 20,000 final segments and 10 MiB of UTF-8 text; explicit source deletion redacts terminal full-text snapshots while retaining only cited evidence.
+- Schema v4 stores Summary runs and immutable transcript snapshots locally. Its durable limit remains 20,000 final segments and 10 MiB of UTF-8 text; the production DeepSeek policy is limited to 1 MiB and fails before transport when exceeded. Explicit source deletion redacts terminal full-text snapshots while retaining only cited evidence.
+- Schema v5 stores at most one minimal remembered DeepSeek preference: provider, policy version/fingerprint, and consent/update times. It never stores transcript text, run IDs, prompts, responses, paths, or keys. One-time consent exists only in Rust memory for up to 10 minutes and is consumed once.
 - Unsubmitted pasted text exists only briefly in React memory and is cleared after save, cancel, or navigation away.
 - Transcript bodies, speakers, and source paths are not written to localStorage, sessionStorage, IndexedDB, or console.
 - Imported copies are stored in private application storage; React does not receive absolute paths.
 - The DeepSeek key is stored in Windows Credential Manager.
 - Interface language is the only application setting allowed in WebView preference storage.
-- The current preview does not record audio, read the screen, or send meeting content to external AI.
+- The current preview does not record audio or read the screen. The user-facing Generate control still cannot send content; the underlying Rust provider can send only a frozen, explicitly authorized transcript scope to the fixed DeepSeek endpoint.
 - Tests and issue reports must use synthetic data only.
 
 See [SECURITY.md](../SECURITY.md) for the detailed boundaries.
@@ -185,7 +190,7 @@ See [SECURITY.md](../SECURITY.md) for the detailed boundaries.
 The following near-term Personal Edition capabilities are not implemented:
 
 - user-facing real AI meeting-minutes generation and a formal result workspace;
-- the DeepSeek Summary Provider, minimal first-outbound confirmation, and Remember my choice;
+- formal wiring of the existing DeepSeek consent dialog/provider into Generate and result status;
 - Markdown result view, copy, file save, body editing, and whole-result regeneration;
 - local batch transcription of a recording file;
 - simplified Docling product orchestration and document evidence;
@@ -204,11 +209,11 @@ The following capabilities are Frozen/Deferred and are not part of the current P
 
 ### Why can I not generate minutes after saving a DeepSeek key?
 
-Secure credential storage and the zero-network Summary core are separate. The current Rust Mock validates immutable local snapshots and evidence without reading the key. The sole next stage, `feat/summary-provider-deepseek`, consumes SecretStore in Rust and adds minimal first-outbound confirmation; the formal result workspace follows in `feat/summary-mode-minutes`.
+Secure credential storage, the Rust provider, and the user-facing minutes workspace are separate boundaries. The provider can consume SecretStore only after a valid run-specific confirmation, but the current Generate control is intentionally not wired to those commands. The sole next stage, `feat/summary-mode-minutes`, connects the existing consent/provider path to the formal result workspace.
 
 ### Why is Generate meeting minutes unavailable when the transcript is ready?
 
-PR #20 completed input, persistence, paginated review, and manual correction. PR #21 completed developer-only immutable Summary runs, `series_id + revision`, a 20,000-segment/10-MiB snapshot policy, evidence allowlisting, cancellation delivered to the running Mock, stale/delete handling, and interrupted-run recovery through eight minimal commands. Acceptance for that high-risk core used an isolated operating-system temporary data root and a matching synthetic WebView2 profile rather than the user's normal MeetingLens data locations; this historical validation does not make double isolation the default for every ordinary feature. The next stage is the bounded DeepSeek Provider with minimal Consent, followed by the minutes result workspace; the disabled action does not call AI.
+PR #20 completed input, persistence, paginated review, and manual correction. PR #21 completed immutable Summary runs, `series_id + revision`, a 20,000-segment/10-MiB snapshot policy, evidence allowlisting, cancellation, stale/delete handling, and interrupted-run recovery. The current provider delivery adds four disclosure/status commands, schema v5 consent, fixed Rust DeepSeek transport and strict response handling, but deliberately does not change the formal Summary page. The disabled action therefore does not call AI; `feat/summary-mode-minutes` is the sole next stage.
 
 ### Does transcript import copy or delete the source file?
 
@@ -245,9 +250,9 @@ The completed and next Personal Edition delivery path is:
 2. `feat/transcript-command-api` (PR #19 merged): secure transcript commands, the Rust-native picker, and atomic meeting + transcript creation;
 3. `feat/summary-mode-input-ui` (PR #20 merged): the Summary entry point, paste, native import, paginated review, and basic speaker/text correction;
 4. `feat/summary-run-core` (PR #21 merged): schema v4, immutable full-text snapshots, series/revisions, evidence allowlisting, recovery, and the Rust zero-network Mock;
-5. `docs/personal-edition-descope` (current, PR #23): documentation-only Personal Edition scope, Frozen/Deferred boundaries, and development-process re-baseline;
-6. `feat/summary-provider-deepseek` (sole next stage, expected PR #24): the Rust DeepSeek Provider, SecretStore, strict response parsing, minimal first-outbound confirmation, consent for this request/remember/cancel, and fail-closed behavior; no general Consent Data Core;
-7. `feat/summary-mode-minutes` (expected PR #25, daily-use milestone): templates, Chinese/English/bilingual output, the formal result, Markdown view/copy/save, body editing, and whole-result regeneration while preserving old revisions; no section regeneration or DOCX/PDF;
+5. `docs/personal-edition-descope` (PR #23 merged): Personal Edition scope, Frozen/Deferred boundaries, and development-process re-baseline;
+6. `feat/summary-provider-deepseek` (current delivery, expected PR #24): schema v5 minimal preference, Rust DeepSeek/SecretStore, strict JSON/evidence, one-time/remember/revoke, cancellation and fail-closed behavior; no general Consent Data Core and no formal result page;
+7. `feat/summary-mode-minutes` (sole next stage, expected PR #25, daily-use milestone): wire formal Generate/consent/status, add Chinese/English/bilingual results, Markdown view/copy/save, body editing, and whole-result regeneration while preserving old revisions; no section regeneration or DOCX/PDF;
 8. `feat/audio-file-transcription` (expected PR #26): locally batch-transcribe a user-imported meeting recording through a one-shot worker; no live audio, WASAPI, or realtime ASR;
 9. `feat/document-parsing-orchestration` (expected PR #27): simplified wiring of the existing Docling Worker, document chunks/evidence, one automatic retry, then a prompt to re-import;
 10. `feat/window-context` (optional, expected PR #28 or later): read only a specific window explicitly selected by the user, and only after a repeated real need is confirmed.

@@ -1,4 +1,11 @@
-import { act, render, screen, waitFor, within } from "@testing-library/react";
+import {
+  act,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+  within,
+} from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import homeSource from "./pages/HomePage.tsx?raw";
 import historySource from "./pages/HistoryPage.tsx?raw";
@@ -12,6 +19,7 @@ import App from "./App";
 import { DocumentApiError } from "./api/document";
 import { MeetingApiError } from "./api/meeting";
 import { SecretApiError } from "./api/secret";
+import { SummaryApiError } from "./api/summary";
 import type { TranscriptApi } from "./api/transcript";
 import type { AppServices } from "./app/services";
 import { formatLocalDate } from "./lib/presentation";
@@ -36,6 +44,7 @@ import {
   syntheticMeeting,
 } from "./test/fakeMeetingApi";
 import { FakeSecretApi } from "./test/fakeSecretApi";
+import { FakeSummaryApi, syntheticDeepSeekStatus } from "./test/fakeSummaryApi";
 import { FakeTranscriptApi } from "./test/fakeTranscriptApi";
 import {
   documentIds,
@@ -156,6 +165,7 @@ function appServices(
     documentApi,
     meetingApi: api,
     secretApi: new FakeSecretApi(),
+    summaryApi: new FakeSummaryApi(),
     transcriptApi,
     checkSidecarHealth: async () => ({
       status: "authenticated",
@@ -183,9 +193,13 @@ function renderAt(
   );
 }
 
-function renderSettings(secretApi: FakeSecretApi) {
+function renderSettings(
+  secretApi: FakeSecretApi,
+  summaryApi: FakeSummaryApi = new FakeSummaryApi(),
+) {
   const services = appServices(new FakeMeetingApi());
   services.secretApi = secretApi;
+  services.summaryApi = summaryApi;
   window.history.replaceState(null, "", "#/settings");
   return render(<App services={services} />);
 }
@@ -817,6 +831,128 @@ describe("MeetingLens desktop UI", () => {
     expect(consoleError).not.toHaveBeenCalled();
   });
 
+  it("shows the fixed DeepSeek policy and remembered sharing status", async () => {
+    const summaryApi = new FakeSummaryApi();
+    summaryApi.providerStatus = syntheticDeepSeekStatus({
+      keyConfigured: true,
+      consentRemembered: true,
+      consentedAt: "2026-08-17T02:03:04.000Z",
+      executionAvailable: true,
+    });
+    const secretApi = new FakeSecretApi();
+    secretApi.configured = true;
+    renderSettings(secretApi, summaryApi);
+
+    expect(await screen.findByText("api.deepseek.com")).toBeInTheDocument();
+    expect(screen.getByText("deepseek-v4-pro")).toBeInTheDocument();
+    expect(screen.getByText("Remembered")).toBeInTheDocument();
+    expect(
+      screen.getByText(formatLocalDate("2026-08-17T02:03:04.000Z")),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Revoke sharing consent" }),
+    ).toBeEnabled();
+    expect(
+      screen.queryByRole("button", { name: /authorize|consent in advance/i }),
+    ).toBeNull();
+    expect(screen.queryByLabelText(/base url|model/i)).toBeNull();
+  });
+
+  it("revokes remembered DeepSeek consent without touching the API key", async () => {
+    const user = userEvent.setup();
+    const summaryApi = new FakeSummaryApi();
+    summaryApi.providerStatus = syntheticDeepSeekStatus({
+      keyConfigured: true,
+      consentRemembered: true,
+      consentedAt: "2026-08-17T02:03:04.000Z",
+      executionAvailable: true,
+    });
+    const secretApi = new FakeSecretApi();
+    secretApi.configured = true;
+    renderSettings(secretApi, summaryApi);
+    await screen.findByText("Remembered");
+
+    await user.click(
+      screen.getByRole("button", { name: "Revoke sharing consent" }),
+    );
+
+    expect(summaryApi.revokeCallCount).toBe(1);
+    expect(await screen.findByText("Not remembered")).toBeInTheDocument();
+    expect(screen.getByText("Configured")).toBeInTheDocument();
+    expect(secretApi.deleteCallCount).toBe(0);
+    expect(document.body).toHaveTextContent(
+      "Future sends require confirmation again.",
+    );
+  });
+
+  it("revokes unused one-time consent even when no choice is remembered", async () => {
+    const user = userEvent.setup();
+    const summaryApi = new FakeSummaryApi();
+    summaryApi.providerStatus = syntheticDeepSeekStatus({
+      consentRemembered: false,
+      consentedAt: null,
+    });
+    renderSettings(new FakeSecretApi(), summaryApi);
+    await screen.findByText("Not remembered");
+
+    const button = screen.getByRole("button", {
+      name: "Revoke sharing consent",
+    });
+    expect(button).toBeEnabled();
+    await user.click(button);
+
+    expect(summaryApi.revokeCallCount).toBe(1);
+    expect(
+      await screen.findByText(
+        "Sharing consent was revoked. Future sends require confirmation again.",
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("blocks duplicate consent revocation while the command is pending", async () => {
+    const summaryApi = new FakeSummaryApi();
+    summaryApi.providerStatus = syntheticDeepSeekStatus({
+      consentRemembered: true,
+      consentedAt: "2026-08-17T02:03:04.000Z",
+    });
+    const pending = deferred<void>();
+    summaryApi.revokePending = pending.promise;
+    renderSettings(new FakeSecretApi(), summaryApi);
+    await screen.findByText("Remembered");
+
+    const button = screen.getByRole("button", {
+      name: "Revoke sharing consent",
+    });
+    fireEvent.click(button);
+    fireEvent.click(button);
+    expect(summaryApi.revokeCallCount).toBe(1);
+    expect(screen.getByRole("button", { name: "Revoking…" })).toBeDisabled();
+    await act(async () => pending.resolve());
+  });
+
+  it("renders a stable consent error without backend wording", async () => {
+    const user = userEvent.setup();
+    const summaryApi = new FakeSummaryApi();
+    summaryApi.providerStatus = syntheticDeepSeekStatus({
+      consentRemembered: true,
+      consentedAt: "2026-08-17T02:03:04.000Z",
+    });
+    summaryApi.revokeError = new SummaryApiError(
+      "deepseek_network_failed",
+      true,
+    );
+    renderSettings(new FakeSecretApi(), summaryApi);
+    await screen.findByText("Remembered");
+    await user.click(
+      screen.getByRole("button", { name: "Revoke sharing consent" }),
+    );
+
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "MeetingLens could not reach DeepSeek.",
+    );
+    expect(document.body).not.toHaveTextContent("private backend wording");
+  });
+
   it("shows the authenticated Sidecar boundary without internal details", async () => {
     const services = appServices(new FakeMeetingApi());
     services.desktopRuntime = true;
@@ -1418,19 +1554,22 @@ describe("MeetingLens desktop UI", () => {
     ).toBeInTheDocument();
   });
 
-  it("states preview limitations without claiming unfinished features", async () => {
+  it("distinguishes the provider foundation from the disabled Generate UI", async () => {
     renderAt("/help", new FakeMeetingApi());
     await screen.findByRole("heading", { name: "What is not available yet" });
 
     expect(
-      screen.getByText(/Real AI minutes, DeepSeek calls, recording/),
+      screen.getByText(/User-facing DeepSeek generation and formal AI-minutes/),
     ).toBeInTheDocument();
     expect(
       screen.getByText(/Docling is not connected to this UI yet/),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/no real DeepSeek Provider uses it/),
+      screen.getByText(/Rust-only DeepSeek provider consumes it only/),
     ).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent(
+      "no real DeepSeek Provider uses it",
+    );
     expect(helpSource).not.toContain("dangerouslySetInnerHTML");
   });
 
@@ -1452,13 +1591,13 @@ describe("MeetingLens desktop UI", () => {
     const before = services.providers.snapshots();
     window.history.replaceState(null, "", "#/settings");
     render(<App services={services} />);
-    await screen.findByRole("heading", { name: "Provider runtime" });
+    await screen.findByRole("heading", { name: "Preview provider adapters" });
 
     await act(async () => changeUiLocale("zh-CN", undefined));
 
     expect(services.providers.snapshots()).toEqual(before);
     expect(
-      screen.getByRole("heading", { name: "Provider 运行环境" }),
+      screen.getByRole("heading", { name: "预览版 Provider 适配器" }),
     ).toBeInTheDocument();
   });
 

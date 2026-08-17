@@ -1,10 +1,10 @@
 # MeetingLens 开发预览使用手册
 
-> 开发预览版：本手册描述当前仓库实际可用的本地桌面流程。它不是正式产品手册；已有转录可以导入、检查和修正，已合并的 Summary Run Core 仍是仅供开发验证的零网络基础，真实 AI 纪要尚未开放。
+> 开发预览版：本手册描述当前仓库实际可用的本地桌面流程。它不是正式产品手册；转录可以导入、检查和修正，Rust DeepSeek/Consent 底层已经实现，但尚未接入面向用户的“生成”和结果工作区。
 
 ## 1. MeetingLens 简介
 
-MeetingLens 是面向 Windows 11 的本地优先 Personal Edition / 自用版会议工作台。产品近期目标是把粘贴或导入的会议转录转化为详实、可编辑、可追溯且可复制或保存为 Markdown 的会议纪要；当前开发预览版已经可以安全接收、持久化、检查和修正转录。PR #21 已建立可持久化的 Summary run/快照开发边界，PR #22 已同步其完成状态，但普通用户仍不能生成真实纪要。
+MeetingLens 是面向 Windows 11 的本地优先 Personal Edition / 自用版会议工作台。产品近期目标是把粘贴或导入的会议转录转化为详实、可编辑、可追溯且可复制或保存为 Markdown 的会议纪要；当前开发预览版已经可以安全接收、持久化、检查和修正转录。不可变 Summary Core，以及 Rust-only DeepSeek、SecretStore、Consent、严格校验和取消底层已经存在，但普通用户仍须等下一 UI 阶段才能生成和查看真实纪要。
 
 同一个应用内置简体中文（`zh-CN`）和 English（`en-US`），不需要安装两个版本。
 
@@ -21,9 +21,11 @@ MeetingLens 是面向 Windows 11 的本地优先 Personal Edition / 自用版会
 - 查看 Mock Provider、本地 Sidecar 和数据库状态；
 - 将 DeepSeek API Key 保存到 Windows Credential Manager，且 WebView 无法读回；
 - 运行独立离线 Docling Worker 的开发验证，但该 Worker 尚未接入产品界面。
-- 在当前版本中，通过仅开发 API 和合成数据验证 schema v4 Summary series/revision、不可变转录快照、run-owned evidence 与确定性 Rust Mock。
+- 验证 schema v4 Summary series/revision、不可变转录快照与 run-owned evidence，以及 schema v5 最小 remembered Consent；
+- 在设置中查看固定 DeepSeek host/model、remembered Consent 状态与时间，并撤销未来授权；
+- 使用合成 transport 验证 Rust DeepSeek 协议、严格 JSON/evidence、失败和取消；确定性 Mock 仅用于测试/debug，历史 Mock run 继续可读。
 
-当前普通用户界面不能生成真实 AI 会议纪要，也不能调用 DeepSeek、转写录音文件、处理实时录音或运行实时转录。“生成会议纪要”保持禁用；翻译模式和会议模式在当前界面仍显示“即将推出”，但产品路线状态是 Frozen/Deferred。Rust Mock 不访问网络，也不是生产 AI 结果。
+当前普通用户界面不能发起 DeepSeek 生成、显示真实 AI 会议纪要、转写录音文件、处理实时录音或运行实时转录。“生成会议纪要”保持禁用；翻译模式和会议模式在当前界面仍显示“即将推出”，但产品路线状态是 Frozen/Deferred。Rust production Provider 固定为 DeepSeek；Mock 隔离在测试/debug 且不访问网络。真实付费 DeepSeek API smoke 尚未执行。
 
 ## 3. 系统要求
 
@@ -93,7 +95,7 @@ npm run check
 - 删除来源前需要确认；删除最后一个来源后页面会显示“还没有可用输入”。用户原始文件不会被删除，会议文件区域也不受影响。
 - queued/running 的开发 Summary run 正在使用来源时不能删除；run 终态后删除只保留已引用 evidence、清理完整正文快照，并把历史结果标记 stale/来源已删除。
 
-“生成会议纪要”当前保持禁用，不会发出网络请求。下一阶段只接入 DeepSeek Provider 和最小外发确认；正式结果工作区将在随后 `feat/summary-mode-minutes` 开放。
+“生成会议纪要”当前保持禁用，因此本页面不会发出网络请求。底层可复用外发确认对话框和 Rust Provider 路径已经实现；唯一下一阶段 `feat/summary-mode-minutes` 会把它们接入正式生成与结果工作区。
 
 ## 8. 高级模拟会议与会议文件
 
@@ -121,7 +123,9 @@ npm run check
 3. 选择“保存 API Key”。
 4. 确认状态显示“已配置”，输入框保持为空。
 
-Key 保存在当前 Windows 用户的 Credential Manager 中，而不是 SQLite、WebView 存储或仓库。界面只能查询配置状态、写入和删除，不能读回 Key。当前没有真实 DeepSeek Provider 使用它。
+Key 保存在当前 Windows 用户的 Credential Manager 中，而不是 SQLite、WebView 存储或仓库。界面只能查询配置状态、写入和删除，不能读回 Key。只有受信任 Rust DeepSeek Provider 可以在已授权请求执行前读取；保存 Key 不会验证它，也不会发送任何内容。
+
+设置页还会显示固定 Provider（`deepseek`）、host（`api.deepseek.com`）、model（`deepseek-v4-pro`），以及是否已“记住我的选择”。选择“撤销外发同意”会让后续发送重新确认，并同时清除 remembered 授权与所有尚未使用的一次性确认；它不能召回已经到达 DeepSeek 的数据。设置中不会提供脱离具体冻结 run 的提前授权按钮，也不能编辑 model 或 base URL。
 
 不要把 Key 粘贴到问题报告、日志、截图、会议记录或版本控制中。已暴露的 Key 应立即撤销。
 
@@ -169,13 +173,14 @@ Key 保存在当前 Windows 用户的 Credential Manager 中，而不是 SQLite�
 
 - 会议元数据保存在应用私有 SQLite 数据库中；
 - 已提交的转录来源和规范化片段保存在同一私有数据库中；
-- 当前版本的 schema v4 在本地保存开发 Summary runs 与不可变转录快照。单个 run 最多 20,000 个 final segments 和 10 MiB UTF-8 正文；显式来源删除会清理终态完整正文快照，只保留已引用 evidence；
+- schema v4 在本地保存 Summary runs 与不可变转录快照；持久约束仍为最多 20,000 个 final segments 和 10 MiB UTF-8 正文，production DeepSeek policy 限制为 1 MiB，超限会在网络前失败。显式来源删除会清理终态完整正文快照，只保留已引用 evidence；
+- schema v5 最多保存一行最小 DeepSeek remembered 偏好：provider、policy version/fingerprint 与同意/更新时间，不保存正文、run ID、Prompt、响应、路径或 Key；一次性同意只在 Rust 内存中保留最多 10 分钟并单次消费；
 - 未提交的粘贴文本只短暂存在于 React 内存，保存、取消或离开页面后清除；
 - 转录正文、说话人和源路径不会写入 localStorage、sessionStorage、IndexedDB 或 console；
 - 导入文件副本位于应用私有存储，React 不取得绝对路径；
 - DeepSeek Key 位于 Windows Credential Manager；
 - 界面语言是唯一允许写入 WebView 偏好存储的应用设置；
-- 当前预览版不会录音、读取屏幕或向外部 AI 发送会议内容；
+- 当前预览版不会录音或读取屏幕；面向用户的“生成”仍不能发送内容，底层 Rust Provider 只能把明确授权的冻结转录范围发送到固定 DeepSeek endpoint；
 - 测试和问题报告只能使用合成数据。
 
 详细边界见 [SECURITY.md](../SECURITY.md)。
@@ -185,7 +190,7 @@ Key 保存在当前 Windows 用户的 Credential Manager 中，而不是 SQLite�
 以下 Personal Edition 近期计划尚未实现：
 
 - 面向普通用户的真实 AI 会议纪要生成和正式结果工作区；
-- DeepSeek Summary Provider、最小首次外发确认和“记住我的选择”；
+- 将现有 DeepSeek Consent Dialog/Provider 正式接入生成和结果状态；
 - Markdown 结果查看、复制、文件保存、正文修改和整份重新生成；
 - 录音文件本地批量转写；
 - 简化 Docling 产品编排与 document evidence；
@@ -204,11 +209,11 @@ Key 保存在当前 Windows 用户的 Credential Manager 中，而不是 SQLite�
 
 ### 为什么已经保存 DeepSeek Key，却不能生成纪要？
 
-安全凭据存储与零网络 Summary core 是两个独立边界。当前 Rust Mock 可以验证本地不可变快照和 evidence，但不会读取 Key。唯一下一阶段 `feat/summary-provider-deepseek` 将在 Rust 中消费 SecretStore，并同时加入最小首次外发确认；正式结果工作区仍由随后的 `feat/summary-mode-minutes` 实现。
+安全凭据存储、Rust Provider 和面向用户的纪要工作区是三个独立边界。Provider 只有在具体 run 已有效确认后才能消费 SecretStore，但当前“生成”控件尚未接入这些 commands。唯一下一阶段 `feat/summary-mode-minutes` 会把现有 Consent/Provider 路径连接到正式结果工作区。
 
 ### 为什么转录已准备好，“生成会议纪要”仍不可用？
 
-PR #20 已完成输入、持久化、分页检查和人工修正。PR #21 已通过八个最小 Commands 完成仅供开发的不可变 Summary run、`series_id + revision`、20,000 segments/10 MiB 快照策略、evidence allowlist、可传递到运行中 Mock 的取消、stale/删除协调和遗留运行恢复。该高风险核心的开发验收使用隔离的系统临时数据目录及匹配的合成 WebView2 profile，不会写入用户正常 MeetingLens 数据位置；这项历史验收不代表所有普通功能都默认需要双隔离。下一阶段是包含最小 Consent 的受限 DeepSeek Provider，纪要结果页随后实现；禁用按钮不会调用 AI。
+PR #20 已完成输入、持久化、分页检查和人工修正。PR #21 已完成不可变 Summary run、`series_id + revision`、20,000 segments/10 MiB 快照策略、evidence allowlist、取消、stale/删除协调和遗留运行恢复。当前 Provider 交付增加四个 disclosure/status commands、schema v5 Consent、固定 Rust DeepSeek transport 和严格响应处理，但明确不修改正式 Summary 页面。因此禁用按钮不会调用 AI；`feat/summary-mode-minutes` 是唯一下一阶段。
 
 ### 导入转录会复制或删除原文件吗？
 
@@ -245,9 +250,9 @@ Personal Edition 已完成和下一阶段交付路径是：
 2. `feat/transcript-command-api`（PR #19 已合并）：安全转录 Commands、Rust 原生选择器和原子 meeting + transcript 创建；
 3. `feat/summary-mode-input-ui`（PR #20 已合并）：总结模式入口、粘贴、原生导入、分页预览和基础说话人/正文修正；
 4. `feat/summary-run-core`（PR #21 已合并）：schema v4、完整正文快照、series/revision、evidence allowlist、恢复和 Rust zero-network Mock；
-5. `docs/personal-edition-descope`（当前，PR #23）：仅重新定义 Personal Edition、Frozen/Deferred 范围和开发流程；
-6. `feat/summary-provider-deepseek`（唯一下一阶段，预计 PR #24）：Rust DeepSeek Provider、SecretStore、严格响应解析、最小首次外发确认、本次同意/记住/取消和 fail closed；不建立通用 Consent Data Core；
-7. `feat/summary-mode-minutes`（预计 PR #25，日常可用里程碑）：模板、中文/英文/双语输出、正式结果、Markdown 查看/复制/保存、正文修改和整份重新生成；继续保留旧 revision，不开发章节级重生成或 DOCX/PDF；
+5. `docs/personal-edition-descope`（PR #23 已合并）：Personal Edition、Frozen/Deferred 范围和开发流程重定基线；
+6. `feat/summary-provider-deepseek`（当前交付，预计 PR #24）：schema v5 最小偏好、Rust DeepSeek/SecretStore、严格 JSON/evidence、本次同意/记住/撤销、取消和 fail closed；不建立通用 Consent Data Core，也不开发正式结果页；
+7. `feat/summary-mode-minutes`（唯一下一阶段，预计 PR #25，日常可用里程碑）：接入正式生成/Consent/状态，提供中文/英文/双语结果、Markdown 查看/复制/保存、正文修改和整份重新生成；继续保留旧 revision，不开发章节级重生成或 DOCX/PDF；
 8. `feat/audio-file-transcription`（预计 PR #26）：通过本地一次性 Worker 批量转写用户导入的会议录音；不做实时音频、WASAPI 或实时 ASR；
 9. `feat/document-parsing-orchestration`（预计 PR #27）：简化接入已有 Docling Worker、document chunks/evidence、失败自动重试一次，再失败提示重新导入；
 10. `feat/window-context`（可选，预计 PR #28 或更后）：仅在确认真实需要后读取用户明确选择的具体窗口。

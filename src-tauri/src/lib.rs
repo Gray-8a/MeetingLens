@@ -6,6 +6,12 @@ mod secret_commands;
 pub mod secret_store;
 mod sidecar;
 mod summary_commands;
+mod summary_runtime;
+
+#[cfg(debug_assertions)]
+pub fn run_deepseek_summary_offline_smoke() {
+    summary_runtime::offline_smoke::run();
+}
 mod transcript_commands;
 
 use tauri::Manager;
@@ -87,18 +93,42 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .setup(|app| {
             #[cfg(debug_assertions)]
-            let app_data_dir = match summary_smoke_app_data_override()? {
+            let (app_data_dir, summary_smoke_mode) = match summary_smoke_app_data_override()? {
                 Some(app_data_dir) => {
                     validate_summary_smoke_identifier(&app_data_dir, &app.config().identifier)?;
-                    app_data_dir
+                    (app_data_dir, true)
                 }
-                None => app.path().app_data_dir()?,
+                None => (app.path().app_data_dir()?, false),
             };
             #[cfg(not(debug_assertions))]
             let app_data_dir = app.path().app_data_dir()?;
             let meeting_service = data::MeetingService::initialize(app_data_dir)?;
+            let secret_store = secret_store::SecretStoreService::production();
+            #[cfg(debug_assertions)]
+            let summary_provider: std::sync::Arc<dyn data::SummaryProvider> = if summary_smoke_mode
+            {
+                std::sync::Arc::new(
+                    data::DeterministicMockSummaryProvider::blocking_on_nth_execution(3),
+                )
+            } else {
+                let key_source: std::sync::Arc<dyn data::DeepSeekApiKeySource> =
+                    std::sync::Arc::new(secret_store.clone());
+                std::sync::Arc::new(data::DeepSeekSummaryProvider::production(key_source)?)
+            };
+            #[cfg(not(debug_assertions))]
+            let summary_provider: std::sync::Arc<dyn data::SummaryProvider> = {
+                let key_source: std::sync::Arc<dyn data::DeepSeekApiKeySource> =
+                    std::sync::Arc::new(secret_store.clone());
+                std::sync::Arc::new(data::DeepSeekSummaryProvider::production(key_source)?)
+            };
+            let summary_runtime = summary_runtime::SummaryRuntimeService::with_provider(
+                meeting_service.clone(),
+                secret_store.clone(),
+                summary_provider,
+            );
             app.manage(meeting_service);
-            app.manage(secret_store::SecretStoreService::production());
+            app.manage(secret_store);
+            app.manage(summary_runtime);
             app.manage(sidecar::SidecarRuntime::start());
             Ok(())
         })
@@ -138,6 +168,10 @@ pub fn run() {
             transcript_commands::delete_transcript_source,
             transcript_commands::get_transcript_import_policy,
             summary_commands::get_summary_policy,
+            summary_commands::get_deepseek_provider_status,
+            summary_commands::get_summary_external_disclosure,
+            summary_commands::confirm_summary_external_disclosure,
+            summary_commands::revoke_deepseek_consent,
             summary_commands::create_summary_run,
             summary_commands::create_summary_revision,
             summary_commands::execute_summary_run,

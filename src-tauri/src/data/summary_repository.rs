@@ -157,6 +157,18 @@ pub(crate) fn get_summary(
         .ok_or(SummaryError::RunNotFound)
 }
 
+pub(crate) fn get_summary_by_id(
+    connection: &Connection,
+    summary_id: &str,
+) -> SummaryResult<SummaryRun> {
+    let sql = format!("SELECT {SUMMARY_COLUMNS} FROM summaries WHERE id = ?1");
+    connection
+        .query_row(&sql, [summary_id], summary_from_row)
+        .optional()
+        .map_err(SummaryError::from)?
+        .ok_or(SummaryError::RunNotFound)
+}
+
 pub(crate) fn next_revision(connection: &Connection, series_id: &str) -> SummaryResult<u64> {
     let current: i64 = connection
         .query_row(
@@ -240,23 +252,6 @@ pub(crate) fn load_snapshot(
         return Err(SummaryError::SnapshotMissing);
     }
     Ok(segments)
-}
-
-pub(crate) fn provider_meeting_snapshot(
-    connection: &Connection,
-    meeting_id: &str,
-    summary_id: &str,
-) -> SummaryResult<(String, String)> {
-    connection
-        .query_row(
-            "SELECT meeting_title_snapshot, meeting_primary_language_snapshot \
-             FROM summaries WHERE meeting_id = ?1 AND id = ?2",
-            params![meeting_id, summary_id],
-            |row| Ok((row.get(0)?, row.get(1)?)),
-        )
-        .optional()
-        .map_err(SummaryError::from)?
-        .ok_or(SummaryError::RunNotFound)
 }
 
 pub(crate) fn transition_to_running(

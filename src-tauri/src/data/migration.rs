@@ -490,6 +490,32 @@ const MIGRATIONS: &[Migration] = &[
             ON evidence_items(meeting_id, source_id_snapshot, summary_id);
     "#,
     },
+    Migration {
+        version: 5,
+        sql: r#"
+        CREATE TABLE provider_consent_preferences (
+            provider TEXT PRIMARY KEY NOT NULL CHECK(provider = 'deepseek'),
+            policy_version TEXT NOT NULL CHECK(
+                length(trim(policy_version)) > 0
+                AND length(CAST(policy_version AS BLOB)) <= 64
+            ),
+            policy_fingerprint TEXT NOT NULL CHECK(
+                length(policy_fingerprint) = 64
+                AND policy_fingerprint = lower(policy_fingerprint)
+                AND policy_fingerprint NOT GLOB '*[^0-9a-f]*'
+            ),
+            consented_at TEXT NOT NULL CHECK(
+                length(CAST(consented_at AS BLOB)) = 24
+                AND consented_at = strftime('%Y-%m-%dT%H:%M:%fZ', consented_at)
+            ),
+            updated_at TEXT NOT NULL CHECK(
+                length(CAST(updated_at AS BLOB)) = 24
+                AND updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', updated_at)
+            ),
+            CHECK(updated_at >= consented_at)
+        ) WITHOUT ROWID;
+    "#,
+    },
 ];
 
 pub(crate) fn run(connection: &mut Connection) -> DataResult<()> {
@@ -504,6 +530,11 @@ pub(crate) fn run_through_v2(connection: &mut Connection) -> DataResult<()> {
 #[cfg(debug_assertions)]
 pub(crate) fn run_through_v3(connection: &mut Connection) -> DataResult<()> {
     apply(connection, &MIGRATIONS[..3])
+}
+
+#[cfg(test)]
+pub(crate) fn run_through_v4(connection: &mut Connection) -> DataResult<()> {
+    apply(connection, &MIGRATIONS[..4])
 }
 
 fn apply(connection: &mut Connection, migrations: &[Migration]) -> DataResult<()> {
@@ -572,6 +603,75 @@ fn checksum(sql: &str) -> String {
 mod tests {
     use super::*;
 
+    fn seed_schema_v4_summary(connection: &Connection) {
+        connection
+            .execute_batch(
+                r#"
+                INSERT INTO meetings(
+                    id, title, status, primary_language, created_at, updated_at
+                ) VALUES (
+                    '71000000-0000-4000-8000-000000000001',
+                    'Synthetic v4 consent upgrade', 'draft', 'en-AU',
+                    '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z'
+                );
+
+                INSERT INTO summaries(
+                    id, meeting_id, series_id, previous_summary_id, revision,
+                    run_purpose, trigger_kind, meeting_title_snapshot,
+                    meeting_primary_language_snapshot, template, output_language,
+                    status, provider, provider_mode, model, prompt_version, content_json,
+                    source_count, input_segment_count, input_bytes, snapshot_created_at,
+                    created_at, started_at, finished_at, updated_at
+                ) VALUES (
+                    '72000000-0000-4000-8000-000000000001',
+                    '71000000-0000-4000-8000-000000000001',
+                    '73000000-0000-4000-8000-000000000001', NULL, 1,
+                    'final', 'manual', 'Synthetic v4 consent upgrade', 'en-AU',
+                    'detailed', 'en', 'completed', 'deterministic_mock', 'mock',
+                    'deterministic-mock-v1', 'summary-v1',
+                    '{"schemaVersion":1,"overview":{"text":"Synthetic overview","evidenceIds":["74000000-0000-4000-8000-000000000001"]},"decisions":[],"actionItems":[],"risks":[],"openQuestions":[]}',
+                    1, 1, 24, '2026-08-01T00:00:00.000Z',
+                    '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:01.000Z',
+                    '2026-08-01T00:00:02.000Z', '2026-08-01T00:00:02.000Z'
+                );
+
+                INSERT INTO summary_sources(
+                    id, summary_id, meeting_id, source_id_snapshot,
+                    segment_id_snapshot, segment_revision, source_ordinal,
+                    segment_ordinal, global_ordinal, source_type_snapshot,
+                    source_display_name_snapshot, speaker_label_snapshot,
+                    original_text_snapshot, language_snapshot, is_final_snapshot,
+                    snapshot_at
+                ) VALUES (
+                    '74000000-0000-4000-8000-000000000001',
+                    '72000000-0000-4000-8000-000000000001',
+                    '71000000-0000-4000-8000-000000000001',
+                    '75000000-0000-4000-8000-000000000001',
+                    '76000000-0000-4000-8000-000000000001',
+                    1, 0, 0, 0, 'pasted_text', 'Synthetic source',
+                    'Synthetic speaker', 'Synthetic immutable transcript', 'en-AU', 1,
+                    '2026-08-01T00:00:00.000Z'
+                );
+
+                INSERT INTO evidence_items(
+                    id, summary_id, meeting_id, summary_source_id, kind,
+                    source_id_snapshot, transcript_segment_id_snapshot,
+                    segment_revision, label, ordinal, global_ordinal, excerpt, created_at
+                ) VALUES (
+                    '74000000-0000-4000-8000-000000000001',
+                    '72000000-0000-4000-8000-000000000001',
+                    '71000000-0000-4000-8000-000000000001',
+                    '74000000-0000-4000-8000-000000000001', 'transcript',
+                    '75000000-0000-4000-8000-000000000001',
+                    '76000000-0000-4000-8000-000000000001',
+                    1, 'Synthetic evidence', 0, 0, 'Synthetic immutable transcript',
+                    '2026-08-01T00:00:02.000Z'
+                );
+                "#,
+            )
+            .expect("schema-v4 fixture should insert");
+    }
+
     #[test]
     fn reapplying_the_same_migration_is_idempotent() {
         let mut connection = Connection::open_in_memory().expect("in-memory database should open");
@@ -584,16 +684,16 @@ mod tests {
                 row.get(0)
             })
             .expect("migration count should be readable");
-        assert_eq!(count, 4);
+        assert_eq!(count, 5);
     }
 
     #[test]
-    fn rejects_a_changed_migration_checksum() {
+    fn rejects_a_changed_schema_v5_migration_checksum() {
         let mut connection = Connection::open_in_memory().expect("in-memory database should open");
         apply(&mut connection, MIGRATIONS).expect("migration should succeed");
         connection
             .execute(
-                "UPDATE schema_migrations SET checksum = 'changed' WHERE version = 3",
+                "UPDATE schema_migrations SET checksum = 'changed' WHERE version = 5",
                 [],
             )
             .expect("test should alter the checksum");
@@ -625,6 +725,253 @@ mod tests {
             )
             .expect("schema should be inspectable");
         assert_eq!(table_count, 0);
+    }
+
+    #[test]
+    fn upgrades_real_schema_v4_without_losing_mock_results_and_records_schema_v5() {
+        let mut connection = Connection::open_in_memory().expect("in-memory database should open");
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
+            .expect("foreign keys should enable");
+        run_through_v4(&mut connection).expect("schema v4 should apply");
+        seed_schema_v4_summary(&connection);
+
+        let v4_checksum: String = connection
+            .query_row(
+                "SELECT checksum FROM schema_migrations WHERE version = 4",
+                [],
+                |row| row.get(0),
+            )
+            .expect("v4 checksum should read");
+        apply(&mut connection, MIGRATIONS).expect("schema v5 should apply");
+
+        let migration_state: (i64, i64, String) = connection
+            .query_row(
+                "
+                SELECT COUNT(*), MAX(version),
+                       MAX(CASE WHEN version = 5 THEN checksum END)
+                FROM schema_migrations
+                ",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("migration state should read");
+        assert_eq!(migration_state.0, 5);
+        assert_eq!(migration_state.1, 5);
+        assert!(migration_state.2.starts_with("fnv1a64:"));
+        assert_ne!(migration_state.2, v4_checksum);
+
+        let retained: (String, String, String) = connection
+            .query_row(
+                "
+                SELECT summaries.provider, summary_sources.original_text_snapshot,
+                       evidence_items.excerpt
+                FROM summaries
+                JOIN summary_sources ON summary_sources.summary_id = summaries.id
+                JOIN evidence_items ON evidence_items.summary_id = summaries.id
+                WHERE summaries.id = '72000000-0000-4000-8000-000000000001'
+                ",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("legacy summary rows should remain readable");
+        assert_eq!(retained.0, "deterministic_mock");
+        assert_eq!(retained.1, "Synthetic immutable transcript");
+        assert_eq!(retained.2, "Synthetic immutable transcript");
+
+        let preference_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM provider_consent_preferences",
+                [],
+                |row| row.get(0),
+            )
+            .expect("preference table should read");
+        assert_eq!(preference_count, 0);
+        let integrity: String = connection
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .expect("integrity should check");
+        let foreign_key_violations: i64 = connection
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })
+            .expect("foreign keys should check");
+        assert_eq!(integrity, "ok");
+        assert_eq!(foreign_key_violations, 0);
+    }
+
+    #[test]
+    fn schema_v5_enforces_a_single_minimal_deepseek_preference() {
+        let mut connection = Connection::open_in_memory().expect("in-memory database should open");
+        apply(&mut connection, MIGRATIONS).expect("schema should apply");
+        let fingerprint = "a".repeat(64);
+        let insert = |provider: &str,
+                      version: &str,
+                      fingerprint: &str,
+                      consented_at: &str,
+                      updated_at: &str| {
+            connection.execute(
+                "
+                INSERT INTO provider_consent_preferences(
+                    provider, policy_version, policy_fingerprint,
+                    consented_at, updated_at
+                ) VALUES (?1, ?2, ?3, ?4, ?5)
+                ",
+                params![provider, version, fingerprint, consented_at, updated_at],
+            )
+        };
+
+        insert(
+            "deepseek",
+            "deepseek-transcript-external-v1",
+            &fingerprint,
+            "2026-08-01T00:00:00.000Z",
+            "2026-08-01T00:00:00.000Z",
+        )
+        .expect("valid preference should insert");
+        assert!(
+            insert(
+                "deepseek",
+                "deepseek-transcript-external-v1",
+                &fingerprint,
+                "2026-08-01T00:00:00.000Z",
+                "2026-08-01T00:00:00.000Z",
+            )
+            .is_err(),
+            "provider must remain unique"
+        );
+        assert!(
+            insert(
+                "other",
+                "deepseek-transcript-external-v1",
+                &fingerprint,
+                "2026-08-01T00:00:00.000Z",
+                "2026-08-01T00:00:00.000Z",
+            )
+            .is_err()
+        );
+
+        connection
+            .execute("DELETE FROM provider_consent_preferences", [])
+            .expect("valid fixture should delete");
+        for invalid in [
+            insert(
+                "deepseek",
+                " ",
+                &fingerprint,
+                "2026-08-01T00:00:00.000Z",
+                "2026-08-01T00:00:00.000Z",
+            ),
+            insert(
+                "deepseek",
+                "deepseek-transcript-external-v1",
+                &"A".repeat(64),
+                "2026-08-01T00:00:00.000Z",
+                "2026-08-01T00:00:00.000Z",
+            ),
+            insert(
+                "deepseek",
+                "deepseek-transcript-external-v1",
+                &fingerprint,
+                "not-a-time",
+                "2026-08-01T00:00:00.000Z",
+            ),
+            insert(
+                "deepseek",
+                "deepseek-transcript-external-v1",
+                &fingerprint,
+                "2026-08-01T00:00:01.000Z",
+                "2026-08-01T00:00:00.000Z",
+            ),
+        ] {
+            assert!(invalid.is_err());
+        }
+
+        let columns: Vec<String> = {
+            let mut statement = connection
+                .prepare("SELECT name FROM pragma_table_info('provider_consent_preferences')")
+                .expect("columns should prepare");
+            statement
+                .query_map([], |row| row.get(0))
+                .expect("columns should query")
+                .collect::<Result<Vec<_>, _>>()
+                .expect("columns should read")
+        };
+        assert_eq!(
+            columns,
+            vec![
+                "provider",
+                "policy_version",
+                "policy_fingerprint",
+                "consented_at",
+                "updated_at",
+            ]
+        );
+        for forbidden in [
+            "summary",
+            "meeting",
+            "source",
+            "transcript",
+            "evidence",
+            "prompt",
+            "response",
+            "key",
+            "path",
+        ] {
+            assert!(
+                columns
+                    .iter()
+                    .all(|column| !column.to_ascii_lowercase().contains(forbidden))
+            );
+        }
+    }
+
+    #[test]
+    fn failed_schema_v5_rolls_back_without_touching_schema_v4_data() {
+        let mut connection = Connection::open_in_memory().expect("in-memory database should open");
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
+            .expect("foreign keys should enable");
+        run_through_v4(&mut connection).expect("schema v4 should apply");
+        seed_schema_v4_summary(&connection);
+        let failing_v5 = [Migration {
+            version: 5,
+            sql: "CREATE TABLE transient_consent(id INTEGER); INVALID SQL;",
+        }];
+
+        assert_eq!(
+            apply(&mut connection, &failing_v5),
+            Err(DataError::Database)
+        );
+        let transient_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'transient_consent'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("schema should inspect");
+        let v5_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM schema_migrations WHERE version = 5",
+                [],
+                |row| row.get(0),
+            )
+            .expect("migration state should read");
+        let summary_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM summaries WHERE id = '72000000-0000-4000-8000-000000000001'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("legacy summary should read");
+        assert_eq!(transient_count, 0);
+        assert_eq!(v5_count, 0);
+        assert_eq!(summary_count, 1);
+
+        apply(&mut connection, MIGRATIONS).expect("real schema v5 should still apply");
+        let integrity: String = connection
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .expect("integrity should check");
+        assert_eq!(integrity, "ok");
     }
 
     #[test]
@@ -854,7 +1201,7 @@ mod tests {
                 row.get(0)
             })
             .expect("migration records should be readable");
-        assert_eq!(migration_count, 4);
+        assert_eq!(migration_count, 5);
         let integrity: String = connection
             .query_row("PRAGMA integrity_check", [], |row| row.get(0))
             .expect("integrity check should run");
@@ -931,7 +1278,7 @@ mod tests {
             })
             .expect("foreign keys should check");
         assert_eq!(transcript_count, 1);
-        assert_eq!(migration_count, 4);
+        assert_eq!(migration_count, 5);
         assert_eq!(summary_table_count, 3);
         assert_eq!(integrity, "ok");
         assert_eq!(foreign_key_violations, 0);

@@ -27,7 +27,7 @@
     },
     "privacy": {
       "title": "Local-first",
-      "body": "Transcripts stay local. No recording or external AI in this preview."
+      "body": "Transcripts stay local unless you explicitly confirm a frozen Summary run for the fixed DeepSeek provider. Recording remains off, and the formal Generate UI is not yet available."
     },
     "runtime": {
       "service": "Service",
@@ -89,7 +89,7 @@
   "home": {
     "eyebrow": "Local meeting workspace",
     "title": "Start with the meeting outcome you need.",
-    "description": "Review an existing transcript now. Recording, translation and external AI remain off in this preview.",
+    "description": "Review an existing transcript now. Recording and translation remain off; the formal Generate UI is not yet available, and Rust can contact fixed DeepSeek only after explicit confirmation.",
     "newMeeting": "New meeting",
     "statusSummary": "Meeting status summary",
     "metrics": {
@@ -363,10 +363,10 @@
       "ready": "Local database ready",
       "unavailable": "Local database unavailable"
     },
-    "providerRuntime": "Provider runtime",
+    "providerRuntime": "Preview provider adapters",
     "providerModeMock": "Mock",
     "providerNotEnabled": "Not enabled",
-    "providerHelp": "Mock providers use synthetic memory-only data. No device, file, or external AI access is enabled.",
+    "providerHelp": "These UI preview adapters remain synthetic mocks. Persistent summaries use the Rust-owned DeepSeek path shown below; the WebView cannot select a provider.",
     "providerKind": {
       "capture": "Capture",
       "transcription": "Transcription",
@@ -395,7 +395,20 @@
       "deleteQuestion": "Delete the stored API key from this Windows account?",
       "saved": "API key saved to secure local storage.",
       "deleted": "Stored API key deleted.",
-      "defaultHelp": "Saved locally in Windows Credential Manager. AI features are not enabled yet.",
+      "defaultHelp": "Saved locally in Windows Credential Manager. The formal minutes generation interface is not available yet.",
+      "externalSharing": "External transcript sharing",
+      "consentChecking": "Checking the DeepSeek sharing preference…",
+      "provider": "Provider",
+      "host": "Destination host",
+      "model": "Model",
+      "rememberedConsent": "Remembered choice",
+      "consentRemembered": "Remembered",
+      "consentNotRemembered": "Not remembered",
+      "consentedAt": "Remembered at",
+      "revokeConsent": "Revoke sharing consent",
+      "revokingConsent": "Revoking…",
+      "revokeHelp": "Revoking clears remembered consent and any unused one-time consent. It affects future sends only and cannot recall transcript content already received by DeepSeek.",
+      "consentRevoked": "Sharing consent was revoked. Future sends require confirmation again.",
       "status": {
         "checking": "Checking secure storage…",
         "unconfigured": "Not configured",
@@ -405,6 +418,44 @@
       }
     },
     "openHelp": "Open preview help"
+  },
+  "summaryConsent": {
+    "close": "Close without sending",
+    "title": "Send this frozen transcript to DeepSeek?",
+    "description": "MeetingLens is ready to send only the selected summary run's frozen transcript snapshot for structured minutes generation.",
+    "provider": "Provider",
+    "host": "Destination host",
+    "model": "Model",
+    "sources": "Transcript sources",
+    "segments": "Transcript segments",
+    "inputSize": "Transcript size",
+    "template": "Summary template",
+    "outputLanguage": "Output language",
+    "templateValue": {
+      "detailed": "Detailed",
+      "concise": "Concise",
+      "actions_decisions": "Actions and decisions"
+    },
+    "outputLanguageValue": {
+      "zh": "Chinese",
+      "en": "English",
+      "bilingual": "Chinese and English"
+    },
+    "dataTitle": "Data that will be sent",
+    "dataCategory": {
+      "transcript_text": "Frozen transcript text",
+      "speaker_labels_and_names": "Speaker labels and speaker names",
+      "time_offsets": "Transcript time offsets",
+      "evidence_ids": "Run-scoped evidence reference IDs and transcript ordering",
+      "summary_template": "Selected summary template",
+      "output_language": "Selected output language"
+    },
+    "notSent": "MeetingLens does not send local file paths, the local database, the API key to the WebView, original audio, screen content, or Docling document content in this request.",
+    "warning": "After the request reaches DeepSeek, MeetingLens cannot recall that transmitted content.",
+    "remember": "Remember this choice for future DeepSeek transcript sends. You can revoke it in Settings.",
+    "confirming": "Confirming…",
+    "confirmRemembered": "Remember choice and continue",
+    "confirmOnce": "Consent this time and continue"
   },
   "document": {
     "meetingFiles": "Meeting files",
@@ -462,15 +513,15 @@
     "availableTitle": "What works now",
     "availableBody": "You can use Summary mode to paste or import UTF-8 TXT, SRT and VTT transcripts, review bounded pages, correct text and speaker names, and manage transcript sources locally. The existing synthetic meeting and document workflows remain available.",
     "unavailableTitle": "What is not available yet",
-    "unavailableBody": "Real AI minutes, DeepSeek calls, recording, realtime transcription, screen capture, speaker diarization, realtime translation, video import and Docling product orchestration are not implemented.",
+    "unavailableBody": "User-facing DeepSeek generation and formal AI-minutes results, recording, realtime transcription, screen capture, speaker diarization, realtime translation, video import and Docling product orchestration are not available yet. The Rust-only DeepSeek provider and consent foundation are implemented, but Generate remains disabled.",
     "quickStartTitle": "Quick start",
     "quickStartBody": "Open Summary mode, paste notes or choose a TXT, SRT or VTT transcript, then review sources and correct the normalized segments. Minutes generation remains disabled.",
     "filesTitle": "Meeting materials",
     "filesBody": "Open a meeting and use Add files. Approved files are copied into private application storage and can be deleted without changing the source file. Docling is not connected to this UI yet.",
     "deepseekTitle": "DeepSeek key",
-    "deepseekBody": "Use Settings to save the key in Windows Credential Manager. The value cannot be read back by the WebView, and no real DeepSeek Provider uses it in this preview.",
+    "deepseekBody": "Use Settings to save the key in Windows Credential Manager. The WebView cannot read it back. The Rust-only DeepSeek provider consumes it only when executing a frozen, explicitly authorized Summary run; the current user-facing Generate action is not wired yet.",
     "privacyTitle": "Privacy and local storage",
-    "privacyBody": "Submitted transcript segments stay in MeetingLens private local storage. Unsubmitted pasted text is cleared on cancel or after saving; source paths never reach the WebView, and no transcript is sent to external AI.",
+    "privacyBody": "Submitted transcript segments stay in MeetingLens private local storage. Unsubmitted pasted text is cleared on cancel or after saving, and source paths never reach the WebView. The current user-facing Generate action is disabled; the Rust provider can send only a frozen transcript scope after explicit confirmation.",
     "faqTitle": "Common questions",
     "faqBody": "Changing the interface language does not translate transcript content or change the future minutes output language. Clearing WebView storage resets only the interface-language preference, not local meetings or transcripts.",
     "feedbackTitle": "Feedback",
@@ -531,6 +582,41 @@
       "secret_access_denied": "Secure local storage denied access.",
       "secret_unsupported_platform": "Secure local storage is unavailable on this platform.",
       "internal_error": "MeetingLens could not complete that action."
+    },
+    "summary": {
+      "deepseek_access_denied": "DeepSeek denied access to this request.",
+      "deepseek_api_key_missing": "Configure the DeepSeek API key before sending.",
+      "deepseek_auth_failed": "DeepSeek could not authenticate this request. Check the stored API key.",
+      "deepseek_consent_invalid": "The DeepSeek sharing confirmation is no longer valid. Review it again.",
+      "deepseek_consent_required": "Review and confirm the DeepSeek sharing details before sending.",
+      "deepseek_content_filtered": "DeepSeek could not return this summary.",
+      "deepseek_insufficient_balance": "The DeepSeek account has insufficient balance.",
+      "deepseek_model_unavailable": "The configured DeepSeek model is unavailable.",
+      "deepseek_network_failed": "MeetingLens could not reach DeepSeek.",
+      "deepseek_output_truncated": "DeepSeek returned an incomplete summary.",
+      "deepseek_rate_limited": "DeepSeek is receiving too many requests. Try again later.",
+      "deepseek_request_invalid": "DeepSeek rejected the summary request.",
+      "deepseek_response_empty": "DeepSeek returned an empty response.",
+      "deepseek_response_invalid": "DeepSeek returned an invalid response.",
+      "deepseek_service_unavailable": "DeepSeek is temporarily unavailable.",
+      "deepseek_timeout": "DeepSeek did not respond in time.",
+      "summary_input_insufficient": "The selected transcript sources do not contain usable final segments.",
+      "summary_input_too_large": "The selected summary input is too large.",
+      "summary_provider_input_too_large": "The selected transcript is too large for DeepSeek.",
+      "summary_evidence_invalid": "The summary contains invalid evidence references.",
+      "internal_error": "MeetingLens could not complete that action.",
+      "summary_invalid_input": "The summary request is invalid.",
+      "summary_invalid_state": "The summary run cannot be changed in its current state.",
+      "meeting_invalid_state": "The meeting cannot be summarized in its current state.",
+      "meeting_not_found": "The meeting was not found.",
+      "summary_persistence_failed": "The summary run could not be saved.",
+      "summary_provider_failed": "The summary provider could not complete the run.",
+      "summary_provider_output_invalid": "The summary provider returned an invalid result.",
+      "summary_revision_conflict": "The summary revision is no longer current.",
+      "summary_run_not_found": "The summary run was not found.",
+      "summary_segment_limit_exceeded": "The selected summary input contains too many segments.",
+      "summary_snapshot_missing": "The frozen summary input is unavailable.",
+      "summary_source_not_found": "A selected transcript source was not found."
     },
     "provider": {
       "provider_not_ready": "The provider is not ready.",
