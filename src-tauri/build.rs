@@ -34,6 +34,10 @@ const APP_COMMANDS: &[&str] = &[
     "list_summary_runs",
     "cancel_summary_run",
     "list_summary_evidence",
+    "get_summary_evidence",
+    "update_summary_content",
+    "get_summary_markdown",
+    "save_summary_markdown",
 ];
 
 fn main() {

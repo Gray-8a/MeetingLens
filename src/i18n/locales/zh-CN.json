@@ -21,13 +21,14 @@
       "history": "会议历史",
       "meeting": "会议详情",
       "transcript": "检查转录",
+      "minutes": "会议纪要",
       "live": "会议进行中",
       "settings": "设置",
       "help": "帮助"
     },
     "privacy": {
       "title": "本地优先",
-      "body": "转录默认保留在本地；只有你明确确认冻结的 Summary run 后，Rust 才会发送到固定 DeepSeek。录音保持关闭，正式“生成”入口尚未开放。"
+      "body": "转录默认保留在本地；只有你明确发起并授权冻结的 Summary run 后，Rust 才会发送到固定 DeepSeek。"
     },
     "runtime": {
       "service": "服务",
@@ -56,6 +57,7 @@
     "loading": "正在加载…",
     "unavailable": "不可用",
     "notSet": "未设置",
+    "notAvailable": "不可用",
     "unknownTime": "时间未知",
     "notCompleted": "尚未完成",
     "selectedFile": "已选择文件",
@@ -89,7 +91,7 @@
   "home": {
     "eyebrow": "本地会议工作台",
     "title": "从你需要的会议结果开始。",
-    "description": "现在可以检查已有转录。录音和翻译保持关闭；正式“生成”入口尚未开放，Rust 只有在明确确认后才能连接固定 DeepSeek。",
+    "description": "添加或检查转录，并在明确授权固定 DeepSeek Provider 后生成可编辑的会议纪要。录音和翻译仍保持关闭。",
     "newMeeting": "新建会议",
     "statusSummary": "会议状态摘要",
     "metrics": {
@@ -232,10 +234,11 @@
       "empty": "还没有可用的转录输入。",
       "usable": "转录输入可供检查。",
       "partial": "部分来源需要处理，才能进入下一阶段。",
-      "ready": "转录已经准备好，可在后续纪要流程中使用。"
+      "ready": "转录已准备好生成会议纪要。"
     },
-    "summaryComingSoon": "转录已准备完成，纪要生成功能将在后续阶段开放。",
-    "summaryDisabled": "生成会议纪要（即将开放）"
+    "summaryComingSoon": "转录已准备好生成会议纪要。",
+    "summaryDisabled": "生成会议纪要",
+    "openMinutes": "打开会议纪要"
   },
   "newMeeting": {
     "eyebrow": "创建本地草稿",
@@ -283,7 +286,8 @@
     "startMeeting": "开始会议",
     "enterLive": "进入会议界面",
     "endMeeting": "结束会议",
-    "readyBody": "此模拟会议已完成并保存在本地。",
+    "readyBody": "此会议已完成并保存在本地。",
+    "openMinutes": "打开会议纪要",
     "confirmDeleteAria": "确认删除会议",
     "confirmDeleteBody": "确定删除此本地会议吗？此操作无法撤销。",
     "retryMeetingDeletion": "重试删除会议",
@@ -395,7 +399,7 @@
       "deleteQuestion": "从当前 Windows 账户中删除已保存的 API Key？",
       "saved": "API Key 已保存到本地安全存储。",
       "deleted": "已删除保存的 API Key。",
-      "defaultHelp": "凭据保存在 Windows 凭据管理器中，正式纪要生成界面尚未开放。",
+      "defaultHelp": "凭据保存在 Windows 凭据管理器中；MeetingLens 只会在明确授权的纪要请求中，由受信任 Rust 代码使用它。",
       "externalSharing": "转录外发",
       "consentChecking": "正在检查 DeepSeek 外发选择…",
       "provider": "Provider",
@@ -418,6 +422,129 @@
       }
     },
     "openHelp": "打开预览版帮助"
+  },
+  "summaryMinutes": {
+    "eyebrow": "会议纪要",
+    "description": "基于冻结的转录快照生成、审阅、修改和导出结构化纪要。",
+    "loading": "正在加载会议纪要…",
+    "backToTranscript": "返回转录",
+    "generate": {
+      "eyebrow": "新任务",
+      "title": "生成纪要",
+      "keyRequired": "生成前，请先在 Windows 凭据管理器中保存 DeepSeek API Key。",
+      "openSettings": "打开设置",
+      "sources": "要发送的转录来源",
+      "noSources": "请先添加转录，再生成纪要。",
+      "segmentCount_one": "{{formattedCount}} 个片段",
+      "segmentCount_other": "{{formattedCount}} 个片段",
+      "selectionOrder": "发送顺序 {{number}}",
+      "template": "纪要模板",
+      "outputLanguage": "输出语言",
+      "externalNotice": "只有在你明确授权后，选中范围的冻结转录才会使用 {{model}} 发送到 {{host}}。"
+    },
+    "actions": {
+      "generate": "生成会议纪要",
+      "preparing": "正在准备…",
+      "continue": "继续生成",
+      "cancelRun": "取消任务",
+      "edit": "修改正文",
+      "saveEdit": "保存修改",
+      "previewMarkdown": "预览 Markdown",
+      "copyMarkdown": "复制 Markdown",
+      "saveMarkdown": "保存 Markdown",
+      "regenerate": "整份重新生成",
+      "openNewestLoaded": "打开已加载的最新任务",
+      "close": "关闭"
+    },
+    "status": {
+      "queued": "等待中",
+      "running": "生成中",
+      "completed": "已完成",
+      "failed": "失败",
+      "cancelled": "已取消"
+    },
+    "result": {
+      "eyebrow": "纪要结果",
+      "revision": "第 {{revision}} 版",
+      "template": "模板",
+      "language": "输出语言",
+      "updated": "更新时间",
+      "oldRevision": "这是旧版本，不能从这里重新生成。",
+      "openLatest": "打开最新版本",
+      "latestUnknown": "此深链版本不在已加载的历史页中。在将其视为最新版本前，请继续加载一小页历史。",
+      "findLatest": "继续加载并查找最新版本",
+      "mockReadOnly": "这是历史确定性 Mock 结果，只读，但仍可查看、复制和保存。",
+      "queuedManual": "此等待中任务绝不会自动发送。请明确继续生成或取消任务。",
+      "runningBody": "DeepSeek 正在生成纪要。离开本页不会取消任务。",
+      "interrupted": "此任务在完成前被中断。",
+      "cancelledBody": "此任务已取消，没有提交结果。",
+      "none": "暂无记录。",
+      "evidenceLimitation": "Evidence 指向冻结的原始转录摘录。修改纪要正文后，不会重新验证 Evidence。",
+      "exportWarning": "剪贴板和保存的 Markdown 副本已离开 MeetingLens 控制，删除会议时不会一并删除。"
+    },
+    "stale": {
+      "segment_revised": "生成快照后转录发生了变化。请检查转录，必要时从最新版本整份重新生成。",
+      "source_deleted": "此快照使用的来源已被删除。结果仍可读取，但此系列无法重新生成。"
+    },
+    "sections": {
+      "overview": "概览",
+      "decisions": "决定",
+      "actionItems": "行动项",
+      "risks": "风险",
+      "openQuestions": "待确认问题"
+    },
+    "itemStatus": {
+      "confirmed": "已确认",
+      "proposed": "提议中",
+      "superseded": "已替代",
+      "assigned": "已分配",
+      "suggested": "建议项",
+      "unconfirmed": "未确认"
+    },
+    "edit": {
+      "actionText": "行动项 {{number}}",
+      "owner": "行动项 {{number}} 的负责人",
+      "dueDate": "行动项 {{number}} 的截止日期",
+      "dirtyExport": "请先保存或放弃修改，再复制、预览、保存或重新生成。",
+      "editedNotice": "此版本包含用户修改的正文，不会另外保留同一版本的 Provider 原稿。"
+    },
+    "evidence": {
+      "label": "[E{{number}}]",
+      "open": "打开 Evidence {{number}}",
+      "speaker": "冻结的说话人",
+      "ordinal": "来源段落",
+      "sourceDeleted": "原转录来源已删除；此冻结摘录会随结果保留。"
+    },
+    "markdown": {
+      "title": "Canonical Markdown 预览"
+    },
+    "feedback": {
+      "copied": "Markdown 已复制到剪贴板。",
+      "saved": "Markdown 已保存。",
+      "save-cancelled": "已取消保存，没有写入文件。",
+      "clipboard-unavailable": "当前 WebView 无法写入剪贴板。",
+      "clipboard-failed": "无法复制 Markdown。"
+    },
+    "empty": {
+      "title": "还没有纪要结果",
+      "body": "选择一个或多个转录来源，然后明确发起会议纪要生成。"
+    },
+    "history": {
+      "eyebrow": "任务历史",
+      "title": "版本与任务",
+      "count_one": "{{formattedCount}} 个任务",
+      "count_other": "{{formattedCount}} 个任务",
+      "empty": "此会议还没有 Summary run。",
+      "details_one": "{{template}} · {{language}} · {{formattedCount}} 个来源",
+      "details_other": "{{template}} · {{language}} · {{formattedCount}} 个来源",
+      "loadMore": "加载更早任务"
+    },
+    "unsaved": {
+      "title": "放弃尚未保存的纪要修改？",
+      "body": "当前正文修改尚未保存。你可以留在此处继续修改，或放弃修改后继续离开。",
+      "discard": "放弃修改并继续",
+      "keepEditing": "继续修改"
+    }
   },
   "summaryConsent": {
     "close": "关闭且不发送",
@@ -511,19 +638,19 @@
     "versionTitle": "当前版本",
     "versionBody": "版本 {{version}} · 开发预览版",
     "availableTitle": "当前可用功能",
-    "availableBody": "你可以使用总结模式粘贴或导入 UTF-8 TXT、SRT、VTT 转录，分批检查片段，修正正文和说话人名称，并在本地管理转录来源。现有模拟会议和文档流程继续可用。",
+    "availableBody": "你可以粘贴或导入 UTF-8 TXT、SRT、VTT 转录，在本地检查和修正，然后明确授权 DeepSeek 生成结构化会议纪要。完成的纪要可以查看、编辑、复制为规范 Markdown，或保存为 Markdown 文件。",
     "unavailableTitle": "尚未提供的功能",
-    "unavailableBody": "面向用户的 DeepSeek 生成和正式 AI 纪要结果、录音、实时转录、屏幕捕获、说话人分离、实时翻译、视频导入及 Docling 产品编排尚未开放。Rust-only DeepSeek Provider 与 Consent 底层已经实现，但“生成”仍保持禁用。",
+    "unavailableBody": "录音、实时转录、屏幕捕获、说话人分离、实时翻译、视频导入、Docling 产品编排、章节级重新生成和复杂文档导出尚未开放。",
     "quickStartTitle": "快速开始",
-    "quickStartBody": "打开总结模式，粘贴记录或选择 TXT、SRT、VTT 转录，然后检查来源并修正规范化片段。纪要生成仍处于禁用状态。",
+    "quickStartBody": "打开总结模式，粘贴记录或选择 TXT、SRT、VTT 转录，检查规范化片段，然后打开“会议纪要”。选择来源、模板和输出语言，查看外发说明并确认后生成。完成后可以修改正文、预览或复制规范 Markdown、保存文件，或创建完整的新 revision。",
     "filesTitle": "会议材料",
     "filesBody": "打开一个会议并使用“添加文件”。允许的文件会复制到应用私有存储，删除副本不会改变源文件。Docling 尚未连接到此界面。",
     "deepseekTitle": "DeepSeek Key",
-    "deepseekBody": "在“设置”中将 Key 保存到 Windows 凭据管理器。WebView 无法读回其值。Rust-only DeepSeek Provider 仅在执行已冻结且明确确认的 Summary run 时消费 Key；当前面向用户的“生成”入口尚未接线。",
+    "deepseekBody": "在“设置”中将 Key 保存到 Windows 凭据管理器。WebView 无法读回其值。Rust-only DeepSeek Provider 仅在执行已冻结且明确确认的 Summary run 时消费 Key；WebView 永远不会收到 Key，也不会直接发送 Provider 请求。",
     "privacyTitle": "隐私与本地存储",
-    "privacyBody": "已提交的转录片段保留在 MeetingLens 私有本地存储中；未提交的粘贴文本会在取消或保存后清除，源路径不会进入 WebView。当前面向用户的“生成”入口保持禁用；Rust Provider 只有在明确确认后才能发送冻结的转录范围。",
+    "privacyBody": "已提交的转录片段和生成的纪要保留在 MeetingLens 私有本地存储中；未提交的粘贴文本会在取消或保存后清除，源路径不会进入 WebView。只有外发说明中展示的冻结转录范围，才可在明确确认后由 Rust Provider 发送；DeepSeek 已收到的内容无法召回。",
     "faqTitle": "常见问题",
-    "faqBody": "更改界面语言不会翻译转录内容，也不会改变未来纪要输出语言。清除 WebView 存储只会重置界面语言偏好，不会删除本地会议或转录。",
+    "faqBody": "更改界面语言不会翻译转录内容，也不会改变所选的纪要输出语言。清除 WebView 存储只会重置界面语言偏好，不会删除本地会议或转录。",
     "feedbackTitle": "问题反馈",
     "feedbackBody": "报告问题时，请提供操作步骤、安全错误代码和应用版本。切勿附上 API Key、录音、会议内容、本地数据库或私有路径。",
     "guidesTitle": "详细预览指南",
@@ -604,6 +731,10 @@
       "summary_input_too_large": "所选纪要输入超过大小限制。",
       "summary_provider_input_too_large": "所选转录超过 DeepSeek 输入大小限制。",
       "summary_evidence_invalid": "纪要包含无效的证据引用。",
+      "summary_edit_conflict": "保存前此纪要已发生变化，请刷新后重试。",
+      "summary_edit_too_large": "修改后的纪要过大。",
+      "summary_export_failed": "无法保存 Markdown 文件。",
+      "summary_markdown_too_large": "Markdown 结果过大。",
       "internal_error": "MeetingLens 无法完成此操作。",
       "summary_invalid_input": "纪要请求无效。",
       "summary_invalid_state": "当前状态下无法更改此 Summary run。",

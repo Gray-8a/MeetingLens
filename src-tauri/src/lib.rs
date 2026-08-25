@@ -179,6 +179,10 @@ pub fn run() {
             summary_commands::list_summary_runs,
             summary_commands::cancel_summary_run,
             summary_commands::list_summary_evidence,
+            summary_commands::get_summary_evidence,
+            summary_commands::update_summary_content,
+            summary_commands::get_summary_markdown,
+            summary_commands::save_summary_markdown,
         ])
         .run(tauri::generate_context!())
         .expect("error while running MeetingLens");

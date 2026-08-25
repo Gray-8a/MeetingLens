@@ -195,6 +195,30 @@ describe("DeepSeekConsentDialog", () => {
     expect(trigger).toHaveFocus();
   });
 
+  it("does not reset focus when a polling parent supplies a new callback", () => {
+    const view = render(
+      <DeepSeekConsentDialog
+        disclosure={syntheticExternalDisclosure()}
+        onCancel={() => undefined}
+        onConfirm={async () => undefined}
+      />,
+    );
+    const remember = screen.getByRole("checkbox", {
+      name: /Remember this choice/,
+    });
+    remember.focus();
+
+    view.rerender(
+      <DeepSeekConsentDialog
+        disclosure={syntheticExternalDisclosure()}
+        onCancel={() => undefined}
+        onConfirm={async () => undefined}
+      />,
+    );
+
+    expect(remember).toHaveFocus();
+  });
+
   it("keeps reverse tab navigation inside the dialog from initial heading focus", () => {
     render(
       <DeepSeekConsentDialog

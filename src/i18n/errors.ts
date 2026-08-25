@@ -61,6 +61,10 @@ const summaryErrorKeys = {
   summary_provider_input_too_large:
     "error.summary.summary_provider_input_too_large",
   summary_evidence_invalid: "error.summary.summary_evidence_invalid",
+  summary_edit_conflict: "error.summary.summary_edit_conflict",
+  summary_edit_too_large: "error.summary.summary_edit_too_large",
+  summary_export_failed: "error.summary.summary_export_failed",
+  summary_markdown_too_large: "error.summary.summary_markdown_too_large",
   internal_error: "error.summary.internal_error",
   summary_invalid_input: "error.summary.summary_invalid_input",
   summary_invalid_state: "error.summary.summary_invalid_state",

@@ -1,6 +1,7 @@
 import appSource from "../App.tsx?raw";
 import documentSource from "../components/DocumentPanel.tsx?raw";
 import deepSeekConsentSource from "../components/DeepSeekConsentDialog.tsx?raw";
+import summaryResultSource from "../components/SummaryResultView.tsx?raw";
 import speakerRenameSource from "../components/SpeakerRenamePanel.tsx?raw";
 import transcriptInputSource from "../components/TranscriptInputPanel.tsx?raw";
 import transcriptSegmentSource from "../components/TranscriptSegmentPanel.tsx?raw";
@@ -13,6 +14,7 @@ import detailSource from "../pages/MeetingDetailPage.tsx?raw";
 import newSource from "../pages/NewMeetingPage.tsx?raw";
 import settingsSource from "../pages/SettingsPage.tsx?raw";
 import summaryInputSource from "../pages/SummaryModeInputPage.tsx?raw";
+import summaryMinutesSource from "../pages/SummaryMinutesPage.tsx?raw";
 import transcriptWorkspaceSource from "../pages/TranscriptWorkspacePage.tsx?raw";
 import { MeetingApiError } from "../api/meeting";
 import { transcriptErrorMessage } from "./errors";
@@ -31,6 +33,7 @@ const uiSources = [
   appSource,
   documentSource,
   deepSeekConsentSource,
+  summaryResultSource,
   speakerRenameSource,
   transcriptInputSource,
   transcriptSegmentSource,
@@ -43,6 +46,7 @@ const uiSources = [
   newSource,
   settingsSource,
   summaryInputSource,
+  summaryMinutesSource,
   transcriptWorkspaceSource,
 ].join("\n");
 
@@ -208,24 +212,24 @@ describe("MeetingLens i18n foundation", () => {
     }
   });
 
-  it("describes transcript input as available while formal generation remains disabled", async () => {
+  it("describes the available minutes loop and keeps deferred capabilities scoped", async () => {
     await i18n.changeLanguage("en-US");
     expect(i18n.t("help.availableBody")).toContain("TXT, SRT and VTT");
-    expect(i18n.t("help.unavailableBody")).toContain(
-      "User-facing DeepSeek generation",
-    );
+    expect(i18n.t("help.availableBody")).toContain("canonical Markdown");
+    expect(i18n.t("help.unavailableBody")).toContain("realtime transcription");
     expect(i18n.t("help.deepseekBody")).toContain(
       "Rust-only DeepSeek provider",
     );
+    expect(i18n.t("help.deepseekBody")).toContain("never receives the key");
 
     await i18n.changeLanguage("zh-CN");
     expect(i18n.t("help.availableBody")).toContain("TXT、SRT、VTT");
-    expect(i18n.t("help.unavailableBody")).toContain(
-      "面向用户的 DeepSeek 生成",
-    );
+    expect(i18n.t("help.availableBody")).toContain("规范 Markdown");
+    expect(i18n.t("help.unavailableBody")).toContain("实时转录");
     expect(i18n.t("help.deepseekBody")).toContain(
       "Rust-only DeepSeek Provider",
     );
+    expect(i18n.t("help.deepseekBody")).toContain("永远不会收到 Key");
   });
 
   it("keeps the DeepSeek disclosure meaning aligned in both locales", async () => {
@@ -289,6 +293,15 @@ describe("MeetingLens i18n foundation", () => {
       /localStorage|sessionStorage|indexedDB|console\.|\binvoke\s*\(|\bfetch\s*\(|XMLHttpRequest|WebSocket/,
     );
     expect(deepSeekConsentSource).not.toContain("dangerouslySetInnerHTML");
+  });
+
+  it("keeps the Minutes UI out of storage, logs, HTML injection and direct transports", () => {
+    const minutesSources = `${summaryMinutesSource}\n${summaryResultSource}`;
+    expect(minutesSources).not.toMatch(
+      /localStorage|sessionStorage|indexedDB|console\.|dangerouslySetInnerHTML|\binvoke\s*\(|\bfetch\s*\(|XMLHttpRequest|WebSocket/,
+    );
+    expect(minutesSources).not.toContain("clipboard.read");
+    expect(minutesSources).not.toContain("execCommand");
   });
 });
 

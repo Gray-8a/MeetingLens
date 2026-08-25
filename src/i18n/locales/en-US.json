@@ -21,13 +21,14 @@
       "history": "Meeting history",
       "meeting": "Meeting details",
       "transcript": "Transcript review",
+      "minutes": "Meeting minutes",
       "live": "Meeting in progress",
       "settings": "Settings",
       "help": "Help"
     },
     "privacy": {
       "title": "Local-first",
-      "body": "Transcripts stay local unless you explicitly confirm a frozen Summary run for the fixed DeepSeek provider. Recording remains off, and the formal Generate UI is not yet available."
+      "body": "Transcripts stay local unless you explicitly generate and authorize a frozen Summary run for the fixed DeepSeek provider."
     },
     "runtime": {
       "service": "Service",
@@ -56,6 +57,7 @@
     "loading": "Loading…",
     "unavailable": "Unavailable",
     "notSet": "Not set",
+    "notAvailable": "Not available",
     "unknownTime": "Unknown time",
     "notCompleted": "Not completed",
     "selectedFile": "Selected file",
@@ -89,7 +91,7 @@
   "home": {
     "eyebrow": "Local meeting workspace",
     "title": "Start with the meeting outcome you need.",
-    "description": "Review an existing transcript now. Recording and translation remain off; the formal Generate UI is not yet available, and Rust can contact fixed DeepSeek only after explicit confirmation.",
+    "description": "Add or review a transcript, then generate editable meeting minutes after explicitly authorizing the fixed DeepSeek provider. Recording and translation remain off.",
     "newMeeting": "New meeting",
     "statusSummary": "Meeting status summary",
     "metrics": {
@@ -232,10 +234,11 @@
       "empty": "No usable transcript input yet.",
       "usable": "Transcript input is available for review.",
       "partial": "Some sources need attention before the next stage.",
-      "ready": "The transcript is prepared for the upcoming minutes workflow."
+      "ready": "The transcript is ready for meeting-minutes generation."
     },
-    "summaryComingSoon": "Your transcript is ready. Meeting-minutes generation is coming in a later stage.",
-    "summaryDisabled": "Generate meeting minutes (coming soon)"
+    "summaryComingSoon": "Your transcript is ready for meeting-minutes generation.",
+    "summaryDisabled": "Generate meeting minutes",
+    "openMinutes": "Open meeting minutes"
   },
   "newMeeting": {
     "eyebrow": "Create a local draft",
@@ -283,7 +286,8 @@
     "startMeeting": "Start meeting",
     "enterLive": "Enter live meeting",
     "endMeeting": "End meeting",
-    "readyBody": "This synthetic meeting is complete and stored locally.",
+    "readyBody": "This meeting is complete and stored locally.",
+    "openMinutes": "Open meeting minutes",
     "confirmDeleteAria": "Confirm meeting deletion",
     "confirmDeleteBody": "Delete this local meeting? This cannot be undone.",
     "retryMeetingDeletion": "Retry meeting deletion",
@@ -395,7 +399,7 @@
       "deleteQuestion": "Delete the stored API key from this Windows account?",
       "saved": "API key saved to secure local storage.",
       "deleted": "Stored API key deleted.",
-      "defaultHelp": "Saved locally in Windows Credential Manager. The formal minutes generation interface is not available yet.",
+      "defaultHelp": "Saved locally in Windows Credential Manager. MeetingLens uses it only in trusted Rust code for an explicitly authorized minutes request.",
       "externalSharing": "External transcript sharing",
       "consentChecking": "Checking the DeepSeek sharing preference…",
       "provider": "Provider",
@@ -418,6 +422,129 @@
       }
     },
     "openHelp": "Open preview help"
+  },
+  "summaryMinutes": {
+    "eyebrow": "Meeting minutes",
+    "description": "Generate, review, edit and export structured minutes from a frozen transcript snapshot.",
+    "loading": "Loading meeting minutes…",
+    "backToTranscript": "Back to transcript",
+    "generate": {
+      "eyebrow": "New run",
+      "title": "Generate minutes",
+      "keyRequired": "Save a DeepSeek API key in Windows Credential Manager before generating.",
+      "openSettings": "Open Settings",
+      "sources": "Transcript sources to send",
+      "noSources": "Add a transcript before generating minutes.",
+      "segmentCount_one": "{{formattedCount}} segment",
+      "segmentCount_other": "{{formattedCount}} segments",
+      "selectionOrder": "Send order {{number}}",
+      "template": "Summary template",
+      "outputLanguage": "Output language",
+      "externalNotice": "Only the frozen selected transcript scope is sent to {{host}} using {{model}} after explicit authorization."
+    },
+    "actions": {
+      "generate": "Generate meeting minutes",
+      "preparing": "Preparing…",
+      "continue": "Continue generation",
+      "cancelRun": "Cancel run",
+      "edit": "Edit text",
+      "saveEdit": "Save changes",
+      "previewMarkdown": "Preview Markdown",
+      "copyMarkdown": "Copy Markdown",
+      "saveMarkdown": "Save Markdown",
+      "regenerate": "Regenerate whole summary",
+      "openNewestLoaded": "Open newest loaded run",
+      "close": "Close"
+    },
+    "status": {
+      "queued": "Waiting",
+      "running": "Generating",
+      "completed": "Completed",
+      "failed": "Failed",
+      "cancelled": "Cancelled"
+    },
+    "result": {
+      "eyebrow": "Summary result",
+      "revision": "Revision {{revision}}",
+      "template": "Template",
+      "language": "Output language",
+      "updated": "Updated",
+      "oldRevision": "This is an older revision and is read-only for regeneration.",
+      "openLatest": "Open latest revision",
+      "latestUnknown": "This deep-linked revision is outside the loaded history. Load another bounded page before treating it as latest.",
+      "findLatest": "Load more to find latest",
+      "mockReadOnly": "This historical deterministic Mock result is read-only. It can still be viewed, copied and saved.",
+      "queuedManual": "This queued run will never send automatically. Continue explicitly or cancel it.",
+      "runningBody": "DeepSeek is generating the minutes. Leaving this page does not cancel the run.",
+      "interrupted": "This run was interrupted before it completed.",
+      "cancelledBody": "This run was cancelled. No result was committed.",
+      "none": "None recorded.",
+      "evidenceLimitation": "Evidence refers to the frozen transcript excerpt. It is not revalidated after you edit the summary text.",
+      "exportWarning": "Clipboard and saved Markdown copies leave MeetingLens control and are not removed when the meeting is deleted."
+    },
+    "stale": {
+      "segment_revised": "The transcript changed after this snapshot. Review it and regenerate the latest revision if needed.",
+      "source_deleted": "A source used by this snapshot was deleted. This result remains readable, but this series cannot be regenerated."
+    },
+    "sections": {
+      "overview": "Overview",
+      "decisions": "Decisions",
+      "actionItems": "Action items",
+      "risks": "Risks",
+      "openQuestions": "Open questions"
+    },
+    "itemStatus": {
+      "confirmed": "Confirmed",
+      "proposed": "Proposed",
+      "superseded": "Superseded",
+      "assigned": "Assigned",
+      "suggested": "Suggested",
+      "unconfirmed": "Unconfirmed"
+    },
+    "edit": {
+      "actionText": "Action item {{number}}",
+      "owner": "Owner for action item {{number}}",
+      "dueDate": "Due date for action item {{number}}",
+      "dirtyExport": "Save or discard your edits before copying, previewing, saving or regenerating.",
+      "editedNotice": "This revision contains user-edited text. The original provider draft is not retained separately."
+    },
+    "evidence": {
+      "label": "[E{{number}}]",
+      "open": "Open evidence {{number}}",
+      "speaker": "Speaker snapshot",
+      "ordinal": "Source paragraph",
+      "sourceDeleted": "The original transcript source has been deleted; this frozen excerpt is retained with the result."
+    },
+    "markdown": {
+      "title": "Canonical Markdown preview"
+    },
+    "feedback": {
+      "copied": "Markdown copied to the clipboard.",
+      "saved": "Markdown saved.",
+      "save-cancelled": "Save cancelled. No file was written.",
+      "clipboard-unavailable": "Clipboard writing is unavailable in this WebView.",
+      "clipboard-failed": "Markdown could not be copied."
+    },
+    "empty": {
+      "title": "No summary result yet",
+      "body": "Choose one or more transcript sources, then explicitly generate meeting minutes."
+    },
+    "history": {
+      "eyebrow": "Run history",
+      "title": "Revisions and runs",
+      "count_one": "{{formattedCount}} run",
+      "count_other": "{{formattedCount}} runs",
+      "empty": "No Summary runs have been created for this meeting.",
+      "details_one": "{{template}} · {{language}} · {{formattedCount}} source",
+      "details_other": "{{template}} · {{language}} · {{formattedCount}} sources",
+      "loadMore": "Load older runs"
+    },
+    "unsaved": {
+      "title": "Discard unsaved minutes edits?",
+      "body": "Your current text edits have not been saved. Stay here to keep editing, or discard them and continue.",
+      "discard": "Discard and continue",
+      "keepEditing": "Keep editing"
+    }
   },
   "summaryConsent": {
     "close": "Close without sending",
@@ -511,19 +638,19 @@
     "versionTitle": "Current version",
     "versionBody": "Version {{version}} · Development Preview",
     "availableTitle": "What works now",
-    "availableBody": "You can use Summary mode to paste or import UTF-8 TXT, SRT and VTT transcripts, review bounded pages, correct text and speaker names, and manage transcript sources locally. The existing synthetic meeting and document workflows remain available.",
+    "availableBody": "You can paste or import UTF-8 TXT, SRT and VTT transcripts, review and correct them locally, then explicitly authorize DeepSeek to generate structured meeting minutes. Completed minutes can be reviewed, edited, copied as canonical Markdown or saved as a Markdown file.",
     "unavailableTitle": "What is not available yet",
-    "unavailableBody": "User-facing DeepSeek generation and formal AI-minutes results, recording, realtime transcription, screen capture, speaker diarization, realtime translation, video import and Docling product orchestration are not available yet. The Rust-only DeepSeek provider and consent foundation are implemented, but Generate remains disabled.",
+    "unavailableBody": "Recording, realtime transcription, screen capture, speaker diarization, realtime translation, video import, Docling product orchestration, section-level regeneration and complex document export are not available yet.",
     "quickStartTitle": "Quick start",
-    "quickStartBody": "Open Summary mode, paste notes or choose a TXT, SRT or VTT transcript, then review sources and correct the normalized segments. Minutes generation remains disabled.",
+    "quickStartBody": "Open Summary mode, paste notes or choose a TXT, SRT or VTT transcript, review the normalized segments, and open Meeting minutes. Choose the sources, template and output language, review the external-sharing disclosure, then generate. You can edit the completed body, preview or copy canonical Markdown, save it, or create a full new revision.",
     "filesTitle": "Meeting materials",
     "filesBody": "Open a meeting and use Add files. Approved files are copied into private application storage and can be deleted without changing the source file. Docling is not connected to this UI yet.",
     "deepseekTitle": "DeepSeek key",
-    "deepseekBody": "Use Settings to save the key in Windows Credential Manager. The WebView cannot read it back. The Rust-only DeepSeek provider consumes it only when executing a frozen, explicitly authorized Summary run; the current user-facing Generate action is not wired yet.",
+    "deepseekBody": "Use Settings to save the key in Windows Credential Manager. The WebView cannot read it back. The Rust-only DeepSeek provider consumes it only when executing a frozen, explicitly authorized Summary run; the WebView never receives the key or sends provider requests.",
     "privacyTitle": "Privacy and local storage",
-    "privacyBody": "Submitted transcript segments stay in MeetingLens private local storage. Unsubmitted pasted text is cleared on cancel or after saving, and source paths never reach the WebView. The current user-facing Generate action is disabled; the Rust provider can send only a frozen transcript scope after explicit confirmation.",
+    "privacyBody": "Submitted transcript segments and generated minutes stay in MeetingLens private local storage. Unsubmitted pasted text is cleared on cancel or after saving, and source paths never reach the WebView. Only the frozen transcript scope shown in the disclosure can be sent by the Rust provider after explicit confirmation; content already received by DeepSeek cannot be recalled.",
     "faqTitle": "Common questions",
-    "faqBody": "Changing the interface language does not translate transcript content or change the future minutes output language. Clearing WebView storage resets only the interface-language preference, not local meetings or transcripts.",
+    "faqBody": "Changing the interface language does not translate transcript content or change the selected minutes output language. Clearing WebView storage resets only the interface-language preference, not local meetings or transcripts.",
     "feedbackTitle": "Feedback",
     "feedbackBody": "When reporting a problem, include the action, safe error code and application version. Never attach API keys, recordings, meeting content, local databases or private paths.",
     "guidesTitle": "Detailed preview guides",
@@ -604,6 +731,10 @@
       "summary_input_too_large": "The selected summary input is too large.",
       "summary_provider_input_too_large": "The selected transcript is too large for DeepSeek.",
       "summary_evidence_invalid": "The summary contains invalid evidence references.",
+      "summary_edit_conflict": "This summary changed before your edit was saved. Refresh it before trying again.",
+      "summary_edit_too_large": "The edited summary is too large.",
+      "summary_export_failed": "The Markdown file could not be saved.",
+      "summary_markdown_too_large": "The Markdown result is too large.",
       "internal_error": "MeetingLens could not complete that action.",
       "summary_invalid_input": "The summary request is invalid.",
       "summary_invalid_state": "The summary run cannot be changed in its current state.",

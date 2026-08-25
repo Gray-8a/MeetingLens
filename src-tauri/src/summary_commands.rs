@@ -1,15 +1,18 @@
 use std::fmt;
+use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use tauri::State;
+use tauri::{AppHandle, State};
+use tauri_plugin_dialog::DialogExt;
 
 #[cfg(test)]
 use crate::data::MeetingService;
 use crate::data::{
-    CreateSummaryRevision, CreateSummaryRun, SummaryActionItem, SummaryActionStatus, SummaryClaim,
-    SummaryContent, SummaryDecision, SummaryDecisionStatus, SummaryError, SummaryEvidence,
-    SummaryEvidencePage, SummaryOutputLanguage, SummaryPolicy, SummaryRun, SummaryRunPage,
-    SummaryStatus, SummaryTemplate,
+    CreateSummaryRevision, CreateSummaryRun, EditableSummaryActionItem, EditableSummaryContent,
+    RenderedSummaryMarkdown, SummaryActionItem, SummaryActionStatus, SummaryClaim, SummaryContent,
+    SummaryDecision, SummaryDecisionStatus, SummaryError, SummaryEvidence, SummaryEvidencePage,
+    SummaryOutputLanguage, SummaryPolicy, SummaryRun, SummaryRunPage, SummaryStatus,
+    SummaryTemplate, UpdateSummaryContent, summary_content_version,
 };
 use crate::summary_runtime::{
     DeepSeekProviderStatus, SummaryExternalDisclosure, SummaryRuntimeService,
@@ -31,6 +34,10 @@ const SUMMARY_COMMAND_NAMES: &[&str] = &[
     "list_summary_runs",
     "cancel_summary_run",
     "list_summary_evidence",
+    "get_summary_evidence",
+    "update_summary_content",
+    "get_summary_markdown",
+    "save_summary_markdown",
 ];
 
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
@@ -77,6 +84,96 @@ pub struct ListSummaryEvidenceRequest {
     pub summary_id: String,
     pub cursor: Option<u64>,
     pub limit: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GetSummaryEvidenceRequest {
+    pub meeting_id: String,
+    pub summary_id: String,
+    pub evidence_id: String,
+}
+
+#[derive(Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EditableSummaryActionItemRequest {
+    pub text: String,
+    pub owner: Option<String>,
+    pub due_date: Option<String>,
+}
+
+impl fmt::Debug for EditableSummaryActionItemRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EditableSummaryActionItemRequest")
+            .field("text", &"[REDACTED]")
+            .field("owner", &self.owner.as_ref().map(|_| "[REDACTED]"))
+            .field("due_date", &self.due_date.as_ref().map(|_| "[REDACTED]"))
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct EditableSummaryContentRequest {
+    pub overview_text: String,
+    pub decision_texts: Vec<String>,
+    pub action_items: Vec<EditableSummaryActionItemRequest>,
+    pub risk_texts: Vec<String>,
+    pub open_question_texts: Vec<String>,
+}
+
+impl fmt::Debug for EditableSummaryContentRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EditableSummaryContentRequest")
+            .field("overview_text", &"[REDACTED]")
+            .field("decision_count", &self.decision_texts.len())
+            .field("action_item_count", &self.action_items.len())
+            .field("risk_count", &self.risk_texts.len())
+            .field("open_question_count", &self.open_question_texts.len())
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct UpdateSummaryContentRequest {
+    pub meeting_id: String,
+    pub summary_id: String,
+    pub expected_content_version: String,
+    pub editable_content: EditableSummaryContentRequest,
+}
+
+impl fmt::Debug for UpdateSummaryContentRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("UpdateSummaryContentRequest")
+            .field("meeting_id", &self.meeting_id)
+            .field("summary_id", &self.summary_id)
+            .field("expected_content_version", &"[REDACTED]")
+            .field("editable_content", &self.editable_content)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct SummaryMarkdownRequest {
+    pub meeting_id: String,
+    pub summary_id: String,
+    pub expected_content_version: String,
+}
+
+impl fmt::Debug for SummaryMarkdownRequest {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SummaryMarkdownRequest")
+            .field("meeting_id", &self.meeting_id)
+            .field("summary_id", &self.summary_id)
+            .field("expected_content_version", &"[REDACTED]")
+            .finish()
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -341,6 +438,7 @@ pub struct SummaryRunResponse {
     pub model: String,
     pub prompt_version: String,
     pub content: Option<SummaryContentResponse>,
+    pub content_version: Option<String>,
     pub error_code: Option<String>,
     pub source_count: u64,
     pub input_segment_count: u64,
@@ -376,6 +474,10 @@ impl fmt::Debug for SummaryRunResponse {
             .field("model", &self.model)
             .field("prompt_version", &self.prompt_version)
             .field("content", &self.content.as_ref().map(|_| "[REDACTED]"))
+            .field(
+                "content_version",
+                &self.content_version.as_ref().map(|_| "[REDACTED]"),
+            )
             .field("error_code", &self.error_code)
             .field("source_count", &self.source_count)
             .field("input_segment_count", &self.input_segment_count)
@@ -394,9 +496,18 @@ impl fmt::Debug for SummaryRunResponse {
     }
 }
 
-impl From<SummaryRun> for SummaryRunResponse {
-    fn from(run: SummaryRun) -> Self {
-        Self {
+impl TryFrom<SummaryRun> for SummaryRunResponse {
+    type Error = SummaryError;
+
+    fn try_from(run: SummaryRun) -> Result<Self, Self::Error> {
+        let content_version = match (run.status, run.content.as_ref()) {
+            (SummaryStatus::Completed, Some(content)) => Some(summary_content_version(content)?),
+            (SummaryStatus::Completed, None) | (_, Some(_)) => {
+                return Err(SummaryError::PersistenceFailed);
+            }
+            (_, None) => None,
+        };
+        Ok(Self {
             id: run.id,
             meeting_id: run.meeting_id,
             series_id: run.series_id,
@@ -412,6 +523,7 @@ impl From<SummaryRun> for SummaryRunResponse {
             model: run.model,
             prompt_version: run.prompt_version,
             content: run.content.map(SummaryContentResponse::from),
+            content_version,
             error_code: run.error_code,
             source_count: run.source_count,
             input_segment_count: run.input_segment_count,
@@ -426,7 +538,7 @@ impl From<SummaryRun> for SummaryRunResponse {
             finished_at: run.finished_at,
             cancel_requested_at: run.cancel_requested_at,
             updated_at: run.updated_at,
-        }
+        })
     }
 }
 
@@ -522,18 +634,20 @@ impl fmt::Debug for ListSummaryRunsResponse {
     }
 }
 
-impl From<SummaryRunPage> for ListSummaryRunsResponse {
-    fn from(page: SummaryRunPage) -> Self {
-        Self {
+impl TryFrom<SummaryRunPage> for ListSummaryRunsResponse {
+    type Error = SummaryError;
+
+    fn try_from(page: SummaryRunPage) -> Result<Self, Self::Error> {
+        Ok(Self {
             items: page
                 .items
                 .into_iter()
-                .map(SummaryRunResponse::from)
-                .collect(),
+                .map(SummaryRunResponse::try_from)
+                .collect::<Result<Vec<_>, _>>()?,
             next_cursor: page.next_cursor,
             has_more: page.has_more,
             total_count: page.total_count,
-        }
+        })
     }
 }
 
@@ -570,6 +684,50 @@ impl From<SummaryEvidencePage> for ListSummaryEvidenceResponse {
             has_more: page.has_more,
             total_count: page.total_count,
         }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SummaryMarkdownResponse {
+    pub summary_id: String,
+    pub content_version: String,
+    pub markdown: String,
+    pub bytes: usize,
+}
+
+impl fmt::Debug for SummaryMarkdownResponse {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SummaryMarkdownResponse")
+            .field("summary_id", &self.summary_id)
+            .field("content_version", &"[REDACTED]")
+            .field("markdown", &"[REDACTED]")
+            .field("bytes", &self.bytes)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SaveSummaryMarkdownResponse {
+    pub summary_id: String,
+    pub content_version: String,
+    pub saved: bool,
+    pub cancelled: bool,
+    pub bytes_written: usize,
+}
+
+impl fmt::Debug for SaveSummaryMarkdownResponse {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SaveSummaryMarkdownResponse")
+            .field("summary_id", &self.summary_id)
+            .field("content_version", &"[REDACTED]")
+            .field("saved", &self.saved)
+            .field("cancelled", &self.cancelled)
+            .field("bytes_written", &self.bytes_written)
+            .finish()
     }
 }
 
@@ -652,7 +810,7 @@ pub fn create_summary_run(
             template: request.template,
             output_language: request.output_language,
         })
-        .map(SummaryRunResponse::from)
+        .and_then(SummaryRunResponse::try_from)
         .map_err(SummaryCommandError::from)
 }
 
@@ -666,7 +824,7 @@ pub fn create_summary_revision(
             meeting_id: request.meeting_id,
             summary_id: request.summary_id,
         })
-        .map(SummaryRunResponse::from)
+        .and_then(SummaryRunResponse::try_from)
         .map_err(SummaryCommandError::from)
 }
 
@@ -678,7 +836,7 @@ pub async fn execute_summary_run(
     service
         .execute(&request.meeting_id, &request.summary_id)
         .await
-        .map(SummaryRunResponse::from)
+        .and_then(SummaryRunResponse::try_from)
         .map_err(SummaryCommandError::from)
 }
 
@@ -689,7 +847,7 @@ pub fn get_summary_run(
 ) -> CommandResult<SummaryRunResponse> {
     service
         .get(&request.meeting_id, &request.summary_id)
-        .map(SummaryRunResponse::from)
+        .and_then(SummaryRunResponse::try_from)
         .map_err(SummaryCommandError::from)
 }
 
@@ -704,7 +862,7 @@ pub fn list_summary_runs(
             request.cursor.as_deref(),
             request.limit,
         )
-        .map(ListSummaryRunsResponse::from)
+        .and_then(ListSummaryRunsResponse::try_from)
         .map_err(SummaryCommandError::from)
 }
 
@@ -715,7 +873,7 @@ pub fn cancel_summary_run(
 ) -> CommandResult<SummaryRunResponse> {
     service
         .cancel(&request.meeting_id, &request.summary_id)
-        .map(SummaryRunResponse::from)
+        .and_then(SummaryRunResponse::try_from)
         .map_err(SummaryCommandError::from)
 }
 
@@ -735,6 +893,162 @@ pub fn list_summary_evidence(
         .map_err(SummaryCommandError::from)
 }
 
+#[tauri::command]
+pub fn get_summary_evidence(
+    request: GetSummaryEvidenceRequest,
+    service: State<'_, SummaryRuntimeService>,
+) -> CommandResult<SummaryEvidenceResponse> {
+    service
+        .get_evidence(
+            &request.meeting_id,
+            &request.summary_id,
+            &request.evidence_id,
+        )
+        .map(SummaryEvidenceResponse::from)
+        .map_err(SummaryCommandError::from)
+}
+
+#[tauri::command]
+pub fn update_summary_content(
+    request: UpdateSummaryContentRequest,
+    service: State<'_, SummaryRuntimeService>,
+) -> CommandResult<SummaryRunResponse> {
+    service
+        .update_content(update_content_input(request))
+        .and_then(SummaryRunResponse::try_from)
+        .map_err(SummaryCommandError::from)
+}
+
+#[tauri::command]
+pub fn get_summary_markdown(
+    request: SummaryMarkdownRequest,
+    service: State<'_, SummaryRuntimeService>,
+) -> CommandResult<SummaryMarkdownResponse> {
+    service
+        .markdown(
+            &request.meeting_id,
+            &request.summary_id,
+            &request.expected_content_version,
+        )
+        .map(markdown_response)
+        .map_err(SummaryCommandError::from)
+}
+
+trait SummaryMarkdownPicker {
+    fn save_path(&self, suggested_file_name: &str) -> CommandResult<Option<PathBuf>>;
+}
+
+struct NativeSummaryMarkdownPicker<'a> {
+    app: &'a AppHandle,
+}
+
+impl SummaryMarkdownPicker for NativeSummaryMarkdownPicker<'_> {
+    fn save_path(&self, suggested_file_name: &str) -> CommandResult<Option<PathBuf>> {
+        self.app
+            .dialog()
+            .file()
+            .set_title("Save meeting minutes")
+            .set_file_name(suggested_file_name)
+            .add_filter("Markdown", &["md"])
+            .blocking_save_file()
+            .map(|path| {
+                path.into_path()
+                    .map_err(|_| SummaryCommandError::from(SummaryError::ExportFailed))
+            })
+            .transpose()
+    }
+}
+
+#[tauri::command]
+pub async fn save_summary_markdown(
+    request: SummaryMarkdownRequest,
+    app: AppHandle,
+    service: State<'_, SummaryRuntimeService>,
+) -> CommandResult<SaveSummaryMarkdownResponse> {
+    let service = service.inner().clone();
+    tauri::async_runtime::spawn_blocking(move || {
+        let picker = NativeSummaryMarkdownPicker { app: &app };
+        save_summary_markdown_with_picker(&service, request, &picker)
+    })
+    .await
+    .map_err(|_| SummaryCommandError::from(SummaryError::Internal))?
+}
+
+fn save_summary_markdown_with_picker(
+    service: &SummaryRuntimeService,
+    request: SummaryMarkdownRequest,
+    picker: &dyn SummaryMarkdownPicker,
+) -> CommandResult<SaveSummaryMarkdownResponse> {
+    let prepared = service
+        .markdown(
+            &request.meeting_id,
+            &request.summary_id,
+            &request.expected_content_version,
+        )
+        .map_err(SummaryCommandError::from)?;
+    let Some(path) = picker.save_path(&prepared.suggested_file_name)? else {
+        return Ok(cancelled_markdown_save(prepared));
+    };
+    let saved = service
+        .save_markdown_to_path(
+            &request.meeting_id,
+            &request.summary_id,
+            &request.expected_content_version,
+            &path,
+        )
+        .map_err(SummaryCommandError::from)?;
+    Ok(SaveSummaryMarkdownResponse {
+        summary_id: saved.summary_id,
+        content_version: saved.content_version,
+        saved: true,
+        cancelled: false,
+        bytes_written: saved.bytes,
+    })
+}
+
+fn cancelled_markdown_save(prepared: RenderedSummaryMarkdown) -> SaveSummaryMarkdownResponse {
+    SaveSummaryMarkdownResponse {
+        summary_id: prepared.summary_id,
+        content_version: prepared.content_version,
+        saved: false,
+        cancelled: true,
+        bytes_written: 0,
+    }
+}
+
+fn update_content_input(request: UpdateSummaryContentRequest) -> UpdateSummaryContent {
+    UpdateSummaryContent {
+        meeting_id: request.meeting_id,
+        summary_id: request.summary_id,
+        expected_content_version: request.expected_content_version,
+        editable_content: EditableSummaryContent {
+            overview_text: request.editable_content.overview_text,
+            decision_texts: request.editable_content.decision_texts,
+            action_items: request
+                .editable_content
+                .action_items
+                .into_iter()
+                .map(|item| EditableSummaryActionItem {
+                    text: item.text,
+                    owner: item.owner,
+                    due_date: item.due_date,
+                })
+                .collect(),
+            risk_texts: request.editable_content.risk_texts,
+            open_question_texts: request.editable_content.open_question_texts,
+        },
+    }
+}
+
+fn markdown_response(rendered: RenderedSummaryMarkdown) -> SummaryMarkdownResponse {
+    SummaryMarkdownResponse {
+        summary_id: rendered.summary_id,
+        content_version: rendered.content_version,
+        markdown: rendered.markdown,
+        bytes: rendered.bytes,
+    }
+}
+
 #[cfg(test)]
 fn create_summary_run_with_service(
     service: &MeetingService,
@@ -748,7 +1062,7 @@ fn create_summary_run_with_service(
             template: request.template,
             output_language: request.output_language,
         })
-        .map(SummaryRunResponse::from)
+        .and_then(SummaryRunResponse::try_from)
         .map_err(SummaryCommandError::from)
 }
 
@@ -763,7 +1077,7 @@ fn create_summary_revision_with_service(
             meeting_id: request.meeting_id,
             summary_id: request.summary_id,
         })
-        .map(SummaryRunResponse::from)
+        .and_then(SummaryRunResponse::try_from)
         .map_err(SummaryCommandError::from)
 }
 
@@ -775,7 +1089,7 @@ fn execute_summary_run_with_service(
     service
         .summaries()
         .execute(&request.meeting_id, &request.summary_id)
-        .map(SummaryRunResponse::from)
+        .and_then(SummaryRunResponse::try_from)
         .map_err(SummaryCommandError::from)
 }
 
@@ -787,7 +1101,7 @@ fn get_summary_run_with_service(
     service
         .summaries()
         .get(&request.meeting_id, &request.summary_id)
-        .map(SummaryRunResponse::from)
+        .and_then(SummaryRunResponse::try_from)
         .map_err(SummaryCommandError::from)
 }
 
@@ -803,7 +1117,7 @@ fn list_summary_runs_with_service(
             request.cursor.as_deref(),
             request.limit,
         )
-        .map(ListSummaryRunsResponse::from)
+        .and_then(ListSummaryRunsResponse::try_from)
         .map_err(SummaryCommandError::from)
 }
 
@@ -815,7 +1129,7 @@ fn cancel_summary_run_with_service(
     service
         .summaries()
         .cancel(&request.meeting_id, &request.summary_id)
-        .map(SummaryRunResponse::from)
+        .and_then(SummaryRunResponse::try_from)
         .map_err(SummaryCommandError::from)
 }
 
@@ -833,6 +1147,22 @@ fn list_summary_evidence_with_service(
             request.limit,
         )
         .map(ListSummaryEvidenceResponse::from)
+        .map_err(SummaryCommandError::from)
+}
+
+#[cfg(test)]
+fn get_summary_evidence_with_service(
+    service: &MeetingService,
+    request: GetSummaryEvidenceRequest,
+) -> CommandResult<SummaryEvidenceResponse> {
+    service
+        .summaries()
+        .get_evidence(
+            &request.meeting_id,
+            &request.summary_id,
+            &request.evidence_id,
+        )
+        .map(SummaryEvidenceResponse::from)
         .map_err(SummaryCommandError::from)
 }
 
@@ -864,6 +1194,42 @@ mod tests {
     impl Drop for TestWorkspace {
         fn drop(&mut self) {
             let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+
+    struct CancelledMarkdownPicker;
+
+    impl SummaryMarkdownPicker for CancelledMarkdownPicker {
+        fn save_path(&self, _suggested_file_name: &str) -> CommandResult<Option<PathBuf>> {
+            Ok(None)
+        }
+    }
+
+    #[test]
+    fn markdown_picker_cancellation_is_a_safe_path_free_no_op() {
+        let prepared = RenderedSummaryMarkdown {
+            summary_id: Uuid::new_v4().to_string(),
+            content_version: "a".repeat(64),
+            markdown: "# Synthetic minutes\n".to_string(),
+            bytes: 20,
+            suggested_file_name: "synthetic-minutes-r1.md".to_string(),
+        };
+        assert_eq!(
+            CancelledMarkdownPicker
+                .save_path(&prepared.suggested_file_name)
+                .expect("picker cancellation should not be an error"),
+            None
+        );
+        let response = cancelled_markdown_save(prepared);
+        assert!(!response.saved);
+        assert!(response.cancelled);
+        assert_eq!(response.bytes_written, 0);
+        let debug = format!("{response:?}");
+        assert!(debug.contains("[REDACTED]"));
+        assert!(!debug.contains(&"a".repeat(64)));
+        let serialized = serde_json::to_value(response).expect("response should serialize");
+        for forbidden in ["path", "fileName", "markdown"] {
+            assert!(serialized.get(forbidden).is_none());
         }
     }
 
@@ -1023,19 +1389,96 @@ mod tests {
                 );
             }
         }
+
+        let update: UpdateSummaryContentRequest = serde_json::from_value(json!({
+            "meetingId": meeting_id,
+            "summaryId": summary_id,
+            "expectedContentVersion": "a".repeat(64),
+            "editableContent": {
+                "overviewText": "Synthetic overview",
+                "decisionTexts": ["Synthetic decision"],
+                "actionItems": [{
+                    "text": "Synthetic action",
+                    "owner": null,
+                    "dueDate": null
+                }],
+                "riskTexts": [],
+                "openQuestionTexts": []
+            }
+        }))
+        .expect("bounded edit DTO should deserialize");
+        assert_eq!(update.editable_content.action_items.len(), 1);
+        for forbidden in [
+            json!({
+                "meetingId": meeting_id,
+                "summaryId": summary_id,
+                "expectedContentVersion": "a".repeat(64),
+                "editableContent": {
+                    "overviewText": "Synthetic overview",
+                    "decisionTexts": [],
+                    "actionItems": [],
+                    "riskTexts": [],
+                    "openQuestionTexts": [],
+                    "evidenceIds": [Uuid::new_v4().to_string()]
+                }
+            }),
+            json!({
+                "meetingId": meeting_id,
+                "summaryId": summary_id,
+                "expectedContentVersion": "a".repeat(64),
+                "editableContent": {
+                    "overviewText": "Synthetic overview",
+                    "decisionTexts": [],
+                    "actionItems": [{
+                        "text": "Synthetic action",
+                        "owner": null,
+                        "dueDate": null,
+                        "status": "assigned"
+                    }],
+                    "riskTexts": [],
+                    "openQuestionTexts": []
+                }
+            }),
+        ] {
+            assert!(serde_json::from_value::<UpdateSummaryContentRequest>(forbidden).is_err());
+        }
+        assert!(
+            serde_json::from_value::<SummaryMarkdownRequest>(json!({
+                "meetingId": meeting_id,
+                "summaryId": summary_id,
+                "expectedContentVersion": "a".repeat(64),
+                "path": "private.md"
+            }))
+            .is_err()
+        );
+        let evidence_request: GetSummaryEvidenceRequest = serde_json::from_value(json!({
+            "meetingId": meeting_id,
+            "summaryId": summary_id,
+            "evidenceId": Uuid::new_v4().to_string()
+        }))
+        .expect("exact evidence request should deserialize");
+        assert_eq!(evidence_request.summary_id, summary_id);
     }
 
     #[test]
     fn typed_responses_use_the_frozen_wire_casing_without_exposing_snapshot_segments() {
         let evidence_id = Uuid::new_v4().to_string();
         let response =
-            SummaryRunResponse::from(synthetic_run(Some(synthetic_content(&evidence_id))));
+            SummaryRunResponse::try_from(synthetic_run(Some(synthetic_content(&evidence_id))))
+                .expect("content version should derive");
         let serialized = serde_json::to_value(&response).expect("run response should serialize");
 
         assert!(serialized.get("meetingId").is_some());
         assert!(serialized.get("outputLanguage").is_some());
         assert!(serialized.get("snapshotCreatedAt").is_some());
         assert_eq!(serialized["providerMode"], "mock");
+        assert_eq!(
+            serialized["contentVersion"]
+                .as_str()
+                .expect("completed content should have a version")
+                .len(),
+            64
+        );
         assert_eq!(serialized["content"]["schemaVersion"], 1);
         assert!(serialized["content"].get("actionItems").is_some());
         assert!(
@@ -1057,7 +1500,9 @@ mod tests {
     #[test]
     fn debug_output_redacts_summary_content_and_evidence_text() {
         let evidence_id = Uuid::new_v4().to_string();
-        let run = SummaryRunResponse::from(synthetic_run(Some(synthetic_content(&evidence_id))));
+        let run =
+            SummaryRunResponse::try_from(synthetic_run(Some(synthetic_content(&evidence_id))))
+                .expect("content version should derive");
         let evidence = SummaryEvidenceResponse::from(SummaryEvidence {
             id: evidence_id,
             summary_id: run.id.clone(),
@@ -1139,6 +1584,7 @@ mod tests {
         .expect("run should queue");
         assert_eq!(queued.status, SummaryStatus::Queued);
         assert_eq!(queued.content, None);
+        assert_eq!(queued.content_version, None);
 
         let wrong_owner = get_summary_run_with_service(
             &service,
@@ -1160,6 +1606,7 @@ mod tests {
         .expect("mock run should complete");
         assert_eq!(completed.status, SummaryStatus::Completed);
         assert!(completed.content.is_some());
+        assert!(completed.content_version.is_some());
 
         let evidence = list_summary_evidence_with_service(
             &service,
@@ -1178,6 +1625,26 @@ mod tests {
                 .iter()
                 .all(|item| item.meeting_id == meeting.id && item.summary_id == completed.id)
         );
+        let exact = get_summary_evidence_with_service(
+            &service,
+            GetSummaryEvidenceRequest {
+                meeting_id: meeting.id.clone(),
+                summary_id: completed.id.clone(),
+                evidence_id: evidence.items[0].id.clone(),
+            },
+        )
+        .expect("referenced evidence should load exactly");
+        assert_eq!(exact.id, evidence.items[0].id);
+        let unknown = get_summary_evidence_with_service(
+            &service,
+            GetSummaryEvidenceRequest {
+                meeting_id: meeting.id.clone(),
+                summary_id: completed.id.clone(),
+                evidence_id: Uuid::new_v4().to_string(),
+            },
+        )
+        .expect_err("unreferenced evidence must fail closed");
+        assert_eq!(unknown.code, "summary_evidence_invalid");
 
         let revision = create_summary_revision_with_service(
             &service,
@@ -1232,6 +1699,9 @@ mod tests {
             SummaryError::DeepSeekServiceUnavailable,
             SummaryError::DeepSeekTimeout,
             SummaryError::EvidenceInvalid,
+            SummaryError::EditConflict,
+            SummaryError::EditTooLarge,
+            SummaryError::ExportFailed,
             SummaryError::InputInsufficient,
             SummaryError::InputTooLarge,
             SummaryError::Internal,
@@ -1239,6 +1709,7 @@ mod tests {
             SummaryError::InvalidState,
             SummaryError::MeetingInvalidState,
             SummaryError::MeetingNotFound,
+            SummaryError::MarkdownTooLarge,
             SummaryError::PersistenceFailed,
             SummaryError::ProviderFailed,
             SummaryError::ProviderInputTooLarge,
@@ -1289,8 +1760,19 @@ mod tests {
         ] {
             assert!(!production.contains(forbidden));
         }
-        assert!(production.contains("pub async fn execute_summary_run"));
-        assert!(!production.contains("tauri::async_runtime::spawn_blocking"));
+        let execute_command = production
+            .split("pub async fn execute_summary_run")
+            .nth(1)
+            .and_then(|value| value.split("pub fn get_summary_run").next())
+            .expect("execute command should remain inspectable");
+        assert!(!execute_command.contains("spawn_blocking"));
+        let save_command = production
+            .split("pub async fn save_summary_markdown")
+            .nth(1)
+            .and_then(|value| value.split("fn save_summary_markdown_with_picker").next())
+            .expect("save command should remain inspectable");
+        assert!(save_command.contains("tauri::async_runtime::spawn_blocking"));
+        assert!(!save_command.contains("blocking_save_file"));
 
         let app_builder = include_str!("lib.rs");
         let build_script = include_str!("../build.rs");
@@ -1304,7 +1786,7 @@ mod tests {
             .split("[[set]]")
             .find(|set| set.contains("summary-run-commands"))
             .expect("summary permission set should exist");
-        assert_eq!(summary_set.matches("\"allow-").count(), 12);
+        assert_eq!(summary_set.matches("\"allow-").count(), 16);
 
         let capability = include_str!("../capabilities/default.json");
         assert!(capability.contains("summary-run-commands"));

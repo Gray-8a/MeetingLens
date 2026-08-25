@@ -19,6 +19,9 @@ pub enum SummaryError {
     DeepSeekServiceUnavailable,
     DeepSeekTimeout,
     EvidenceInvalid,
+    EditConflict,
+    EditTooLarge,
+    ExportFailed,
     InputInsufficient,
     InputTooLarge,
     Internal,
@@ -26,6 +29,7 @@ pub enum SummaryError {
     InvalidState,
     MeetingInvalidState,
     MeetingNotFound,
+    MarkdownTooLarge,
     PersistenceFailed,
     ProviderFailed,
     ProviderInputTooLarge,
@@ -57,6 +61,9 @@ impl SummaryError {
             Self::DeepSeekServiceUnavailable => "deepseek_service_unavailable",
             Self::DeepSeekTimeout => "deepseek_timeout",
             Self::EvidenceInvalid => "summary_evidence_invalid",
+            Self::EditConflict => "summary_edit_conflict",
+            Self::EditTooLarge => "summary_edit_too_large",
+            Self::ExportFailed => "summary_export_failed",
             Self::InputInsufficient => "summary_input_insufficient",
             Self::InputTooLarge => "summary_input_too_large",
             Self::Internal => "internal_error",
@@ -64,6 +71,7 @@ impl SummaryError {
             Self::InvalidState => "summary_invalid_state",
             Self::MeetingInvalidState => "meeting_invalid_state",
             Self::MeetingNotFound => "meeting_not_found",
+            Self::MarkdownTooLarge => "summary_markdown_too_large",
             Self::PersistenceFailed => "summary_persistence_failed",
             Self::ProviderFailed => "summary_provider_failed",
             Self::ProviderInputTooLarge => "summary_provider_input_too_large",
@@ -109,6 +117,9 @@ impl SummaryError {
             Self::DeepSeekServiceUnavailable => "DeepSeek is temporarily unavailable.",
             Self::DeepSeekTimeout => "The DeepSeek request timed out.",
             Self::EvidenceInvalid => "The summary result contains invalid evidence references.",
+            Self::EditConflict => "The summary content changed before this edit could be saved.",
+            Self::EditTooLarge => "The edited summary content is too large.",
+            Self::ExportFailed => "The Markdown file could not be saved.",
             Self::InputInsufficient => {
                 "The selected sources do not contain usable final transcript segments."
             }
@@ -118,6 +129,7 @@ impl SummaryError {
             Self::InvalidState => "The summary run cannot be changed in its current state.",
             Self::MeetingInvalidState => "The meeting cannot be summarized in its current state.",
             Self::MeetingNotFound => "The meeting was not found.",
+            Self::MarkdownTooLarge => "The generated Markdown is too large.",
             Self::PersistenceFailed => "The summary run could not be saved.",
             Self::ProviderFailed => "The summary provider could not complete the run.",
             Self::ProviderInputTooLarge => "The summary input is too large for this provider.",
@@ -140,6 +152,7 @@ impl SummaryError {
                 | Self::PersistenceFailed
                 | Self::ProviderFailed
                 | Self::SnapshotMissing
+                | Self::ExportFailed
         )
     }
 }
@@ -192,6 +205,9 @@ mod tests {
             SummaryError::DeepSeekServiceUnavailable,
             SummaryError::DeepSeekTimeout,
             SummaryError::EvidenceInvalid,
+            SummaryError::EditConflict,
+            SummaryError::EditTooLarge,
+            SummaryError::ExportFailed,
             SummaryError::InputInsufficient,
             SummaryError::InputTooLarge,
             SummaryError::Internal,
@@ -199,6 +215,7 @@ mod tests {
             SummaryError::InvalidState,
             SummaryError::MeetingInvalidState,
             SummaryError::MeetingNotFound,
+            SummaryError::MarkdownTooLarge,
             SummaryError::PersistenceFailed,
             SummaryError::ProviderFailed,
             SummaryError::ProviderInputTooLarge,

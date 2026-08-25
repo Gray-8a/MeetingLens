@@ -1,4 +1,7 @@
 use std::collections::{HashMap, HashSet};
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use rusqlite::{Transaction, TransactionBehavior};
@@ -11,16 +14,18 @@ use super::provider_consent_model::ProviderConsentPolicy;
 use super::provider_consent_service::ProviderConsentService;
 use super::repository;
 use super::summary_error::{SummaryError, SummaryResult};
+use super::summary_markdown::{self, RenderedSummaryMarkdown};
 use super::summary_model::{
     CreateSummaryRevision, CreateSummaryRun, SUMMARY_EVIDENCE_DEFAULT_LIMIT,
     SUMMARY_EVIDENCE_EXCERPT_MAX_BYTES, SUMMARY_EVIDENCE_MAX_LIMIT, SUMMARY_LIST_DEFAULT_LIMIT,
     SUMMARY_LIST_MAX_LIMIT, SUMMARY_MAX_INPUT_BYTES, SUMMARY_MAX_SEGMENTS,
     SUMMARY_RESULT_MAX_BYTES, SummaryActionItem, SummaryClaim, SummaryDecision, SummaryEvidence,
     SummaryEvidencePage, SummaryPolicy, SummaryRun, SummaryRunPage, SummarySnapshotSegment,
-    SummaryStatus,
+    SummaryStatus, UpdateSummaryContent, summary_content_version, validate_content_version,
 };
 #[cfg(any(test, debug_assertions))]
 use super::summary_provider::DeterministicMockSummaryProvider;
+use super::summary_provider::{DEEPSEEK_SUMMARY_PROVIDER, DEEPSEEK_SUMMARY_PROVIDER_MODE};
 use super::summary_provider::{SummaryProvider, SummaryProviderOutput, SummaryProviderRequest};
 use super::summary_repository::{self, NewSummary};
 use super::transcript_error::TranscriptError;
@@ -189,6 +194,13 @@ impl SummaryService {
             summary_repository::get_summary(&transaction, &input.meeting_id, &input.summary_id)?;
         if !base.status.is_terminal() {
             return Err(SummaryError::InvalidState);
+        }
+        ensure_run_provider(&base, provider)?;
+        if base.stale_reason.as_deref() == Some("source_deleted") {
+            return Err(SummaryError::InvalidState);
+        }
+        if !summary_repository::is_latest_summary(&transaction, &base.series_id, &base.id)? {
+            return Err(SummaryError::RevisionConflict);
         }
         let source_ids = summary_repository::source_ids_for_summary(&transaction, &base.id)?;
         let revision = summary_repository::next_revision(&transaction, &base.series_id)?;
@@ -680,6 +692,127 @@ impl SummaryService {
         )
     }
 
+    pub fn get_evidence(
+        &self,
+        meeting_id: &str,
+        summary_id: &str,
+        evidence_id: &str,
+    ) -> SummaryResult<SummaryEvidence> {
+        validate_uuid(meeting_id)?;
+        validate_uuid(summary_id)?;
+        validate_uuid(evidence_id)?;
+        let connection = self.database.connect().map_err(map_data_error)?;
+        let run = summary_repository::get_summary(&connection, meeting_id, summary_id)?;
+        let content = run.content.as_ref().ok_or(SummaryError::InvalidState)?;
+        if run.status != SummaryStatus::Completed
+            || !summary_repository::referenced_evidence_ids(content)
+                .iter()
+                .any(|candidate| candidate == evidence_id)
+        {
+            return Err(SummaryError::EvidenceInvalid);
+        }
+        summary_repository::get_evidence(&connection, meeting_id, summary_id, evidence_id)
+    }
+
+    pub fn update_content(&self, input: UpdateSummaryContent) -> SummaryResult<SummaryRun> {
+        validate_uuid(&input.meeting_id)?;
+        validate_uuid(&input.summary_id)?;
+        validate_content_version(&input.expected_content_version)?;
+        let _guard = self.database.mutation_guard().map_err(map_data_error)?;
+        let mut connection = self.database.connect().map_err(map_data_error)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(SummaryError::from)?;
+        let current =
+            summary_repository::get_summary(&transaction, &input.meeting_id, &input.summary_id)?;
+        if current.status != SummaryStatus::Completed
+            || current.provider != DEEPSEEK_SUMMARY_PROVIDER
+            || current.provider_mode != DEEPSEEK_SUMMARY_PROVIDER_MODE
+        {
+            return Err(SummaryError::InvalidState);
+        }
+        if !summary_repository::is_latest_summary(&transaction, &current.series_id, &current.id)? {
+            return Err(SummaryError::RevisionConflict);
+        }
+        let current_content = current.content.as_ref().ok_or(SummaryError::InvalidState)?;
+        let current_version = summary_content_version(current_content)?;
+        if current_version != input.expected_content_version {
+            return Err(SummaryError::EditConflict);
+        }
+        let previous_content_json =
+            summary_repository::content_json(&transaction, &input.meeting_id, &input.summary_id)?;
+        let edited = apply_edit(current_content, input.editable_content)?;
+        validate_persisted_evidence(
+            &current,
+            &edited,
+            &summary_repository::all_evidence(&transaction, &input.meeting_id, &input.summary_id)?,
+        )?;
+        if &edited == current_content {
+            transaction.commit().map_err(SummaryError::from)?;
+            return Ok(current);
+        }
+        if !summary_repository::update_content_cas(
+            &transaction,
+            &input.meeting_id,
+            &input.summary_id,
+            &previous_content_json,
+            &edited,
+        )? {
+            return Err(SummaryError::EditConflict);
+        }
+        let updated =
+            summary_repository::get_summary(&transaction, &input.meeting_id, &input.summary_id)?;
+        transaction.commit().map_err(SummaryError::from)?;
+        Ok(updated)
+    }
+
+    pub(crate) fn markdown(
+        &self,
+        meeting_id: &str,
+        summary_id: &str,
+        expected_content_version: &str,
+    ) -> SummaryResult<RenderedSummaryMarkdown> {
+        validate_uuid(meeting_id)?;
+        validate_uuid(summary_id)?;
+        validate_content_version(expected_content_version)?;
+        let _guard = self.database.mutation_guard().map_err(map_data_error)?;
+        let connection = self.database.connect().map_err(map_data_error)?;
+        render_markdown(
+            &connection,
+            meeting_id,
+            summary_id,
+            expected_content_version,
+        )
+    }
+
+    pub(crate) fn save_markdown_to_path(
+        &self,
+        meeting_id: &str,
+        summary_id: &str,
+        expected_content_version: &str,
+        selected_path: &Path,
+    ) -> SummaryResult<RenderedSummaryMarkdown> {
+        validate_uuid(meeting_id)?;
+        validate_uuid(summary_id)?;
+        validate_content_version(expected_content_version)?;
+        let _guard = self.database.mutation_guard().map_err(map_data_error)?;
+        let connection = self.database.connect().map_err(map_data_error)?;
+        let rendered = render_markdown(
+            &connection,
+            meeting_id,
+            summary_id,
+            expected_content_version,
+        )?;
+        // The content/version pair is linearized by the guarded read above.
+        // Never hold the database mutation guard while writing an arbitrary
+        // user-selected path (which may be slow or temporarily unavailable),
+        // because cancellation and other trusted mutations must remain live.
+        drop(connection);
+        drop(_guard);
+        write_markdown_atomically(selected_path, rendered.markdown.as_bytes())?;
+        Ok(rendered)
+    }
+
     pub(crate) fn recover_interrupted(&self) -> SummaryResult<u64> {
         let _guard = self.database.mutation_guard().map_err(map_data_error)?;
         let mut connection = self.database.connect().map_err(map_data_error)?;
@@ -690,6 +823,258 @@ impl SummaryService {
         transaction.commit().map_err(SummaryError::from)?;
         Ok(recovered)
     }
+}
+
+fn apply_edit(
+    current: &super::summary_model::SummaryContent,
+    editable: super::summary_model::EditableSummaryContent,
+) -> SummaryResult<super::summary_model::SummaryContent> {
+    if current.decisions.len() != editable.decision_texts.len()
+        || current.action_items.len() != editable.action_items.len()
+        || current.risks.len() != editable.risk_texts.len()
+        || current.open_questions.len() != editable.open_question_texts.len()
+    {
+        return Err(SummaryError::InvalidInput);
+    }
+    validate_edited_text(&editable.overview_text, MAX_RESULT_TEXT_BYTES)?;
+    for text in editable
+        .decision_texts
+        .iter()
+        .chain(editable.risk_texts.iter())
+        .chain(editable.open_question_texts.iter())
+    {
+        validate_edited_text(text, MAX_RESULT_TEXT_BYTES)?;
+    }
+    for item in &editable.action_items {
+        validate_edited_text(&item.text, MAX_RESULT_TEXT_BYTES)?;
+        if let Some(owner) = &item.owner {
+            validate_edited_text(owner, MAX_RESULT_METADATA_BYTES)?;
+        }
+        if let Some(due_date) = &item.due_date {
+            validate_edited_text(due_date, MAX_RESULT_METADATA_BYTES)?;
+        }
+    }
+
+    let mut edited = current.clone();
+    edited.overview.text = editable.overview_text;
+    for (decision, text) in edited.decisions.iter_mut().zip(editable.decision_texts) {
+        decision.text = text;
+    }
+    for (item, edit) in edited.action_items.iter_mut().zip(editable.action_items) {
+        item.text = edit.text;
+        item.owner = edit.owner;
+        item.due_date = edit.due_date;
+    }
+    for (claim, text) in edited.risks.iter_mut().zip(editable.risk_texts) {
+        claim.text = text;
+    }
+    for (claim, text) in edited
+        .open_questions
+        .iter_mut()
+        .zip(editable.open_question_texts)
+    {
+        claim.text = text;
+    }
+    let bytes = serde_json::to_vec(&edited).map_err(|_| SummaryError::PersistenceFailed)?;
+    if bytes.len() > SUMMARY_RESULT_MAX_BYTES {
+        return Err(SummaryError::EditTooLarge);
+    }
+    Ok(edited)
+}
+
+fn validate_edited_text(value: &str, max_bytes: usize) -> SummaryResult<()> {
+    if value.len() > max_bytes {
+        return Err(SummaryError::EditTooLarge);
+    }
+    if value.trim().is_empty()
+        || value.chars().any(|character| {
+            let code = u32::from(character);
+            (code <= 0x1f && character != '\n' && character != '\t')
+                || (0x7f..=0x9f).contains(&code)
+        })
+    {
+        return Err(SummaryError::InvalidInput);
+    }
+    Ok(())
+}
+
+fn validate_persisted_evidence(
+    run: &SummaryRun,
+    content: &super::summary_model::SummaryContent,
+    evidence: &[SummaryEvidence],
+) -> SummaryResult<()> {
+    let referenced = summary_repository::referenced_evidence_ids(content);
+    if referenced.len() != evidence.len() {
+        return Err(SummaryError::EvidenceInvalid);
+    }
+    let evidence_ids = evidence
+        .iter()
+        .map(|item| {
+            if item.meeting_id != run.meeting_id || item.summary_id != run.id {
+                return Err(SummaryError::EvidenceInvalid);
+            }
+            Ok(item.id.as_str())
+        })
+        .collect::<SummaryResult<HashSet<_>>>()?;
+    if referenced
+        .iter()
+        .any(|evidence_id| !evidence_ids.contains(evidence_id.as_str()))
+    {
+        return Err(SummaryError::EvidenceInvalid);
+    }
+    Ok(())
+}
+
+fn render_markdown(
+    connection: &rusqlite::Connection,
+    meeting_id: &str,
+    summary_id: &str,
+    expected_content_version: &str,
+) -> SummaryResult<RenderedSummaryMarkdown> {
+    let run = summary_repository::get_summary(connection, meeting_id, summary_id)?;
+    let content = run.content.as_ref().ok_or(SummaryError::InvalidState)?;
+    if run.status != SummaryStatus::Completed {
+        return Err(SummaryError::InvalidState);
+    }
+    if summary_content_version(content)? != expected_content_version {
+        return Err(SummaryError::EditConflict);
+    }
+    let metadata = summary_repository::markdown_metadata(connection, meeting_id, summary_id)?;
+    let evidence = summary_repository::all_evidence(connection, meeting_id, summary_id)?;
+    validate_persisted_evidence(&run, content, &evidence)?;
+    summary_markdown::render(&run, &metadata, &evidence)
+}
+
+fn write_markdown_atomically(selected_path: &Path, markdown: &[u8]) -> SummaryResult<()> {
+    if selected_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_none_or(|extension| !extension.eq_ignore_ascii_case("md"))
+    {
+        return Err(SummaryError::InvalidInput);
+    }
+    let file_name = selected_path
+        .file_name()
+        .filter(|name| !name.is_empty())
+        .ok_or(SummaryError::InvalidInput)?;
+    let parent = selected_path.parent().ok_or(SummaryError::InvalidInput)?;
+    reject_reparse_point(parent)?;
+    let canonical_parent = fs::canonicalize(parent).map_err(|_| SummaryError::ExportFailed)?;
+    if !canonical_parent.is_dir() {
+        return Err(SummaryError::InvalidInput);
+    }
+    reject_reparse_point(&canonical_parent)?;
+    let target = canonical_parent.join(file_name);
+    validate_export_target(&target)?;
+
+    let temporary = temporary_markdown_path(&canonical_parent);
+    let result = (|| {
+        let mut file = OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&temporary)
+            .map_err(|_| SummaryError::ExportFailed)?;
+        file.write_all(markdown)
+            .map_err(|_| SummaryError::ExportFailed)?;
+        file.flush().map_err(|_| SummaryError::ExportFailed)?;
+        file.sync_all().map_err(|_| SummaryError::ExportFailed)?;
+        drop(file);
+        let target_exists = validate_export_target(&target)?;
+        replace_file(&temporary, &target, target_exists)
+    })();
+    if result.is_err() {
+        let _ = fs::remove_file(&temporary);
+    }
+    result
+}
+
+fn temporary_markdown_path(parent: &Path) -> PathBuf {
+    parent.join(format!(".meetinglens-{}.tmp", Uuid::new_v4()))
+}
+
+fn reject_reparse_point(path: &Path) -> SummaryResult<()> {
+    let metadata = fs::symlink_metadata(path).map_err(|_| SummaryError::ExportFailed)?;
+    reject_reparse_metadata(&metadata)
+}
+
+fn validate_export_target(path: &Path) -> SummaryResult<bool> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            reject_reparse_metadata(&metadata)?;
+            if !metadata.is_file() {
+                return Err(SummaryError::InvalidInput);
+            }
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(_) => Err(SummaryError::ExportFailed),
+    }
+}
+
+fn reject_reparse_metadata(metadata: &fs::Metadata) -> SummaryResult<()> {
+    if metadata.file_type().is_symlink() {
+        return Err(SummaryError::InvalidInput);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt;
+
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(SummaryError::InvalidInput);
+        }
+    }
+    Ok(())
+}
+
+#[cfg(windows)]
+fn replace_file(source: &Path, target: &Path, target_exists: bool) -> SummaryResult<()> {
+    use std::os::windows::ffi::OsStrExt;
+
+    use windows::Win32::Storage::FileSystem::{
+        MOVEFILE_WRITE_THROUGH, MoveFileExW, REPLACEFILE_WRITE_THROUGH, ReplaceFileW,
+    };
+    use windows::core::PCWSTR;
+
+    let source = source
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    let target = target
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect::<Vec<_>>();
+    // ReplaceFileW preserves the existing target's security descriptor. A new
+    // target uses MoveFileExW without REPLACE_EXISTING so a race cannot silently
+    // overwrite a file that appeared after validation.
+    // SAFETY: both buffers are owned, NUL-terminated UTF-16 strings that stay
+    // alive for the duration of the synchronous Windows call.
+    unsafe {
+        if target_exists {
+            ReplaceFileW(
+                PCWSTR(target.as_ptr()),
+                PCWSTR(source.as_ptr()),
+                PCWSTR::null(),
+                REPLACEFILE_WRITE_THROUGH,
+                None,
+                None,
+            )
+        } else {
+            MoveFileExW(
+                PCWSTR(source.as_ptr()),
+                PCWSTR(target.as_ptr()),
+                MOVEFILE_WRITE_THROUGH,
+            )
+        }
+    }
+    .map_err(|_| SummaryError::ExportFailed)
+}
+
+#[cfg(not(windows))]
+fn replace_file(source: &Path, target: &Path, _target_exists: bool) -> SummaryResult<()> {
+    fs::rename(source, target).map_err(|_| SummaryError::ExportFailed)
 }
 
 fn validate_provider_output(
@@ -966,7 +1351,8 @@ mod tests {
     use super::*;
     use crate::data::service::MeetingService;
     use crate::data::summary_model::{
-        SummaryContent, SummaryDecisionStatus, SummaryOutputLanguage, SummaryTemplate,
+        EditableSummaryActionItem, EditableSummaryContent, SummaryContent, SummaryDecisionStatus,
+        SummaryOutputLanguage, SummaryTemplate, UpdateSummaryContent,
     };
     use crate::data::summary_provider::{
         MOCK_SUMMARY_MODEL, MOCK_SUMMARY_PROMPT_VERSION, MOCK_SUMMARY_PROVIDER,
@@ -1037,6 +1423,175 @@ mod tests {
                 output_language: SummaryOutputLanguage::En,
             })
             .expect("summary run should create")
+    }
+
+    fn editable_content(content: &SummaryContent) -> EditableSummaryContent {
+        EditableSummaryContent {
+            overview_text: content.overview.text.clone(),
+            decision_texts: content
+                .decisions
+                .iter()
+                .map(|decision| decision.text.clone())
+                .collect(),
+            action_items: content
+                .action_items
+                .iter()
+                .map(|item| EditableSummaryActionItem {
+                    text: item.text.clone(),
+                    owner: item.owner.clone(),
+                    due_date: item.due_date.clone(),
+                })
+                .collect(),
+            risk_texts: content
+                .risks
+                .iter()
+                .map(|claim| claim.text.clone())
+                .collect(),
+            open_question_texts: content
+                .open_questions
+                .iter()
+                .map(|claim| claim.text.clone())
+                .collect(),
+        }
+    }
+
+    struct ExternalMetadataProvider;
+
+    impl SummaryProvider for ExternalMetadataProvider {
+        fn provider_name(&self) -> &'static str {
+            DEEPSEEK_SUMMARY_PROVIDER
+        }
+
+        fn provider_mode(&self) -> &'static str {
+            DEEPSEEK_SUMMARY_PROVIDER_MODE
+        }
+
+        fn model_name(&self) -> &'static str {
+            "deepseek-v4-pro"
+        }
+
+        fn prompt_version(&self) -> &'static str {
+            "summary-deepseek-v1"
+        }
+
+        fn generate<'a>(
+            &'a self,
+            _request: &'a SummaryProviderRequest,
+        ) -> SummaryProviderFuture<'a> {
+            Box::pin(async { Err(SummaryError::Internal) })
+        }
+    }
+
+    #[test]
+    fn historical_mock_is_read_only_and_cannot_switch_provider_in_a_series() {
+        let directory = TestDirectory::new();
+        let meetings = MeetingService::initialize(&directory.0).expect("service should initialize");
+        let (meeting_id, source_id, _) = create_meeting_and_source(&meetings);
+        let summaries = meetings.summaries();
+        let queued = create_run(&summaries, &meeting_id, &source_id);
+        let completed = summaries
+            .execute(&meeting_id, &queued.id)
+            .expect("mock run should complete");
+        let content = completed.content.as_ref().expect("content should exist");
+        let version = summary_content_version(content).expect("content version should derive");
+
+        assert_eq!(
+            summaries.update_content(UpdateSummaryContent {
+                meeting_id: meeting_id.clone(),
+                summary_id: completed.id.clone(),
+                expected_content_version: version,
+                editable_content: editable_content(content),
+            }),
+            Err(SummaryError::InvalidState)
+        );
+        assert_eq!(
+            summaries.create_revision_with_provider(
+                CreateSummaryRevision {
+                    meeting_id,
+                    summary_id: completed.id,
+                },
+                &ExternalMetadataProvider,
+            ),
+            Err(SummaryError::InvalidState)
+        );
+    }
+
+    #[test]
+    fn markdown_file_io_occurs_after_releasing_the_database_guard() {
+        let source = include_str!("summary_service.rs").replace("\r\n", "\n");
+        let implementation = source
+            .split("pub(crate) fn save_markdown_to_path")
+            .nth(1)
+            .and_then(|value| value.split("pub(crate) fn recover_interrupted").next())
+            .expect("save implementation should remain inspectable");
+        let drop_guard = implementation
+            .find("drop(_guard);")
+            .expect("mutation guard must be released explicitly");
+        let file_write = implementation
+            .find("write_markdown_atomically")
+            .expect("atomic file write must remain delegated");
+        assert!(drop_guard < file_write);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_existing_export_routes_through_replace_file_api() {
+        let source = include_str!("summary_service.rs").replace("\r\n", "\n");
+        let implementation = source
+            .split("#[cfg(windows)]\nfn replace_file")
+            .nth(1)
+            .and_then(|value| value.split("#[cfg(not(windows))]").next())
+            .expect("Windows replace implementation should remain inspectable");
+        let existing_branch = implementation
+            .split("if target_exists")
+            .nth(1)
+            .and_then(|value| value.split("} else {").next())
+            .expect("existing and new targets must use distinct Windows paths");
+        let new_target_branch = implementation
+            .split("} else {")
+            .nth(1)
+            .expect("new target path should remain inspectable");
+
+        assert!(existing_branch.contains("ReplaceFileW("));
+        assert!(!existing_branch.contains("MoveFileExW("));
+        assert!(new_target_branch.contains("MoveFileExW("));
+        assert!(!implementation.contains("MOVEFILE_REPLACE_EXISTING"));
+    }
+
+    #[test]
+    fn markdown_export_replaces_regular_files_and_cleans_temporary_entries() {
+        let directory = TestDirectory::new();
+        fs::create_dir_all(&directory.0).expect("temporary export directory should create");
+        let target = directory.0.join("synthetic-minutes.md");
+        fs::write(&target, b"old synthetic bytes").expect("old target should write");
+
+        write_markdown_atomically(&target, b"# Synthetic minutes\n")
+            .expect("Markdown should replace atomically");
+        assert_eq!(
+            fs::read(&target).expect("saved Markdown should read"),
+            b"# Synthetic minutes\n"
+        );
+        let names = fs::read_dir(&directory.0)
+            .expect("export directory should list")
+            .map(|entry| {
+                entry
+                    .expect("entry should read")
+                    .file_name()
+                    .to_string_lossy()
+                    .into_owned()
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(names, vec!["synthetic-minutes.md"]);
+        assert_eq!(
+            write_markdown_atomically(&directory.0.join("synthetic.txt"), b"private"),
+            Err(SummaryError::InvalidInput)
+        );
+        let directory_target = directory.0.join("directory.md");
+        fs::create_dir(&directory_target).expect("directory target should create");
+        assert_eq!(
+            write_markdown_atomically(&directory_target, b"private"),
+            Err(SummaryError::InvalidInput)
+        );
     }
 
     #[test]

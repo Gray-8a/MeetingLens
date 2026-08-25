@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-update-summary-content"
+description = "Enables the update_summary_content command without any pre-configured scope."
+commands.allow = ["update_summary_content"]
+
+[[permission]]
+identifier = "deny-update-summary-content"
+description = "Denies the update_summary_content command without any pre-configured scope."
+commands.deny = ["update_summary_content"]

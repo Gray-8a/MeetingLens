@@ -50,9 +50,13 @@ Personal Edition 首先把总结模式做成真实可用闭环：
 
 计划中的简化 Docling 编排只负责调用已有 Worker、生成 document chunks/evidence、失败自动重试一次，并在再次失败时提示用户手动重新导入；当前不建设通用任务调度器、多级恢复、长期 checkpoint 或企业监控面板。
 
-PR #20 已完成上述第 1–2 步：总结模式是首页唯一可进入的三模式入口，翻译模式和会议模式在当前 UI 显示“即将推出”，但路线状态现为 Frozen/Deferred；用户可以粘贴或通过 Rust 原生选择器导入转录、查看来源、分页检查片段、修正正文和说话人显示名称。PR #21 的 schema v4 Run Core 保留 run/series/revision、完整正文快照、evidence allowlist 与 Rust zero-network Mock 历史基础；`feat/summary-provider-deepseek` 在其上增加 schema v5、固定 Rust DeepSeek Provider、SecretStore 消费、严格结果校验、一次性/记住/撤销确认、取消和稳定错误。普通用户生成按钮仍禁用，因此当前页面不会触发真实请求；正式接线和结果页是唯一下一阶段 `feat/summary-mode-minutes`。
+PR #20 已完成上述第 1–2 步：总结模式是首页唯一可进入的三模式入口，翻译模式和会议模式在当前 UI 显示“即将推出”，但路线状态现为 Frozen/Deferred；用户可以粘贴或通过 Rust 原生选择器导入转录、查看来源、分页检查片段、修正正文和说话人显示名称。PR #21 的 schema v4 Run Core 保留 run/series/revision、完整正文快照、evidence allowlist 与 Rust zero-network Mock 历史基础；PR #24 已在其上完成 schema v5、固定 Rust DeepSeek Provider、SecretStore 消费、严格结果校验、一次性/记住/撤销确认、取消和稳定错误。当前 `feat/summary-mode-minutes` 把这些底层能力接入正式 Generate、五区结果/evidence、受限编辑、Markdown 复制/原生 Save As 和整份重新生成。
 
-Run core 继续固定 `final/manual`，运行状态是 queued/running/completed/failed/cancelled；异常退出后遗留 running 以 `summary_interrupted` 失败恢复。集中式 `summaryApi` 固定为十二个方法：既有八个 run/policy/evidence commands，加上 Provider 状态、disclosure、确认和撤销四个 commands。可复用 Consent Dialog 与 Settings 状态已经实现，但不等于正式纪要页面或生成入口已开放。
+Run core 继续固定 `final/manual`，运行状态是 queued/running/completed/failed/cancelled；异常退出后遗留 running 以 `summary_interrupted` 失败恢复，queued 只能由用户明确继续或取消。集中式 `summaryApi` 固定为十六个方法：原十二个 run/policy/Consent commands，再增加精确 evidence、受限正文更新、canonical Markdown 获取和 Rust 原生 Markdown 保存。remembered Consent 不能触发页面加载、重启或后台自动发送。
+
+结果契约保持 `overview/decisions/actionItems/risks/openQuestions` 五区。正文保存只 overlay 现有文本和行动项 owner/due date，以 Rust 派生 `contentVersion` 防止并发覆盖，不修改 evidence、状态、顺序或 Provider 元数据，也不增加 schema/migration。第一次实际编辑在当前 revision 内设置 `is_user_edited`；同 revision 不另存 Provider 原稿或编辑历史。旧 revision 继续可读，历史 Mock 严格只读；整份重新生成只允许 latest terminal DeepSeek revision。
+
+Markdown 预览、显式剪贴板写入和原生 Save As 使用同一 Rust renderer；React 不读取剪贴板、不接收路径，也不执行模型 HTML。用户保存到应用外的 `.md` 和剪贴板副本不随会议删除。
 
 单个来源最多允许 20,000 个 segments，检查页面必须使用后端稳定分页且单页不超过 200 条，不能在 React 中加载全量后切片。单个 Summary run 跨来源最多冻结 20,000 个 final segments 和 10 MiB UTF-8 正文，超限、空输入、重复或跨 meeting source 整体拒绝，不截断。用户可以为当前 source 中相同 `speaker_label` 批量设置或清空 `speaker_name`；该操作保留原始 label、逐条递增 revision、不跨 source/meeting，也不是说话人分离、真实身份推断或跨会议声纹。
 
@@ -93,7 +97,7 @@ Windows 透明、置顶、点击穿透和多显示器浮窗、自动话题能力
 
 “不导出逐字稿文件”不等于完全不处理转录。规范化逐字稿默认只在本地保留，直到用户明确删除会话或执行其主动设置的保留策略；应用不得因纪要生成完毕而静默删除。若未来提供“不保存转录”的隐私模式，必须明确说明证据能力会降低，不能声称与完整模式等价。
 
-Summary run 的正文快照在普通编辑和重生成期间不可变；重新生成创建同一 series 的新 revision。segment 修正只把旧 run 标记 stale。queued/running run 使用的 source 不能删除；terminal source 删除只保留结果实际引用的最小 evidence，清理完整正文快照并显示来源已删除。整场会议删除则协调清理全部 runs、snapshots 和 evidence。
+Summary run 的输入正文快照在普通编辑和重生成期间不可变；正文编辑只更新当前 completed result，重新生成重新读取 live transcript 并创建同一 series 的新 revision。segment 修正只把旧 run 标记 `segment_revised` stale，并允许 latest DeepSeek revision 由用户明确重生成。queued/running run 使用的 source 不能删除；terminal source 删除只保留结果实际引用的最小 evidence，清理完整正文快照并显示来源已删除，此后历史结果仍可查看/编辑/复制/保存但不能同 series regenerate。整场会议删除则协调清理全部 runs、snapshots 和 evidence，不清理用户保存到应用外的文件或剪贴板。
 
 ## 5. 阶段摘要与 Structured Visuals（Frozen/Deferred）
 
@@ -149,8 +153,8 @@ Summary run 的正文快照在普通编辑和重生成期间不可变；重新�
 → 删除后无本地残留
 ```
 
-完成 `feat/summary-mode-minutes` 即达到 Personal Edition 日常可用里程碑。翻译和独立会议模式保持 Frozen/Deferred；未来只有重新获得用户优先级并通过真实音频、进程回收、权限拒绝、暂停恢复和 Windows 本机完整流程后，才能标为可用。Mock 页面或 CI 通过不能替代对应的本机验收。
+当前 `feat/summary-mode-minutes` 以该路径为日常可用里程碑的验收目标。翻译和独立会议模式保持 Frozen/Deferred；未来只有重新获得用户优先级并通过真实音频、进程回收、权限拒绝、暂停恢复和 Windows 本机完整流程后，才能标为可用。Mock 页面或 CI 通过不能替代对应的本机验收；未经一次性明确批准，不执行真实付费 DeepSeek API smoke，也不声称验证了真实 Key、账户、余额或公网服务状态。
 
 ## 9. 交付顺序
 
-权威分支顺序、每个 PR 的停止线和风险分级验收见 `DEVELOPMENT_PLAN.md`。`docs/personal-edition-descope` 已完成，当前 DeepSeek Provider/最小 Consent 交付完成后，唯一下一阶段是 `feat/summary-mode-minutes`（日常可用），随后为 `feat/audio-file-transcription` → `feat/document-parsing-orchestration` → 可选 `feat/window-context`。未来 PR 编号只表示预期顺序，分支名和能力范围才是权威标识。不得恢复独立 `feat/consent-data-core`；实时采集/ASR、说话人分离、实时翻译、checkpoint、浮窗、独立翻译/会议工作区、Structured Visuals、商业分发及 DOCX/PDF 保持 Frozen/Deferred。
+权威分支顺序、每个 PR 的停止线和风险分级验收见 `DEVELOPMENT_PLAN.md`。`docs/personal-edition-descope` 与 PR #24 DeepSeek Provider/最小 Consent 已完成，当前交付是 `feat/summary-mode-minutes`（日常可用）；只有该功能经用户审查并决定合并后，下一阶段才是 `feat/audio-file-transcription` → `feat/document-parsing-orchestration` → 可选 `feat/window-context`。未来 PR 编号只表示预期顺序，分支名和能力范围才是权威标识。不得恢复独立 `feat/consent-data-core`；实时采集/ASR、说话人分离、实时翻译、checkpoint、浮窗、独立翻译/会议工作区、Structured Visuals、商业分发及 DOCX/PDF 保持 Frozen/Deferred。

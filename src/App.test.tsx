@@ -459,22 +459,23 @@ describe("MeetingLens desktop UI", () => {
     await user.click(screen.getByRole("button", { name: "End meeting" }));
 
     expect(
-      await screen.findByText(
-        "This synthetic meeting is complete and stored locally.",
-      ),
+      await screen.findByText("This meeting is complete and stored locally."),
     ).toBeInTheDocument();
     expect(api.endCalls).toEqual([meetingIds.recording]);
   });
 
-  it("does not allow a ready meeting to start again", async () => {
+  it("does not allow a ready meeting to start again and offers minutes", async () => {
     renderAt(
       `/meetings/${meetingIds.ready}`,
       new FakeMeetingApi([readyMeeting]),
     );
 
     expect(
-      await screen.findByRole("button", { name: "Start meeting" }),
-    ).toBeDisabled();
+      await screen.findByRole("link", { name: "Open meeting minutes" }),
+    ).toHaveAttribute("href", `#/meetings/${meetingIds.ready}/minutes`);
+    expect(
+      screen.queryByRole("button", { name: "Start meeting" }),
+    ).not.toBeInTheDocument();
   });
 
   it("starts the synthetic transcript only for a recording meeting", async () => {
@@ -522,9 +523,7 @@ describe("MeetingLens desktop UI", () => {
 
     await user.click(screen.getByRole("button", { name: "End meeting" }));
 
-    await screen.findByText(
-      "This synthetic meeting is complete and stored locally.",
-    );
+    await screen.findByText("This meeting is complete and stored locally.");
     expect(source.stopCalls).toBeGreaterThan(0);
   });
 
@@ -558,9 +557,7 @@ describe("MeetingLens desktop UI", () => {
       }),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(
-        "This synthetic meeting is complete and stored locally.",
-      ),
+      screen.getByText("This meeting is complete and stored locally."),
     ).toBeInTheDocument();
   });
 
@@ -1554,18 +1551,21 @@ describe("MeetingLens desktop UI", () => {
     ).toBeInTheDocument();
   });
 
-  it("distinguishes the provider foundation from the disabled Generate UI", async () => {
+  it("describes the available minutes flow and trusted provider boundary", async () => {
     renderAt("/help", new FakeMeetingApi());
     await screen.findByRole("heading", { name: "What is not available yet" });
 
     expect(
-      screen.getByText(/User-facing DeepSeek generation and formal AI-minutes/),
+      screen.getByText(/generate structured meeting minutes/),
     ).toBeInTheDocument();
     expect(
       screen.getByText(/Docling is not connected to this UI yet/),
     ).toBeInTheDocument();
     expect(
       screen.getByText(/Rust-only DeepSeek provider consumes it only/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/WebView never receives the key/),
     ).toBeInTheDocument();
     expect(document.body).not.toHaveTextContent(
       "no real DeepSeek Provider uses it",

@@ -1,8 +1,10 @@
 import {
+  useCallback,
   createContext,
   useContext,
   useEffect,
   useMemo,
+  useRef,
   useState,
   type AnchorHTMLAttributes,
   type MouseEvent,
@@ -17,12 +19,19 @@ export type AppRoute =
   | { name: "meeting"; meetingId: string }
   | { name: "live"; meetingId: string }
   | { name: "transcript"; meetingId: string }
+  | { name: "minutes"; meetingId: string; summaryId: string | null }
   | { name: "settings" }
   | { name: "help" };
 
 interface NavigationValue {
   route: AppRoute;
   navigate: (path: string) => void;
+  registerBlocker: (blocker: NavigationBlocker) => () => void;
+}
+
+interface NavigationBlocker {
+  shouldBlock: () => boolean;
+  onBlocked: (path: string) => void;
 }
 
 const NavigationContext = createContext<NavigationValue | null>(null);
@@ -52,6 +61,17 @@ export function parseRoute(path: string): AppRoute {
     };
   }
 
+  const minutesMatch = path.match(
+    /^\/meetings\/([^/]+)\/minutes(?:\/([^/]+))?$/,
+  );
+  if (minutesMatch) {
+    return {
+      name: "minutes",
+      meetingId: safeDecode(minutesMatch[1]),
+      summaryId: minutesMatch[2] ? safeDecode(minutesMatch[2]) : null,
+    };
+  }
+
   const meetingMatch = path.match(/^\/meetings\/([^/]+)$/);
   if (meetingMatch) {
     return { name: "meeting", meetingId: safeDecode(meetingMatch[1]) };
@@ -78,9 +98,23 @@ export function liveMeetingPath(id: string): string {
 
 export function NavigationProvider({ children }: { children: ReactNode }) {
   const [path, setPath] = useState(currentPath);
+  const pathRef = useRef(path);
+  const blockerRef = useRef<NavigationBlocker | null>(null);
 
   useEffect(() => {
-    const syncPath = () => setPath(currentPath());
+    const syncPath = () => {
+      const nextPath = currentPath();
+      const current = pathRef.current;
+      if (nextPath === current) return;
+      const blocker = blockerRef.current;
+      if (blocker?.shouldBlock()) {
+        window.history.replaceState(null, "", `#${current}`);
+        blocker.onBlocked(nextPath);
+        return;
+      }
+      pathRef.current = nextPath;
+      setPath(nextPath);
+    };
     window.addEventListener("hashchange", syncPath);
     window.addEventListener("popstate", syncPath);
     return () => {
@@ -89,16 +123,33 @@ export function NavigationProvider({ children }: { children: ReactNode }) {
     };
   }, []);
 
+  const navigate = useCallback((nextPath: string) => {
+    const normalized = nextPath.startsWith("/") ? nextPath : "/";
+    if (normalized === pathRef.current) return;
+    const blocker = blockerRef.current;
+    if (blocker?.shouldBlock()) {
+      blocker.onBlocked(normalized);
+      return;
+    }
+    window.history.pushState(null, "", `#${normalized}`);
+    pathRef.current = normalized;
+    setPath(normalized);
+  }, []);
+
+  const registerBlocker = useCallback((blocker: NavigationBlocker) => {
+    blockerRef.current = blocker;
+    return () => {
+      if (blockerRef.current === blocker) blockerRef.current = null;
+    };
+  }, []);
+
   const value = useMemo<NavigationValue>(
     () => ({
       route: parseRoute(path),
-      navigate: (nextPath) => {
-        const normalized = nextPath.startsWith("/") ? nextPath : "/";
-        window.history.pushState(null, "", `#${normalized}`);
-        setPath(normalized);
-      },
+      navigate,
+      registerBlocker,
     }),
-    [path],
+    [navigate, path, registerBlocker],
   );
 
   return (

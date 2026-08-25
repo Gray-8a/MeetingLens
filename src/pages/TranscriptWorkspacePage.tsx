@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { meetingPath, useNavigation } from "../app/navigation";
+import { summaryMinutesPath } from "../app/paths";
 import { useServices } from "../app/services";
 import {
   TranscriptApiError,
@@ -414,8 +415,13 @@ export function TranscriptWorkspacePage({
           <span className="readiness-card__dot" aria-hidden="true" />
           <strong>{t(`transcriptWorkspace.readiness.${readiness}`)}</strong>
         </div>
-        <button className="button button--primary" disabled type="button">
-          {t("transcriptWorkspace.summaryComingSoon")}
+        <button
+          className="button button--primary"
+          disabled={!sources.some((source) => source.segmentCount > 0)}
+          onClick={() => navigate(summaryMinutesPath(meeting.id))}
+          type="button"
+        >
+          {t("transcriptWorkspace.openMinutes")}
         </button>
       </section>
 
