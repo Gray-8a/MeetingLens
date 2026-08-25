@@ -51,6 +51,11 @@ pub(crate) struct NewSummary<'a> {
     pub(crate) input_bytes: usize,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SummaryMarkdownMetadata {
+    pub(crate) meeting_title: String,
+}
+
 pub(crate) fn insert_summary(
     transaction: &Transaction<'_>,
     summary: NewSummary<'_>,
@@ -181,6 +186,86 @@ pub(crate) fn next_revision(connection: &Connection, series_id: &str) -> Summary
         .ok()
         .and_then(|value| value.checked_add(1))
         .ok_or(SummaryError::PersistenceFailed)
+}
+
+pub(crate) fn is_latest_summary(
+    connection: &Connection,
+    series_id: &str,
+    summary_id: &str,
+) -> SummaryResult<bool> {
+    connection
+        .query_row(
+            "SELECT NOT EXISTS(\
+                SELECT 1 FROM summaries \
+                WHERE series_id = ?1 AND id <> ?2 \
+                  AND revision > (SELECT revision FROM summaries WHERE id = ?2)\
+            )",
+            params![series_id, summary_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|value| value == 1)
+        .map_err(SummaryError::from)
+}
+
+pub(crate) fn content_json(
+    connection: &Connection,
+    meeting_id: &str,
+    summary_id: &str,
+) -> SummaryResult<String> {
+    connection
+        .query_row(
+            "SELECT content_json FROM summaries WHERE meeting_id = ?1 AND id = ?2",
+            params![meeting_id, summary_id],
+            |row| row.get::<_, Option<String>>(0),
+        )
+        .optional()
+        .map_err(SummaryError::from)?
+        .flatten()
+        .ok_or(SummaryError::InvalidState)
+}
+
+pub(crate) fn update_content_cas(
+    transaction: &Transaction<'_>,
+    meeting_id: &str,
+    summary_id: &str,
+    previous_content_json: &str,
+    content: &SummaryContent,
+) -> SummaryResult<bool> {
+    let content_json =
+        serde_json::to_string(content).map_err(|_| SummaryError::PersistenceFailed)?;
+    let changed = transaction
+        .execute(
+            "
+            UPDATE summaries
+            SET content_json = ?4, is_user_edited = 1,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE meeting_id = ?1 AND id = ?2 AND status = 'completed'
+              AND content_json = ?3
+            ",
+            params![meeting_id, summary_id, previous_content_json, content_json],
+        )
+        .map_err(SummaryError::from)?;
+    Ok(changed == 1)
+}
+
+pub(crate) fn markdown_metadata(
+    connection: &Connection,
+    meeting_id: &str,
+    summary_id: &str,
+) -> SummaryResult<SummaryMarkdownMetadata> {
+    connection
+        .query_row(
+            "SELECT meeting_title_snapshot FROM summaries WHERE meeting_id = ?1 AND id = ?2",
+            params![meeting_id, summary_id],
+            |row| {
+                Ok(SummaryMarkdownMetadata {
+                    meeting_title: row.get(0)?,
+                })
+            },
+        )
+        .optional()
+        .map_err(SummaryError::from)?
+        .ok_or(SummaryError::RunNotFound)
 }
 
 pub(crate) fn source_ids_for_summary(
@@ -524,6 +609,44 @@ pub(crate) fn list_evidence(
         has_more,
         total_count: u64::try_from(total).map_err(|_| SummaryError::PersistenceFailed)?,
     })
+}
+
+pub(crate) fn get_evidence(
+    connection: &Connection,
+    meeting_id: &str,
+    summary_id: &str,
+    evidence_id: &str,
+) -> SummaryResult<SummaryEvidence> {
+    let sql = format!(
+        "SELECT {EVIDENCE_COLUMNS} FROM evidence_items \
+         WHERE meeting_id = ?1 AND summary_id = ?2 AND id = ?3"
+    );
+    connection
+        .query_row(
+            &sql,
+            params![meeting_id, summary_id, evidence_id],
+            evidence_from_row,
+        )
+        .optional()
+        .map_err(SummaryError::from)?
+        .ok_or(SummaryError::EvidenceInvalid)
+}
+
+pub(crate) fn all_evidence(
+    connection: &Connection,
+    meeting_id: &str,
+    summary_id: &str,
+) -> SummaryResult<Vec<SummaryEvidence>> {
+    let sql = format!(
+        "SELECT {EVIDENCE_COLUMNS} FROM evidence_items \
+         WHERE meeting_id = ?1 AND summary_id = ?2 ORDER BY global_ordinal, id"
+    );
+    let mut statement = connection.prepare(&sql).map_err(SummaryError::from)?;
+    statement
+        .query_map(params![meeting_id, summary_id], evidence_from_row)
+        .map_err(SummaryError::from)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(SummaryError::from)
 }
 
 pub(crate) fn mark_stale_for_segment(

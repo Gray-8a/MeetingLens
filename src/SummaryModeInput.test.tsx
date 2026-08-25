@@ -1136,7 +1136,7 @@ describe("Transcript Workspace", () => {
     expect(screen.getByText("No transcript input")).toBeInTheDocument();
   });
 
-  it("shows ready input status without claiming AI ran", async () => {
+  it("shows ready input status and opens the explicit Minutes workflow", async () => {
     renderHarness(
       `/meetings/${meetingIds.draft}/transcript`,
       [syntheticMeeting()],
@@ -1144,15 +1144,15 @@ describe("Transcript Workspace", () => {
     );
     expect(
       await screen.findByText(
-        "The transcript is prepared for the upcoming minutes workflow.",
+        "The transcript is ready for meeting-minutes generation.",
       ),
     ).toBeInTheDocument();
     expect(
-      screen.getByRole("button", { name: /transcript is ready/i }),
-    ).toBeDisabled();
+      screen.getByRole("button", { name: "Open meeting minutes" }),
+    ).toBeEnabled();
   });
 
-  it("does not call external network from the disabled summary action", async () => {
+  it("does not call external network merely by opening the Minutes workspace", async () => {
     const fetchSpy = vi
       .spyOn(globalThis, "fetch")
       .mockRejectedValue(new Error("network disabled"));
@@ -1162,9 +1162,10 @@ describe("Transcript Workspace", () => {
       (api) => seedSource(api),
     );
     const button = await screen.findByRole("button", {
-      name: /transcript is ready/i,
+      name: "Open meeting minutes",
     });
     fireEvent.click(button);
+    await screen.findByRole("heading", { name: "Generate minutes" });
     expect(fetchSpy).not.toHaveBeenCalled();
   });
 
@@ -1237,7 +1238,7 @@ describe("Summary mode localization and security surface", () => {
     ).toBeInTheDocument();
   });
 
-  it("updates Help to describe transcript input and the AI limitation", async () => {
+  it("updates Help to describe transcript input and the minutes workflow", async () => {
     renderHarness("/help");
     expect(
       await screen.findByText(
@@ -1246,9 +1247,10 @@ describe("Summary mode localization and security surface", () => {
     ).toBeInTheDocument();
     expect(
       screen.getByText(
-        /Rust-only DeepSeek provider and consent foundation are implemented/,
+        /explicitly authorize DeepSeek to generate structured meeting minutes/,
       ),
     ).toBeInTheDocument();
+    expect(screen.getByText(/section-level regeneration/)).toBeInTheDocument();
   });
 
   it("does not expose source paths or hashes in the Workspace", async () => {

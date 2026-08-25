@@ -1,12 +1,13 @@
 use std::fmt;
+use std::path::Path;
 use std::sync::Arc;
 
 use crate::data::{
     CreateSummaryRevision, CreateSummaryRun, DEEPSEEK_CONSENT_DATA_CATEGORIES,
     DEEPSEEK_CONSENT_ENDPOINT_HOST, DEEPSEEK_CONSENT_MODEL, DEEPSEEK_CONSENT_POLICY_VERSION,
     DEEPSEEK_CONSENT_PROVIDER, MeetingService, ProviderConsentPolicy, ProviderConsentService,
-    SummaryError, SummaryEvidencePage, SummaryPolicy, SummaryProvider, SummaryResult, SummaryRun,
-    SummaryRunPage,
+    RenderedSummaryMarkdown, SummaryError, SummaryEvidence, SummaryEvidencePage, SummaryPolicy,
+    SummaryProvider, SummaryResult, SummaryRun, SummaryRunPage, UpdateSummaryContent,
 };
 use crate::secret_store::{SecretKind, SecretStoreService};
 
@@ -139,6 +140,47 @@ impl SummaryRuntimeService {
             .list_evidence(meeting_id, summary_id, cursor, limit)
     }
 
+    pub(crate) fn get_evidence(
+        &self,
+        meeting_id: &str,
+        summary_id: &str,
+        evidence_id: &str,
+    ) -> SummaryResult<SummaryEvidence> {
+        self.meetings
+            .summaries()
+            .get_evidence(meeting_id, summary_id, evidence_id)
+    }
+
+    pub(crate) fn update_content(&self, input: UpdateSummaryContent) -> SummaryResult<SummaryRun> {
+        self.meetings.summaries().update_content(input)
+    }
+
+    pub(crate) fn markdown(
+        &self,
+        meeting_id: &str,
+        summary_id: &str,
+        expected_content_version: &str,
+    ) -> SummaryResult<RenderedSummaryMarkdown> {
+        self.meetings
+            .summaries()
+            .markdown(meeting_id, summary_id, expected_content_version)
+    }
+
+    pub(crate) fn save_markdown_to_path(
+        &self,
+        meeting_id: &str,
+        summary_id: &str,
+        expected_content_version: &str,
+        path: &Path,
+    ) -> SummaryResult<RenderedSummaryMarkdown> {
+        self.meetings.summaries().save_markdown_to_path(
+            meeting_id,
+            summary_id,
+            expected_content_version,
+            path,
+        )
+    }
+
     pub(crate) fn provider_status(&self) -> SummaryResult<DeepSeekProviderStatus> {
         let key_configured = self
             .secrets
@@ -267,8 +309,9 @@ pub(crate) mod offline_smoke {
     use super::*;
     use crate::data::{
         CreateMeeting, DeepSeekSummaryProvider, DeepSeekTransport, DeepSeekTransportFuture,
-        DeepSeekTransportRequest, DeepSeekTransportResponse, SummaryOutputLanguage, SummaryStatus,
-        SummaryTemplate, TranscriptImportInput, TranscriptImportOutcome, UpdateTranscriptSegment,
+        DeepSeekTransportRequest, DeepSeekTransportResponse, EditableSummaryContent,
+        SummaryOutputLanguage, SummaryStatus, SummaryTemplate, TranscriptImportInput,
+        TranscriptImportOutcome, UpdateSummaryContent, UpdateTranscriptSegment,
     };
     use crate::secret_store::test_support::InMemorySecretStore;
 
@@ -549,13 +592,126 @@ pub(crate) mod offline_smoke {
             .expect("offline DeepSeek execution should complete");
         assert_eq!(completed.status, SummaryStatus::Completed);
         assert!(completed.content.is_some());
-        assert!(
-            runtime
-                .list_evidence(&meeting.id, &first.id, None, None)
-                .expect("evidence should list")
-                .total_count
-                > 0
+        let evidence_page = runtime
+            .list_evidence(&meeting.id, &first.id, None, None)
+            .expect("evidence should list");
+        assert!(evidence_page.total_count > 0);
+        let exact_evidence = runtime
+            .get_evidence(&meeting.id, &first.id, &evidence_page.items[0].id)
+            .expect("referenced evidence should load by its ownership tuple");
+        assert_eq!(exact_evidence.summary_id, first.id);
+        assert_eq!(
+            runtime.get_evidence(&meeting.id, &first.id, &Uuid::new_v4().to_string()),
+            Err(SummaryError::EvidenceInvalid)
         );
+        let content_version = crate::data::summary_content_version(
+            completed.content.as_ref().expect("content should exist"),
+        )
+        .expect("content version should derive");
+        assert_eq!(
+            runtime.update_content(UpdateSummaryContent {
+                meeting_id: meeting.id.clone(),
+                summary_id: first.id.clone(),
+                expected_content_version: content_version.clone(),
+                editable_content: EditableSummaryContent {
+                    overview_text: "Synthetic invalid shape".to_string(),
+                    decision_texts: vec!["Synthetic injected decision".to_string()],
+                    action_items: Vec::new(),
+                    risk_texts: Vec::new(),
+                    open_question_texts: Vec::new(),
+                },
+            }),
+            Err(SummaryError::InvalidInput)
+        );
+        assert_eq!(
+            runtime.update_content(UpdateSummaryContent {
+                meeting_id: meeting.id.clone(),
+                summary_id: first.id.clone(),
+                expected_content_version: content_version.clone(),
+                editable_content: EditableSummaryContent {
+                    overview_text: "x".repeat(16 * 1024 + 1),
+                    decision_texts: Vec::new(),
+                    action_items: Vec::new(),
+                    risk_texts: Vec::new(),
+                    open_question_texts: Vec::new(),
+                },
+            }),
+            Err(SummaryError::EditTooLarge)
+        );
+        let edited = runtime
+            .update_content(UpdateSummaryContent {
+                meeting_id: meeting.id.clone(),
+                summary_id: first.id.clone(),
+                expected_content_version: content_version,
+                editable_content: EditableSummaryContent {
+                    overview_text: "Synthetic user-edited offline minutes".to_string(),
+                    decision_texts: Vec::new(),
+                    action_items: Vec::new(),
+                    risk_texts: Vec::new(),
+                    open_question_texts: Vec::new(),
+                },
+            })
+            .expect("DeepSeek result should accept a bounded user edit");
+        assert!(edited.is_user_edited);
+        let edited_version = crate::data::summary_content_version(
+            edited
+                .content
+                .as_ref()
+                .expect("edited content should exist"),
+        )
+        .expect("edited version should derive");
+        let no_op = runtime
+            .update_content(UpdateSummaryContent {
+                meeting_id: meeting.id.clone(),
+                summary_id: first.id.clone(),
+                expected_content_version: edited_version.clone(),
+                editable_content: EditableSummaryContent {
+                    overview_text: "Synthetic user-edited offline minutes".to_string(),
+                    decision_texts: Vec::new(),
+                    action_items: Vec::new(),
+                    risk_texts: Vec::new(),
+                    open_question_texts: Vec::new(),
+                },
+            })
+            .expect("an identical save should be a no-op");
+        assert_eq!(no_op.updated_at, edited.updated_at);
+        assert_eq!(
+            runtime.update_content(UpdateSummaryContent {
+                meeting_id: meeting.id.clone(),
+                summary_id: first.id.clone(),
+                expected_content_version: "0".repeat(64),
+                editable_content: EditableSummaryContent {
+                    overview_text: "Synthetic stale edit".to_string(),
+                    decision_texts: Vec::new(),
+                    action_items: Vec::new(),
+                    risk_texts: Vec::new(),
+                    open_question_texts: Vec::new(),
+                },
+            }),
+            Err(SummaryError::EditConflict)
+        );
+        let markdown = runtime
+            .markdown(&meeting.id, &first.id, &edited_version)
+            .expect("canonical Markdown should render");
+        assert!(
+            markdown
+                .markdown
+                .contains(r"Synthetic user\-edited offline minutes")
+        );
+        assert!(markdown.markdown.contains("[E1]"));
+        assert!(!markdown.markdown.contains(&first.id));
+        let export_path = std::env::temp_dir().join(format!(
+            "meetinglens-summary-offline-export-{}.md",
+            Uuid::new_v4()
+        ));
+        let saved = runtime
+            .save_markdown_to_path(&meeting.id, &first.id, &edited_version, &export_path)
+            .expect("isolated Markdown export should save atomically");
+        assert_eq!(
+            std::fs::read(&export_path).expect("saved Markdown should read"),
+            saved.markdown.as_bytes()
+        );
+        std::fs::remove_file(&export_path).expect("isolated export should clean up");
         let first_body = String::from_utf8(
             transport
                 .captured_bodies()
@@ -576,6 +732,21 @@ pub(crate) mod offline_smoke {
                 summary_id: first.id.clone(),
             })
             .expect("revision should capture the updated transcript");
+        assert_eq!(
+            runtime.update_content(UpdateSummaryContent {
+                meeting_id: meeting.id.clone(),
+                summary_id: first.id.clone(),
+                expected_content_version: edited_version.clone(),
+                editable_content: EditableSummaryContent {
+                    overview_text: "Synthetic user-edited offline minutes".to_string(),
+                    decision_texts: Vec::new(),
+                    action_items: Vec::new(),
+                    risk_texts: Vec::new(),
+                    open_question_texts: Vec::new(),
+                },
+            }),
+            Err(SummaryError::RevisionConflict)
+        );
         let remembered = runtime
             .confirm_disclosure(&second.id, true)
             .expect("remembered Consent should persist");
@@ -710,8 +881,14 @@ pub(crate) mod offline_smoke {
                 row.get(0)
             })
             .expect("foreign key check should run");
+        let schema_version: i64 = connection
+            .query_row("SELECT MAX(version) FROM schema_migrations", [], |row| {
+                row.get(0)
+            })
+            .expect("schema version should be readable");
         assert_eq!(integrity, "ok");
         assert_eq!(foreign_key_violations, 0);
+        assert_eq!(schema_version, 5);
         drop(connection);
         drop(runtime);
         drop(reopened);

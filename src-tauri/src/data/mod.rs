@@ -16,6 +16,7 @@ mod service;
 #[cfg(debug_assertions)]
 mod summary_dev_harness;
 mod summary_error;
+mod summary_markdown;
 mod summary_model;
 mod summary_provider;
 mod summary_repository;
@@ -47,14 +48,16 @@ pub use service::MeetingService;
 #[cfg(debug_assertions)]
 pub use summary_dev_harness::{SummarySmokeV3Seed, seed_summary_smoke_v3};
 pub use summary_error::{SummaryError, SummaryResult};
+pub(crate) use summary_markdown::RenderedSummaryMarkdown;
+pub(crate) use summary_model::summary_content_version;
 pub use summary_model::{
     CreateSummaryRevision, CreateSummaryRun, DEEPSEEK_SUMMARY_MAX_INPUT_BYTES,
-    SUMMARY_EVIDENCE_DEFAULT_LIMIT, SUMMARY_EVIDENCE_EXCERPT_MAX_BYTES, SUMMARY_EVIDENCE_MAX_LIMIT,
-    SUMMARY_LIST_DEFAULT_LIMIT, SUMMARY_LIST_MAX_LIMIT, SUMMARY_MAX_INPUT_BYTES,
-    SUMMARY_MAX_SEGMENTS, SummaryActionItem, SummaryActionStatus, SummaryClaim, SummaryContent,
-    SummaryDecision, SummaryDecisionStatus, SummaryEvidence, SummaryEvidencePage,
-    SummaryOutputLanguage, SummaryPolicy, SummaryRun, SummaryRunPage, SummarySnapshotSegment,
-    SummaryStatus, SummaryTemplate,
+    EditableSummaryActionItem, EditableSummaryContent, SUMMARY_EVIDENCE_DEFAULT_LIMIT,
+    SUMMARY_EVIDENCE_EXCERPT_MAX_BYTES, SUMMARY_EVIDENCE_MAX_LIMIT, SUMMARY_LIST_DEFAULT_LIMIT,
+    SUMMARY_LIST_MAX_LIMIT, SUMMARY_MAX_INPUT_BYTES, SUMMARY_MAX_SEGMENTS, SummaryActionItem,
+    SummaryActionStatus, SummaryClaim, SummaryContent, SummaryDecision, SummaryDecisionStatus,
+    SummaryEvidence, SummaryEvidencePage, SummaryOutputLanguage, SummaryPolicy, SummaryRun,
+    SummaryRunPage, SummarySnapshotSegment, SummaryStatus, SummaryTemplate, UpdateSummaryContent,
 };
 #[cfg(any(test, debug_assertions))]
 pub use summary_provider::DeterministicMockSummaryProvider;

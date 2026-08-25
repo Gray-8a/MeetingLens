@@ -14,6 +14,10 @@ export const summaryCommandNames = {
   listRuns: "list_summary_runs",
   cancelRun: "cancel_summary_run",
   listEvidence: "list_summary_evidence",
+  getEvidence: "get_summary_evidence",
+  updateContent: "update_summary_content",
+  getMarkdown: "get_summary_markdown",
+  saveMarkdown: "save_summary_markdown",
 } as const;
 
 export type SummaryTemplate = "actions_decisions" | "concise" | "detailed";
@@ -85,6 +89,49 @@ export interface SummaryRunReferenceRequest {
   summaryId: string;
 }
 
+export interface GetSummaryEvidenceRequest extends SummaryRunReferenceRequest {
+  evidenceId: string;
+}
+
+export interface SummaryEditableActionItem {
+  text: string;
+  owner: string | null;
+  dueDate: string | null;
+}
+
+export interface SummaryEditableContent {
+  overviewText: string;
+  decisionTexts: string[];
+  actionItems: SummaryEditableActionItem[];
+  riskTexts: string[];
+  openQuestionTexts: string[];
+}
+
+export interface UpdateSummaryContentRequest
+  extends SummaryRunReferenceRequest {
+  expectedContentVersion: string;
+  editableContent: SummaryEditableContent;
+}
+
+export interface SummaryMarkdownRequest extends SummaryRunReferenceRequest {
+  expectedContentVersion: string;
+}
+
+export interface SummaryMarkdownResponse {
+  summaryId: string;
+  contentVersion: string;
+  markdown: string;
+  bytes: number;
+}
+
+export interface SaveSummaryMarkdownResponse {
+  summaryId: string;
+  contentVersion: string;
+  saved: boolean;
+  cancelled: boolean;
+  bytesWritten: number;
+}
+
 export interface ListSummaryRunsRequest {
   meetingId: string;
   cursor?: string | null;
@@ -140,6 +187,7 @@ export interface SummaryRunResponse {
   model: string;
   promptVersion: string;
   content: SummaryContent | null;
+  contentVersion: string | null;
   errorCode: SummaryRunFailureCode | null;
   sourceCount: number;
   inputSegmentCount: number;
@@ -225,6 +273,10 @@ export type SummaryErrorCode =
   | "summary_input_too_large"
   | "summary_provider_input_too_large"
   | "summary_evidence_invalid"
+  | "summary_edit_conflict"
+  | "summary_edit_too_large"
+  | "summary_export_failed"
+  | "summary_markdown_too_large"
   | "internal_error"
   | "summary_invalid_input"
   | "summary_invalid_state"
@@ -265,6 +317,10 @@ const safeMessages: Record<SummaryErrorCode, string> = {
     "The selected summary input is too large for DeepSeek.",
   summary_evidence_invalid:
     "The summary result contains invalid evidence references.",
+  summary_edit_conflict: "The summary changed before this edit could be saved.",
+  summary_edit_too_large: "The edited summary is too large.",
+  summary_export_failed: "The Markdown file could not be saved.",
+  summary_markdown_too_large: "The Markdown result is too large.",
   internal_error: "An internal error occurred.",
   summary_invalid_input: "The summary request is invalid.",
   summary_invalid_state:
@@ -373,6 +429,7 @@ export const summaryEvidencePageLimits = {
 const uuidPattern =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const utcIsoPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+const contentVersionPattern = /^[0-9a-f]{64}$/;
 
 export class SummaryApiError extends Error {
   readonly code: SummaryErrorCode;
@@ -411,6 +468,18 @@ export interface SummaryApi {
   listEvidence(
     request: ListSummaryEvidenceRequest,
   ): Promise<ListSummaryEvidenceResponse>;
+  getEvidence(
+    request: GetSummaryEvidenceRequest,
+  ): Promise<SummaryEvidenceResponse>;
+  updateContent(
+    request: UpdateSummaryContentRequest,
+  ): Promise<SummaryRunResponse>;
+  getMarkdown(
+    request: SummaryMarkdownRequest,
+  ): Promise<SummaryMarkdownResponse>;
+  saveMarkdown(
+    request: SummaryMarkdownRequest,
+  ): Promise<SaveSummaryMarkdownResponse>;
 }
 
 export function createSummaryApi(
@@ -565,6 +634,69 @@ export function createSummaryApi(
           parseEvidencePage(value, request.meetingId, request.summaryId, page),
       );
     },
+    getEvidence: async (request) => {
+      validateEvidenceReferenceRequest(request);
+      return invokeAndParse(
+        adapter,
+        summaryCommandNames.getEvidence,
+        {
+          request: {
+            meetingId: request.meetingId,
+            summaryId: request.summaryId,
+            evidenceId: request.evidenceId,
+          },
+        },
+        (value) => {
+          const item = parseEvidence(value);
+          if (
+            item.meetingId !== request.meetingId ||
+            item.summaryId !== request.summaryId ||
+            item.id !== request.evidenceId
+          ) {
+            throw internalError();
+          }
+          return item;
+        },
+      );
+    },
+    updateContent: async (request) => {
+      validateUpdateContentRequest(request);
+      return invokeAndParse(
+        adapter,
+        summaryCommandNames.updateContent,
+        {
+          request: {
+            meetingId: request.meetingId,
+            summaryId: request.summaryId,
+            expectedContentVersion: request.expectedContentVersion,
+            editableContent: cloneEditableContent(request.editableContent),
+          },
+        },
+        (value) => {
+          const run = parseReferencedRun(value, request, "completed");
+          if (run.contentVersion === null) throw internalError();
+          return run;
+        },
+      );
+    },
+    getMarkdown: async (request) => {
+      validateMarkdownRequest(request);
+      return invokeAndParse(
+        adapter,
+        summaryCommandNames.getMarkdown,
+        { request: pickMarkdownReference(request) },
+        (value) => parseMarkdown(value, request),
+      );
+    },
+    saveMarkdown: async (request) => {
+      validateMarkdownRequest(request);
+      return invokeAndParse(
+        adapter,
+        summaryCommandNames.saveMarkdown,
+        { request: pickMarkdownReference(request) },
+        (value) => parseSaveMarkdown(value, request),
+      );
+    },
   };
 }
 
@@ -622,6 +754,72 @@ function validateDisclosureRequest(
   request: SummaryExternalDisclosureRequest,
 ): void {
   if (!isRecord(request) || !isUuid(request.summaryId)) throw invalidInput();
+}
+
+function validateEvidenceReferenceRequest(
+  request: GetSummaryEvidenceRequest,
+): void {
+  validateReferenceRequest(request);
+  if (!isUuid(request.evidenceId)) throw invalidInput();
+}
+
+function validateUpdateContentRequest(
+  request: UpdateSummaryContentRequest,
+): void {
+  validateReferenceRequest(request);
+  if (
+    !isContentVersion(request.expectedContentVersion) ||
+    !isRecord(request.editableContent) ||
+    !hasExactlyKeys(request.editableContent, [
+      "overviewText",
+      "decisionTexts",
+      "actionItems",
+      "riskTexts",
+      "openQuestionTexts",
+    ]) ||
+    !isEditableText(request.editableContent.overviewText) ||
+    !isEditableTextArray(request.editableContent.decisionTexts) ||
+    !Array.isArray(request.editableContent.actionItems) ||
+    request.editableContent.actionItems.length >
+      summaryLimits.maxResultItemsPerSection ||
+    !request.editableContent.actionItems.every(isEditableActionItem) ||
+    !isEditableTextArray(request.editableContent.riskTexts) ||
+    !isEditableTextArray(request.editableContent.openQuestionTexts) ||
+    request.editableContent.decisionTexts.length +
+      request.editableContent.actionItems.length +
+      request.editableContent.riskTexts.length +
+      request.editableContent.openQuestionTexts.length >
+      summaryLimits.maxResultItems
+  ) {
+    throw invalidInput();
+  }
+}
+
+function validateMarkdownRequest(request: SummaryMarkdownRequest): void {
+  validateReferenceRequest(request);
+  if (!isContentVersion(request.expectedContentVersion)) throw invalidInput();
+}
+
+function pickMarkdownReference(
+  request: SummaryMarkdownRequest,
+): SummaryMarkdownRequest {
+  return {
+    meetingId: request.meetingId,
+    summaryId: request.summaryId,
+    expectedContentVersion: request.expectedContentVersion,
+  };
+}
+
+function cloneEditableContent(
+  content: SummaryEditableContent,
+): SummaryEditableContent {
+  return {
+    overviewText: content.overviewText,
+    decisionTexts: [...content.decisionTexts],
+    actionItems: content.actionItems.map((item) => ({ ...item })),
+    riskTexts: [...content.riskTexts],
+    openQuestionTexts: [...content.openQuestionTexts],
+  };
 }
 
 interface NormalizedRunPage {
@@ -737,6 +935,7 @@ function parseRun(value: unknown): SummaryRunResponse {
     "model",
     "promptVersion",
     "content",
+    "contentVersion",
     "errorCode",
     "sourceCount",
     "inputSegmentCount",
@@ -775,6 +974,7 @@ function parseRun(value: unknown): SummaryRunResponse {
       summaryLimits.maxResultMetadataBytes,
     ) ||
     !(value.content === null || isRecord(value.content)) ||
+    !isNullableContentVersion(value.contentVersion) ||
     !isNullableRunFailureCode(value.errorCode) ||
     !isPositiveSafeInteger(value.sourceCount) ||
     !isPositiveSafeInteger(value.inputSegmentCount) ||
@@ -804,7 +1004,14 @@ function parseRun(value: unknown): SummaryRunResponse {
 
   const status = value.status as SummaryStatus;
   const content = value.content === null ? null : parseContent(value.content);
-  if (!hasValidRunState(value, status, content)) throw internalError();
+  if (
+    !hasValidRunState(value, status, content) ||
+    (status === "completed"
+      ? value.contentVersion === null
+      : value.contentVersion !== null)
+  ) {
+    throw internalError();
+  }
 
   return {
     id: value.id,
@@ -822,6 +1029,7 @@ function parseRun(value: unknown): SummaryRunResponse {
     model: value.model,
     promptVersion: value.promptVersion,
     content,
+    contentVersion: value.contentVersion,
     errorCode: value.errorCode,
     sourceCount: value.sourceCount,
     inputSegmentCount: value.inputSegmentCount,
@@ -1172,6 +1380,71 @@ function parseEvidence(value: unknown): SummaryEvidenceResponse {
   };
 }
 
+function parseMarkdown(
+  value: unknown,
+  request: SummaryMarkdownRequest,
+): SummaryMarkdownResponse {
+  if (
+    !isRecord(value) ||
+    !hasExactlyKeys(value, [
+      "summaryId",
+      "contentVersion",
+      "markdown",
+      "bytes",
+    ]) ||
+    value.summaryId !== request.summaryId ||
+    value.contentVersion !== request.expectedContentVersion ||
+    typeof value.markdown !== "string" ||
+    !isContentVersion(value.contentVersion) ||
+    !isNonNegativeSafeInteger(value.bytes) ||
+    value.bytes !== utf8Length(value.markdown) ||
+    value.bytes > 10 * 1024 * 1024
+  ) {
+    throw internalError();
+  }
+  return {
+    summaryId: value.summaryId,
+    contentVersion: value.contentVersion,
+    markdown: value.markdown,
+    bytes: value.bytes,
+  };
+}
+
+function parseSaveMarkdown(
+  value: unknown,
+  request: SummaryMarkdownRequest,
+): SaveSummaryMarkdownResponse {
+  if (
+    !isRecord(value) ||
+    !hasExactlyKeys(value, [
+      "summaryId",
+      "contentVersion",
+      "saved",
+      "cancelled",
+      "bytesWritten",
+    ]) ||
+    value.summaryId !== request.summaryId ||
+    value.contentVersion !== request.expectedContentVersion ||
+    !isContentVersion(value.contentVersion) ||
+    typeof value.saved !== "boolean" ||
+    typeof value.cancelled !== "boolean" ||
+    value.saved === value.cancelled ||
+    !isNonNegativeSafeInteger(value.bytesWritten) ||
+    (value.cancelled && value.bytesWritten !== 0) ||
+    (value.saved && value.bytesWritten === 0) ||
+    value.bytesWritten > 10 * 1024 * 1024
+  ) {
+    throw internalError();
+  }
+  return {
+    summaryId: value.summaryId,
+    contentVersion: value.contentVersion,
+    saved: value.saved,
+    cancelled: value.cancelled,
+    bytesWritten: value.bytesWritten,
+  };
+}
+
 function parsePolicy(value: unknown): SummaryPolicyResponse {
   const expectedMaxInputBytes =
     isRecord(value) && value.provider === deepSeekProvider
@@ -1392,6 +1665,44 @@ function isUuid(value: unknown): value is string {
 
 function isNullableUuid(value: unknown): value is string | null {
   return value === null || isUuid(value);
+}
+
+function isContentVersion(value: unknown): value is string {
+  return typeof value === "string" && contentVersionPattern.test(value);
+}
+
+function isNullableContentVersion(value: unknown): value is string | null {
+  return value === null || isContentVersion(value);
+}
+
+function isEditableText(value: unknown): value is string {
+  return isSafeBoundedText(value, summaryLimits.maxResultTextBytes);
+}
+
+function isEditableTextArray(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= summaryLimits.maxResultItemsPerSection &&
+    value.every(isEditableText)
+  );
+}
+
+function isEditableActionItem(
+  value: unknown,
+): value is SummaryEditableActionItem {
+  return (
+    isRecord(value) &&
+    hasExactlyKeys(value, ["text", "owner", "dueDate"]) &&
+    isEditableText(value.text) &&
+    isNullableSafeBoundedText(
+      value.owner,
+      summaryLimits.maxResultMetadataBytes,
+    ) &&
+    isNullableSafeBoundedText(
+      value.dueDate,
+      summaryLimits.maxResultMetadataBytes,
+    )
+  );
 }
 
 function isNonNegativeSafeInteger(value: unknown): value is number {

@@ -22,6 +22,7 @@ import { MeetingDetailPage } from "./pages/MeetingDetailPage";
 import { NewMeetingPage } from "./pages/NewMeetingPage";
 import { SettingsPage, type LocalServiceStatus } from "./pages/SettingsPage";
 import { SummaryModeInputPage } from "./pages/SummaryModeInputPage";
+import { SummaryMinutesPage } from "./pages/SummaryMinutesPage";
 import { TranscriptWorkspacePage } from "./pages/TranscriptWorkspacePage";
 
 export interface AppProps {
@@ -131,7 +132,8 @@ function MeetingLensApp({ services }: { services: AppServices }) {
               route.name === "history" ||
               route.name === "meeting" ||
               route.name === "live" ||
-              route.name === "transcript"
+              route.name === "transcript" ||
+              route.name === "minutes"
             }
             label={t("app.nav.history")}
             mark="HS"
@@ -206,7 +208,8 @@ function MeetingLensApp({ services }: { services: AppServices }) {
             />
             {(route.name === "meeting" ||
               route.name === "live" ||
-              route.name === "transcript") &&
+              route.name === "transcript" ||
+              route.name === "minutes") &&
             meetingStatus ? (
               <StatusBadge status={meetingStatus} />
             ) : null}
@@ -271,6 +274,16 @@ function RouteContent({
           meetingId={route.meetingId}
           onDatabaseStatus={onDatabaseStatus}
           onMeetingStatus={onMeetingStatus}
+        />
+      );
+    case "minutes":
+      return (
+        <SummaryMinutesPage
+          key={route.meetingId}
+          meetingId={route.meetingId}
+          onDatabaseStatus={onDatabaseStatus}
+          onMeetingStatus={onMeetingStatus}
+          summaryId={route.summaryId}
         />
       );
     case "settings":

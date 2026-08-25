@@ -10,6 +10,7 @@ import {
   type SummaryContent,
   type SummaryEvidenceResponse,
   type SummaryExternalDisclosureRequest,
+  type UpdateSummaryContentRequest,
 } from "./summary";
 
 const meetingId = "11111111-1111-4111-8111-111111111111";
@@ -24,6 +25,7 @@ const otherEvidenceId = "77777777-7777-4777-8777-777777777777";
 const segmentId = "88888888-8888-4888-8888-888888888888";
 const timestamp = "2026-08-07T00:00:00.000Z";
 const laterTimestamp = "2026-08-07T00:00:01.000Z";
+const contentVersion = "a".repeat(64);
 
 const policy = {
   templates: ["detailed", "concise", "actions_decisions"],
@@ -125,6 +127,7 @@ function queuedRun(overrides: Record<string, unknown> = {}) {
     model: "meetinglens-deterministic-mock-v1",
     promptVersion: "summary-core-mock-v1",
     content: null,
+    contentVersion: null,
     errorCode: null,
     sourceCount: 1,
     inputSegmentCount: 1,
@@ -147,6 +150,7 @@ function completedRun(overrides: Record<string, unknown> = {}) {
   return queuedRun({
     status: "completed",
     content: content(),
+    contentVersion,
     startedAt: timestamp,
     finishedAt: laterTimestamp,
     updatedAt: laterTimestamp,
@@ -231,6 +235,26 @@ describe("summaryApi command routing", () => {
     outputLanguage: "en",
   };
   const reference = { meetingId, summaryId };
+  const markdownReference = {
+    ...reference,
+    expectedContentVersion: contentVersion,
+  };
+  const editRequest: UpdateSummaryContentRequest = {
+    ...markdownReference,
+    editableContent: {
+      overviewText: "Synthetic edited overview",
+      decisionTexts: ["Synthetic decision"],
+      actionItems: [
+        {
+          text: "Synthetic action",
+          owner: "Synthetic owner",
+          dueDate: null,
+        },
+      ],
+      riskTexts: [],
+      openQuestionTexts: [],
+    },
+  };
   const cases: Array<{
     command: keyof typeof summaryCommandNames;
     run: (api: SummaryApi) => Promise<unknown>;
@@ -322,6 +346,41 @@ describe("summaryApi command routing", () => {
         nextCursor: null,
         hasMore: false,
         totalCount: 1,
+      },
+    },
+    {
+      command: "getEvidence",
+      run: (api) => api.getEvidence({ ...reference, evidenceId }),
+      expectedArgs: { request: { ...reference, evidenceId } },
+      response: evidence(),
+    },
+    {
+      command: "updateContent",
+      run: (api) => api.updateContent(editRequest),
+      expectedArgs: { request: editRequest },
+      response: completedRun({ isUserEdited: true }),
+    },
+    {
+      command: "getMarkdown",
+      run: (api) => api.getMarkdown(markdownReference),
+      expectedArgs: { request: markdownReference },
+      response: {
+        summaryId,
+        contentVersion,
+        markdown: "# Synthetic\n",
+        bytes: 12,
+      },
+    },
+    {
+      command: "saveMarkdown",
+      run: (api) => api.saveMarkdown(markdownReference),
+      expectedArgs: { request: markdownReference },
+      response: {
+        summaryId,
+        contentVersion,
+        saved: true,
+        cancelled: false,
+        bytesWritten: 12,
       },
     },
   ];
@@ -503,6 +562,37 @@ describe("summaryApi request boundary", () => {
           remember: "yes" as unknown as boolean,
         }),
     },
+    {
+      name: "an invalid exact evidence ID",
+      run: (api: SummaryApi) =>
+        api.getEvidence({ meetingId, summaryId, evidenceId: "not-a-uuid" }),
+    },
+    {
+      name: "an uppercase content version",
+      run: (api: SummaryApi) =>
+        api.getMarkdown({
+          meetingId,
+          summaryId,
+          expectedContentVersion: "A".repeat(64),
+        }),
+    },
+    {
+      name: "an expanded editable content DTO",
+      run: (api: SummaryApi) =>
+        api.updateContent({
+          meetingId,
+          summaryId,
+          expectedContentVersion: contentVersion,
+          editableContent: {
+            overviewText: "Synthetic overview",
+            decisionTexts: [],
+            actionItems: [],
+            riskTexts: [],
+            openQuestionTexts: [],
+            privateText: "must-not-cross-boundary",
+          } as UpdateSummaryContentRequest["editableContent"],
+        }),
+    },
   ])("rejects $name before invoke", async ({ run }) => {
     const adapter = new FakeInvokeAdapter();
     await expect(run(createSummaryApi(adapter))).rejects.toEqual(
@@ -564,6 +654,95 @@ describe("summaryApi response and error boundary", () => {
       status: "cancelled",
       startedAt: timestamp,
     });
+  });
+
+  it("requires contentVersion only for completed runs", async () => {
+    const adapter = new FakeInvokeAdapter();
+    const api = createSummaryApi(adapter);
+
+    for (const response of [
+      queuedRun({ contentVersion }),
+      failedRun({ contentVersion }),
+      cancelledRun({ contentVersion }),
+      completedRun({ contentVersion: null }),
+      completedRun({ contentVersion: "A".repeat(64) }),
+    ]) {
+      adapter.response = response;
+      await expect(api.getRun({ meetingId, summaryId })).rejects.toEqual(
+        new SummaryApiError("internal_error", false),
+      );
+    }
+  });
+
+  it("strictly validates canonical Markdown responses", async () => {
+    const adapter = new FakeInvokeAdapter();
+    const api = createSummaryApi(adapter);
+    const request = {
+      meetingId,
+      summaryId,
+      expectedContentVersion: contentVersion,
+    };
+
+    for (const response of [
+      { summaryId, contentVersion, markdown: "# Synthetic\n", bytes: 11 },
+      {
+        summaryId,
+        contentVersion: "b".repeat(64),
+        markdown: "# Synthetic\n",
+        bytes: 12,
+      },
+      {
+        summaryId,
+        contentVersion,
+        markdown: "# Synthetic\n",
+        bytes: 12,
+        sourcePath: "must-not-cross-boundary",
+      },
+    ]) {
+      adapter.response = response;
+      await expect(api.getMarkdown(request)).rejects.toEqual(
+        new SummaryApiError("internal_error", false),
+      );
+    }
+  });
+
+  it("strictly validates native Markdown save outcomes", async () => {
+    const adapter = new FakeInvokeAdapter();
+    const api = createSummaryApi(adapter);
+    const request = {
+      meetingId,
+      summaryId,
+      expectedContentVersion: contentVersion,
+    };
+
+    for (const response of [
+      {
+        summaryId,
+        contentVersion,
+        saved: true,
+        cancelled: true,
+        bytesWritten: 12,
+      },
+      {
+        summaryId,
+        contentVersion,
+        saved: false,
+        cancelled: true,
+        bytesWritten: 12,
+      },
+      {
+        summaryId,
+        contentVersion,
+        saved: true,
+        cancelled: false,
+        bytesWritten: 0,
+      },
+    ]) {
+      adapter.response = response;
+      await expect(api.saveMarkdown(request)).rejects.toEqual(
+        new SummaryApiError("internal_error", false),
+      );
+    }
   });
 
   it("uses stable safe errors and ignores backend wording", async () => {
@@ -934,7 +1113,7 @@ describe("summaryApi security surface", () => {
     });
   });
 
-  it("exposes exactly the approved twelve methods", () => {
+  it("exposes exactly the approved sixteen methods", () => {
     expect(
       Object.keys(createSummaryApi(new FakeInvokeAdapter())).sort(),
     ).toEqual(
@@ -951,6 +1130,10 @@ describe("summaryApi security surface", () => {
         "listRuns",
         "cancelRun",
         "listEvidence",
+        "getEvidence",
+        "updateContent",
+        "getMarkdown",
+        "saveMarkdown",
       ].sort(),
     );
   });
@@ -970,6 +1153,10 @@ describe("summaryApi security surface", () => {
         "list_summary_runs",
         "cancel_summary_run",
         "list_summary_evidence",
+        "get_summary_evidence",
+        "update_summary_content",
+        "get_summary_markdown",
+        "save_summary_markdown",
       ].sort(),
     );
   });

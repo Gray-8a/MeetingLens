@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { AppLink, liveMeetingPath, useNavigation } from "../app/navigation";
+import { summaryMinutesPath } from "../app/paths";
 import { useServices } from "../app/services";
 import type { MeetingResponse } from "../api/meeting";
 import { DocumentPanel } from "../components/DocumentPanel";
@@ -377,10 +378,15 @@ export function MeetingDetailPage({
                 : t("meetingDetail.finishBeforeDelete")}
             </p>
           ) : null}
-          {meeting.status === "ready" ? (
-            <button className="button button--ghost" disabled type="button">
-              {t("meetingDetail.startMeeting")}
-            </button>
+          {meeting.status === "draft" ||
+          meeting.status === "recording" ||
+          meeting.status === "ready" ? (
+            <AppLink
+              className="button button--primary"
+              to={summaryMinutesPath(meeting.id)}
+            >
+              {t("meetingDetail.openMinutes")}
+            </AppLink>
           ) : null}
         </article>
       </section>

@@ -1,6 +1,7 @@
-use std::fmt;
+use std::fmt::{self, Write as _};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 use super::summary_error::{SummaryError, SummaryResult};
 
@@ -12,6 +13,7 @@ pub const SUMMARY_LIST_MAX_LIMIT: u64 = 100;
 pub const SUMMARY_EVIDENCE_DEFAULT_LIMIT: u64 = 50;
 pub const SUMMARY_EVIDENCE_MAX_LIMIT: u64 = 100;
 pub const SUMMARY_RESULT_MAX_BYTES: usize = 1024 * 1024;
+pub const SUMMARY_MARKDOWN_MAX_BYTES: usize = 10 * 1024 * 1024;
 pub const DEEPSEEK_SUMMARY_MAX_INPUT_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
@@ -173,6 +175,66 @@ pub struct CreateSummaryRevision {
     pub summary_id: String,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub struct EditableSummaryActionItem {
+    pub text: String,
+    pub owner: Option<String>,
+    pub due_date: Option<String>,
+}
+
+impl fmt::Debug for EditableSummaryActionItem {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EditableSummaryActionItem")
+            .field("text", &"[REDACTED]")
+            .field("owner", &self.owner.as_ref().map(|_| "[REDACTED]"))
+            .field("due_date", &self.due_date.as_ref().map(|_| "[REDACTED]"))
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct EditableSummaryContent {
+    pub overview_text: String,
+    pub decision_texts: Vec<String>,
+    pub action_items: Vec<EditableSummaryActionItem>,
+    pub risk_texts: Vec<String>,
+    pub open_question_texts: Vec<String>,
+}
+
+impl fmt::Debug for EditableSummaryContent {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EditableSummaryContent")
+            .field("overview_text", &"[REDACTED]")
+            .field("decision_count", &self.decision_texts.len())
+            .field("action_item_count", &self.action_items.len())
+            .field("risk_count", &self.risk_texts.len())
+            .field("open_question_count", &self.open_question_texts.len())
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct UpdateSummaryContent {
+    pub meeting_id: String,
+    pub summary_id: String,
+    pub expected_content_version: String,
+    pub editable_content: EditableSummaryContent,
+}
+
+impl fmt::Debug for UpdateSummaryContent {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("UpdateSummaryContent")
+            .field("meeting_id", &self.meeting_id)
+            .field("summary_id", &self.summary_id)
+            .field("expected_content_version", &"[REDACTED]")
+            .field("editable_content", &self.editable_content)
+            .finish()
+    }
+}
+
 #[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SummaryDecisionStatus {
@@ -257,6 +319,28 @@ pub struct SummaryContent {
     pub action_items: Vec<SummaryActionItem>,
     pub risks: Vec<SummaryClaim>,
     pub open_questions: Vec<SummaryClaim>,
+}
+
+pub(crate) fn summary_content_version(content: &SummaryContent) -> SummaryResult<String> {
+    let canonical = serde_json::to_vec(content).map_err(|_| SummaryError::PersistenceFailed)?;
+    let digest = Sha256::digest(canonical);
+    let mut version = String::with_capacity(64);
+    for byte in digest {
+        write!(&mut version, "{byte:02x}").map_err(|_| SummaryError::Internal)?;
+    }
+    Ok(version)
+}
+
+pub(crate) fn validate_content_version(value: &str) -> SummaryResult<()> {
+    if value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    {
+        Ok(())
+    } else {
+        Err(SummaryError::InvalidInput)
+    }
 }
 
 impl fmt::Debug for SummaryContent {
@@ -481,5 +565,30 @@ mod tests {
             assert!(!debug.contains(private));
         }
         assert!(debug.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn content_version_is_the_sha256_of_canonical_typed_json() {
+        let content = SummaryContent {
+            schema_version: 1,
+            overview: SummaryClaim {
+                text: "Synthetic".to_string(),
+                evidence_ids: vec!["00000000-0000-4000-8000-000000000001".to_string()],
+            },
+            decisions: Vec::new(),
+            action_items: Vec::new(),
+            risks: Vec::new(),
+            open_questions: Vec::new(),
+        };
+        let version = summary_content_version(&content).expect("version should derive");
+        assert_eq!(
+            version,
+            "b4cbdc83430dad75f2b0f6771b7fffb8dc5ee9591776bb2c5f13d58ea79fe87d"
+        );
+        assert!(validate_content_version(&version).is_ok());
+        assert_eq!(
+            validate_content_version(&version.to_ascii_uppercase()),
+            Err(SummaryError::InvalidInput)
+        );
     }
 }

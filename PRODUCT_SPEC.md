@@ -33,22 +33,24 @@ Personal Edition 是单人自用的单机桌面产品，不引入账号体系、
 
 首页保留三个主要模式入口和历史记录，但当前 Personal Edition 只把总结模式作为近期可进入的产品主线。用户不需要先理解 Provider、Docling、设备协议或内部状态机。
 
-- **总结模式（Current）**：当前可粘贴 UTF-8 文本或通过 Rust 原生选择器导入 TXT/SRT/VTT，并预览和修正规范化片段；底层 Rust DeepSeek Provider、最小外发确认与撤销已经实现，但正式生成入口和结果页仍未接线。
+- **总结模式（Current）**：可粘贴 UTF-8 文本或通过 Rust 原生选择器导入 TXT/SRT/VTT，预览和修正规范化片段，并在当前 `feat/summary-mode-minutes` 实现中选择来源、模板和输出语言，经明确确认后调用 Rust DeepSeek Provider，再查看、修改、复制或保存结果。
 - **翻译模式（Frozen/Deferred）**：保留长期愿景和共享数据边界，当前不开发实时字幕、持续翻译外发、checkpoint 或浮窗。
 - **会议模式（Frozen/Deferred）**：未来如解冻，优先复用录音/转录输入、现有 Transcript Workspace 和同一 Summary pipeline，不建立第二套数据库或转录/摘要模型。
 - **历史记录（Current）**：当前查看本地会议和已实现的转录入口；未来摘要和导出结果仍复用同一历史管线。
 
 音频文件批量转录是 `feat/summary-mode-minutes` 达到日常可用后计划的增强，当前尚未显示为可用入口；视频导入继续 Deferred。参考材料仍通过独立 Document UI 管理，不与转录来源混淆。
 
-### 4.2 生成会议纪要（Planned）
+### 4.2 生成会议纪要（Current delivery）
 
 1. 用户选择一个或多个可用来源；近期 transcript-only MVP 只消费转录来源。
 2. Rust 先在本地创建 queued run 并原子冻结不可变输入快照；这一步不读取 Key，也不发起网络，后续编辑不改变本次 run。
 3. 应用根据该冻结 run 显示 Provider/host/model、来源数、片段数、input bytes、模板、输出语言和外发数据类型。
 4. 第一次准备把冻结内容发送给 DeepSeek 时，应用提供“本次同意”“记住我的选择”和“取消”；没有有效确认时 fail closed。
 5. 执行时 Rust 再校验 Key、Consent、run 状态和冻结范围；DeepSeek 只接收用户确认的规范化文本和必要元数据，不接收本地路径、原始文件或凭据。
-6. 结果按详细讨论、决定、行动项、未决问题、风险、争议和证据展示，并标记为可编辑草稿。
-7. 用户可以修改正文、保存当前结果或整份重新生成；重新生成创建新 revision，不静默覆盖旧 revision 或用户编辑。
+6. 结果使用固定五区结构 `overview/decisions/actionItems/risks/openQuestions` 写入当前 series/revision；关键决定、行动项和争议继续引用 run-owned evidence，按 ID 精确读取；历史 Mock 结果可查看、复制和保存但严格只读。
+7. 用户只能修改现有正文和行动项 owner/due date；Rust 保留 evidence、状态、顺序和 Provider 元数据，并用派生 `contentVersion` 阻止并发静默覆盖。保存更新当前 revision 的 `content_json` 并置 `is_user_edited=1`，不另存同 revision 的 Provider 原稿或编辑历史。
+8. 整份重新生成只允许 latest terminal DeepSeek revision 创建下一 revision，并重新冻结当前 live transcript；旧 revision 不被覆盖，`source_deleted` 时禁止同 series regenerate，`segment_revised` 时允许并提示输入已变化。
+9. 用户可一键复制 canonical Markdown，或通过 Rust 原生 Save As 保存 `.md` 文件；两者使用同一 Rust renderer，React 不接收文件路径、不读取剪贴板，也不把不可信结果渲染成 HTML。
 
 ### 4.3 Frozen/Deferred 的实时能力
 
@@ -84,14 +86,14 @@ Phase 0 已通过 PR #1 合并，并在 Windows 本机实际启动 Tauri 窗口�
 
 ### 5.3 Personal Edition 近期主线：完成日常可用总结模式
 
-PR #1–#23 已合并。文档安全存储、原生导入 UI、Docling Worker Foundation、zh-CN/en-US、Transcript Data Core、安全 Transcript Command API、Summary Mode Input UI、schema v4 Summary Run Core 和 Personal Edition 重定基线已完成。当前 `feat/summary-provider-deepseek` 在既有不可变快照、run/series/revision 和 evidence allowlist 上增加 schema v5、Rust-only DeepSeek、SecretStore 消费、最小外发确认/记住/撤销、严格 JSON、取消和稳定错误。Docling Worker 尚未接入 SQLite、Commands 或产品 UI；正式生成入口和结果 UI 仍禁用，因此普通用户仍无法在当前页面获得真实 AI 纪要。
+PR #1–#24 已合并。文档安全存储、原生导入 UI、Docling Worker Foundation、zh-CN/en-US、Transcript Data Core、安全 Transcript Command API、Summary Mode Input UI、schema v4 Summary Run Core、Personal Edition 重定基线，以及 schema v5 Rust-only DeepSeek/SecretStore/最小 Consent 已完成。当前 `feat/summary-mode-minutes` 在这些边界上交付正式生成、五区结果、精确 evidence、受限正文编辑、canonical Markdown、显式复制、Rust 原生 Save As 和整份重新生成。它不修改 schema v5、既有 Provider 协议或 Prompt。Docling Worker 仍未接入 SQLite、Commands 或产品 UI。
 
 当前最短路线如下。分支名和阶段能力范围是权威标识；未来 PR 编号只表示预期顺序：
 
 1. **`docs/personal-edition-descope`（PR #23 已完成）**：重新定义 Personal Edition、冻结/简化范围和风险分级验收。
-2. **`feat/summary-provider-deepseek`（当前交付，预计 PR #24）**：schema v5 最小 remembered Consent、Rust DeepSeek Provider、SecretStore 读取、固定真实请求、严格响应/evidence、安全错误/取消，以及本次同意/记住/撤销；不建立通用 Consent Data Core，不开发正式结果页面。
-3. **`feat/summary-mode-minutes`（唯一下一阶段，预计 PR #25，日常可用里程碑）**：模板、中文/英文/双语输出、正式生成入口、纪要结果页、Markdown 查看/复制/保存、正文修改和整份重新生成；继续使用现有 series/revision，不覆盖旧 revision，不开发章节级重生成或 DOCX/PDF。
-4. **`feat/audio-file-transcription`（预计 PR #26）**：导入会议录音文件，通过本地 faster-whisper CPU int8 一次性受控 Worker 批量转写，并写入现有 transcript 数据模型；不做实时音频、WASAPI、实时字幕或实时 diarization。
+2. **`feat/summary-provider-deepseek`（PR #24 已完成）**：schema v5 最小 remembered Consent、Rust DeepSeek Provider、SecretStore 读取、固定真实请求、严格响应/evidence、安全错误/取消，以及本次同意/记住/撤销；不建立通用 Consent Data Core。
+3. **`feat/summary-mode-minutes`（当前功能分支，预计 PR #25，日常可用里程碑）**：模板、中文/英文/双语输出、正式生成入口、五区纪要和 evidence、canonical Markdown 查看/复制/原生保存、受限正文修改和整份重新生成；继续使用现有 series/revision，不覆盖旧 revision，不开发章节级重生成或 DOCX/PDF。
+4. **`feat/audio-file-transcription`（当前功能经用户决定合并后的下一阶段，预计 PR #26）**：导入会议录音文件，通过本地 faster-whisper CPU int8 一次性受控 Worker 批量转写，并写入现有 transcript 数据模型；不做实时音频、WASAPI、实时字幕或实时 diarization。
 5. **`feat/document-parsing-orchestration`（预计 PR #27）**：将已有 Docling Worker 接入正式数据流，生成 document chunks/evidence，失败自动重试一次，再失败提示手动重新导入；不建立重型通用调度平台。
 6. **`feat/window-context`（可选，预计 PR #28 或更后）**：只有在用户确认经常需要屏幕分享上下文后才启动；必须明确选择具体窗口，身份变化时暂停或重新确认，默认不保存关键帧。
 
@@ -121,17 +123,19 @@ Summary run 的多来源聚合限制独立固定为：最多 20,000 个 final se
 
 纪要资格取决于能否冻结至少一个用户选择的有效输入，而不是只允许 `ready`。当前 schema v4 与 Summary service 只实现 `draft/recording/ready` 搭配 transcript snapshot；manual notes、documents、混合来源、documents-only 和 manual-notes-only 只是长期架构方向，必须等对应数据与 evidence 阶段实际实现后才能启用。`deleting`、`delete_failed`、没有输入或输入仍无法安全冻结时禁止。纪要任务拥有独立状态，不新增 `content_ready/source_ready/summarized` 等 meeting 状态。
 
-schema v4 为每个新纪要系列生成 `series_id` 和 revision 1；显式重新生成在事务中创建下一 revision、重新冻结当前 live segment revisions，不覆盖旧 run。快照实际复制正文、source/segment IDs、revision、source/segment/global ordinal、speaker、offset、language、confidence 与时间，Provider 不得回读 live segment。当前状态机是 `queued → running → completed/failed/cancelled` 和 `queued → cancelled`；启动后遗留 running 变为 `failed + summary_interrupted`。
+schema v4 为每个新纪要系列生成 `series_id` 和 revision 1；显式重新生成只允许 latest terminal DeepSeek revision 在事务中创建下一 revision、重新冻结当前 live segment revisions，不覆盖旧 run，也不把用户编辑后的纪要再次发送给 Provider。快照实际复制正文、source/segment IDs、revision、source/segment/global ordinal、speaker、offset、language、confidence 与时间，Provider 不得回读 live segment。当前状态机是 `queued → running → completed/failed/cancelled` 和 `queued → cancelled`；启动后遗留 running 变为 `failed + summary_interrupted`，queued run 则必须经用户明确点击“继续生成”才能执行。
 
-production run 固定记录 `deepseek/external/deepseek-v4-pro/summary-deepseek-v1`，只由 Rust 从不可变 snapshot 构造请求并在执行前读取 SecretStore。历史 `deterministic_mock` run 继续可读，但 Mock 只允许测试/debug 隔离，release WebView 不可选择或执行。每个 snapshot row 的 UUID 形成当前 run evidence allowlist；Rust 在原子写入结果前验证 output run ID、结构版本、大小/数量和全部 evidence，未知、重复或跨 run 引用使 run 安全失败。只有结果实际引用的 transcript evidence 被持久化；document/screen/manual-note evidence 不属于本阶段。
+production run 固定记录 `deepseek/external/deepseek-v4-pro/summary-deepseek-v1`，只由 Rust 从不可变 snapshot 构造请求并在执行前读取 SecretStore。历史 `deterministic_mock` run 继续可查看、复制和保存，但 Mock 只允许测试/debug 隔离，release WebView 不可选择、执行、编辑或从其创建 DeepSeek revision。每个 snapshot row 的 UUID 形成当前 run evidence allowlist；Rust 在原子写入结果前验证 output run ID、结构版本、大小/数量和全部 evidence，未知、重复或跨 run 引用使 run 安全失败。只有结果实际引用的 transcript evidence 被持久化；document/screen/manual-note evidence 不属于本阶段。
 
-集中式 `summaryApi` 固定包含十二个方法：既有 policy/create/revision/execute/get/list/cancel/evidence 八个 commands，以及 `get_deepseek_provider_status`、`get_summary_external_disclosure`、`confirm_summary_external_disclosure`、`revoke_deepseek_consent`。DTO（含嵌套结果）统一 camelCase 并严格拒绝扩展；run/evidence 列表采用默认 50、最大 100 的 keyset 分页。WebView 只能提交 ID、模板/语言、分页和 `remember` 布尔值，不能提交 Provider/model/endpoint、结果、evidence、正文、路径、凭据或时间戳。这些底层 API、Consent Dialog 和 Settings 状态不等于正式生成页面已经开放。
+集中式 `summaryApi` 固定包含十六个方法：原十二个 policy/run/Consent commands，再增加按 ID 精确读取 evidence、受限正文更新、canonical Markdown 获取和 Rust 原生 Markdown Save As。DTO（含嵌套结果）统一 camelCase 并严格拒绝扩展；run/evidence 列表采用默认 50、最大 100 的 keyset 分页。WebView 只能提交 ID、模板/语言、分页、`remember`、受限可编辑字段和 Rust 派生的 `expectedContentVersion`；不能提交 Provider/model/endpoint、完整结果、evidence、文件路径、凭据或时间戳。React 不能直接提交 Provider 结果或自行写文件。
 
-segment 修正把依赖旧 revision 的 run 标为 `segment_revised` stale，但旧快照/结果不变。queued/running run 使用的 source 删除稳定拒绝；terminal source 删除保留已引用、最多 1,024 UTF-8 bytes 的 evidence，清理完整正文快照并标 `source_deleted` stale。会议删除先取消 active runs，再由既有协调器清理 summaries、snapshots 和 evidence；任何路径都不得静默重生成。
+completed 结果派生 `contentVersion`：Rust 对规范化 typed `SummaryContent` JSON 计算 SHA-256 并返回 64 位小写十六进制，非 completed 状态返回 null。编辑、Markdown 获取和保存必须带当前 `expectedContentVersion`，后端在事务内重读并比较，防止多个窗口或过期页面静默覆盖/导出旧内容。该值不写入 SQLite，因此本功能保持 schema v5 且不增加 migration。
 
-第一版模板固定为：详实会议纪要、简洁会议总结、行动项与决定清单；输出语言为中文、英文或双语。模型不得发明参会人、负责人、截止日期或会议结论；决定区分 `proposed/confirmed/superseded`，行动项区分明确分配、建议任务和未确认任务，冲突和“无法确定”必须保留。关键决定、行动项和争议必须引用当前 run 快照中的有效 evidence。
+segment 修正把依赖旧 revision 的 run 标为 `segment_revised` stale，但旧快照/结果不变；latest DeepSeek revision 可以由用户明确整份重新生成。queued/running run 使用的 source 删除稳定拒绝；terminal source 删除保留已引用、最多 1,024 UTF-8 bytes 的 evidence，清理完整正文快照并标 `source_deleted` stale，此时历史结果仍可查看、编辑、复制和保存，但同 series 不再重新生成。会议删除先取消 active runs，再由既有协调器清理 summaries、snapshots 和 evidence；任何路径都不得静默重生成。
 
-详实会议纪要至少包含：会议信息、会议目标、输入来源、执行摘要、按主题整理的详细讨论、已确认决定、提议但未确认事项、行动项、负责人、截止日期、未解决问题、风险和注意事项、争议或冲突、关键时间线、证据引用和无法确定的信息。没有负责人时显示“未分配”，没有截止日期时保持为空；“有人提出”不得自动写成“会议确认”。
+第一版模板固定为：详实会议纪要、简洁会议总结、行动项与决定清单；输出语言为中文、英文或双语。结构化结果契约固定为五区 `overview`、`decisions`、`actionItems`、`risks`、`openQuestions`，不因“详实”模板扩展 Provider schema；详细讨论、目标、上下文和无法确定的信息在 `overview` 内组织。模型不得发明参会人、负责人、截止日期或会议结论；决定区分 `proposed/confirmed/superseded`，行动项区分明确分配、建议任务和未确认任务，冲突和“无法确定”必须保留。关键决定、行动项和争议必须引用当前 run 快照中的有效 evidence。
+
+正文编辑只覆盖五区中已有文本以及行动项 owner/due date，不允许增删或重排条目，也不能修改 evidence ID、决定/行动项状态、schema、Provider 或 lineage。第一次实际变更原位更新当前 revision 的 `content_json` 并置 `is_user_edited=1`；同 revision 不另存 Provider 原稿、编辑历史或恢复点。没有负责人时显示“未分配”，没有截止日期时保持为空；“有人提出”不得自动写成“会议确认”。整份重新生成通过新 revision 保留此前已保存结果。
 
 #### 5.3.3 第一版文件来源与安全边界
 
@@ -220,8 +224,8 @@ React 只接收 document ID、原始显示名称、安全类型、大小、状�
 ## 7. 主要界面
 
 1. **首页（Current）**：总结、翻译、会议三个入口和历史记录；当前只有总结模式进入实际工作流，翻译和会议入口保持禁用并标为 Frozen/Deferred。
-2. **总结输入工作区（Current）**：粘贴/导入、来源和分页片段预览、正文与说话人显示名修正；生成按钮仍禁用。
-3. **总结结果工作区（Planned）**：模板和输出语言、生成状态、会议纪要、证据、Markdown 查看/复制/保存、正文修改和整份重新生成。
+2. **总结输入工作区（Current）**：粘贴/导入、来源和分页片段预览、正文与说话人显示名修正，并进入统一 Minutes 工作区。
+3. **总结结果工作区（Current delivery）**：来源、模板和输出语言、显式 Generate/Continue/Cancel、运行状态、五区纪要、精确 evidence、纯文本 Markdown 预览/复制/原生保存、受限正文修改、revision 历史和整份重新生成。
 4. **会议结果增强（Planned/Optional）**：音频文件转录、文档 evidence 和可选窗口上下文只在对应阶段完成后显示。
 5. **实时设置和会议中工作区（Frozen/Deferred）**：实时音频、翻译、字幕、checkpoint、说话人分离和独立会议布局当前不开发。
 6. **设置（Current）**：DeepSeek Key 配置状态、固定 Provider/host/model、remembered Consent 状态与时间、撤销入口、界面语言和本地诊断；不显示 Key、不允许编辑 model/base URL，也不允许脱离具体 run 提前授权。
@@ -247,18 +251,20 @@ React 只接收 document ID、原始显示名称、安全类型、大小、状�
 
 ## 10. DeepSeek 约定
 
-底层 DeepSeek Provider 已由 Rust 实现；普通用户生成入口与正式结果 UI 仍不可用。production 身份固定为 Provider `deepseek`、mode `external`、host `api.deepseek.com`、model `deepseek-v4-pro`、prompt version `summary-deepseek-v1`，endpoint 固定为 `https://api.deepseek.com/chat/completions`，不能由 WebView 或用户修改。
+DeepSeek Provider 已由 Rust 实现，当前功能分支将其接入普通用户明确触发的生成与正式结果 UI。production 身份固定为 Provider `deepseek`、mode `external`、host `api.deepseek.com`、model `deepseek-v4-pro`、prompt version `summary-deepseek-v1`，endpoint 固定为 `https://api.deepseek.com/chat/completions`，不能由 WebView 或用户修改。
 
 - DeepSeek 请求只能由 Rust `SummaryProvider` 发起；React、Python Sidecar 和 Docling Worker 均不得直接调用 Provider。
 - Provider 响应必须严格解析并限制结构、大小和 evidence 引用；未知、重复、跨 run 或不匹配的 evidence 继续由 Rust fail closed。
 - 外发 disclosure 只显示固定 Provider/host/model、source/segment/input byte 数、模板、输出语言和固定六类数据；不返回 transcript、snapshot rows、evidence excerpt、路径、Prompt 或数据库细节。
 - 一次性确认按 Summary run 绑定，在 Rust 内存中最多保留 10 分钟、只能消费一次且重启失效；remembered Consent 只以 schema v5 的 policy version/fingerprint 和时间戳持久化。没有有效确认时不得发起请求。
+- remembered Consent 只可缩短用户本次明确点击 Generate 后的流程；页面加载、应用启动、后台恢复、queued 深链和自动重试都不得借 remembered 状态发起请求。重启后的 queued run 只能显示“继续生成/取消任务”。
 - 撤销会删除 remembered Consent 并清除全部尚未消费的一次性确认，只影响未来发送，不假装召回已经送达 Provider 的内容。这套最小 Consent 仅适用于单人自用版，不足以作为团队、客户或公众分发的企业合规方案。
 - Rust 从 SecretStore 获取 key；React、Docling Worker、日志和 SQLite 均不能读取或保存 key。
 - transcript-only Provider 只发送不可变 snapshot 的规范化文本、speaker 标签/用户确认名称、source/segment 顺序、时间 offset、run-local evidence IDs、模板和输出语言；除这些 run-local evidence IDs 外，不发送其他数据库标识，也不发送会议标题、source 显示名/路径、语言/置信度元数据、原始参考文件、API Key 或完整 Prompt 日志。
 - transport 固定 HTTPS，禁止重定向和环境代理，设置 10 秒连接/180 秒总超时、请求/响应大小上限、非流式 JSON-only、thinking disabled、单次请求且不自动重试；运行中取消会中止 transport future，失败不保留部分结果。
-- Summary run 使用不可变输入快照；输入后续变化不影响当前 run，整份重新生成创建 revision，用户编辑不得被静默覆盖。章节/段落级重生成、复杂 stale UI、编辑历史时间线和协作冲突合并当前冻结。
+- Summary run 使用不可变输入快照；输入后续变化不影响当前 run，整份重新生成创建 revision，用户编辑不得被静默覆盖。受限编辑、Markdown 获取和 Save As 使用当前 `contentVersion` 防止过期写入/导出；Rust 是修改、渲染和文件写入的权威。章节/段落级重生成、复杂 stale UI、编辑历史时间线和协作冲突合并当前冻结。
 - 未知 evidence ID 必须拒绝或标记，模型自然语言不得被当作不存在的证据引用。
+- Markdown 预览、显式 clipboard write 和原生 Save As 使用同一 Rust canonical renderer；不执行模型 HTML/Markdown，不读取剪贴板，不向 React 暴露路径。用户主动复制或保存到应用外的副本不在 MeetingLens 删除保证内。
 - 自动测试只使用明显合成数据与本地 fake transport；真实付费 DeepSeek API smoke 未执行时不得宣称协议已通过真实账户联网验收。
 
 ## 11. Phase 0 验收标准

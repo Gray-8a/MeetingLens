@@ -31,8 +31,13 @@ export function DeepSeekConsentDialog({
   const dialogRef = useRef<HTMLDivElement>(null);
   const headingRef = useRef<HTMLHeadingElement>(null);
   const submittingRef = useRef(false);
+  const onCancelRef = useRef(onCancel);
   const [remember, setRemember] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    onCancelRef.current = onCancel;
+  }, [onCancel]);
 
   useEffect(() => {
     const previousFocus =
@@ -44,7 +49,7 @@ export function DeepSeekConsentDialog({
     const onDocumentKeyDown = (event: globalThis.KeyboardEvent) => {
       if (event.key === "Escape" && !submittingRef.current) {
         event.preventDefault();
-        onCancel();
+        onCancelRef.current();
       } else if (
         event.key === "Tab" &&
         dialogRef.current !== null &&
@@ -59,7 +64,7 @@ export function DeepSeekConsentDialog({
       document.removeEventListener("keydown", onDocumentKeyDown);
       previousFocus?.focus();
     };
-  }, [onCancel]);
+  }, []);
 
   async function confirm() {
     if (submittingRef.current) return;

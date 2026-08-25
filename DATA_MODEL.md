@@ -277,6 +277,8 @@ schema v4 首先只创建 transcript evidence；document、screen 和 manual not
 
 每条 `summary_sources` 快照行在冻结时获得稳定 UUID，并作为仅属于该 run 的 evidence allowlist。Rust Provider 输出必须先完成版本化结构、大小和 allowlist 校验；只有结果实际引用的 ID 才会在同一完成事务中物化为 `evidence_items`。`summary_id + summary_source_id` 唯一，复合外键同时绑定 run、meeting、source、segment、revision、segment ordinal 和 global ordinal，且 `evidence.id = summary_source_id`；因此原始 SQL 也不能伪造跨 run/meeting 或错 revision 的 evidence tuple。未知 ID 不得接受，也不得根据模型自然语言补造。document 只证明材料内容，screen 只证明当时展示内容，manual note 是用户补充；除非 transcript 或人工确认明确支持，任何单一来源都不能自动证明会议已达成决定。
 
+UI 的单条 citation 读取必须同时验证 meeting、summary、evidence 三元归属，且 ID 仍被当前 `content_json` 引用；不能为了一个引用读取全部 evidence。用户编辑允许改变 claim 文字但不改变 evidence 绑定，因此 evidence 只证明冻结转录中的原始引用，不证明后续改写已重新经过 Provider 或事实校验。
+
 ### `translations`（Frozen / Deferred 概念实体）
 
 | 字段               | 类型      | 说明                             |
@@ -356,7 +358,7 @@ schema v4 首先只创建 transcript evidence；document、screen 和 manual not
 | `is_stale`                          | INTEGER   | 0/1；live 输入后续变化                                    |
 | `stale_reason`                      | TEXT NULL | `segment_revised/source_deleted`                          |
 | `stale_at`                          | TEXT NULL | 首次标记 stale 的时间                                     |
-| `is_user_edited`                    | INTEGER   | 0/1；当前阶段始终为 0，留给编辑阶段                       |
+| `is_user_edited`                    | INTEGER   | 0/1；第一次实际正文变更后置 1，并保持 sticky              |
 | `snapshot_created_at`               | TEXT      | 快照冻结完成时间                                          |
 | `created_at`                        | TEXT      | run 创建时间                                              |
 | `started_at`                        | TEXT NULL | 开始执行时间                                              |
@@ -365,6 +367,12 @@ schema v4 首先只创建 transcript evidence；document、screen 和 manual not
 | `updated_at`                        | TEXT      | 最近状态更新时间                                          |
 
 `(series_id, revision)` 唯一，同一 series 同时最多一个 queued/running run；revision 1 没有 previous，后续 revision 的四列复合自外键把 `previous_summary_id` 约束为同一会议、同一 series、恰好前一 revision。Rust Service 在 IMMEDIATE 事务内额外保证 parent 已终态且仍是 latest，并重新冻结当前 live revisions，不能覆盖旧结果。状态字段与 result/error/timestamp 使用组合 `CHECK`：只有 completed 可含 `content_json`，failed 必须含安全 `error_code`，terminal 必须有 `finished_at`。正常状态机是 `queued → running → completed/failed/cancelled` 和 `queued → cancelled`；启动恢复把遗留 `running` 原子转为 `failed + summary_interrupted`，不自动重放 Provider。
+
+`content_json` 的版本化 schema v1 固定为五区：`overview`、`decisions`、`actionItems`、`risks`、`openQuestions`。`feat/summary-mode-minutes` 不扩展 Provider schema，也不增加编辑表：受限保存只 overlay 现有正文和 action item owner/due date，保留 evidence ID、item status、顺序、schema、lineage 与 Provider 元数据，并原位更新当前 completed DeepSeek revision。第一次实际变更设置 `is_user_edited=1`；同一 revision 不另存 Provider 原稿、编辑历史或恢复点。no-op 保存不改变 `content_json`、`updated_at` 或 `is_user_edited`。
+
+Rust 从规范 typed `SummaryContent` JSON 字节派生 SHA-256 `contentVersion`（64 位小写 hex），completed 响应返回该值，其他状态返回 null。编辑、Markdown 获取和保存必须提交当前 `expectedContentVersion`；事务内重读、版本比较和 SQL CAS 防止静默覆盖。`contentVersion` 不写入 SQLite，因此当前 schema 仍为 v5。
+
+历史 `deterministic_mock` 结果可读并可生成 Markdown，但严格只读；不能编辑或成为 DeepSeek revision 的 parent。整份重新生成只允许 series 中 latest terminal DeepSeek revision，重新冻结当前 live transcript，而不读取用户编辑后的 `content_json`。`source_deleted` 阻止同 series regenerate；`segment_revised` 允许用户明确创建下一 revision。
 
 schema v4 的通用快照约束仍允许最多 10 MiB，以保持已存在 run 可读；当前 production DeepSeek policy 只允许 1 MiB。读取历史或已经冻结的较大 run 不因新策略而损坏，但执行超过 DeepSeek 上限的 run 在网络前以 `summary_provider_input_too_large` fail closed。
 
@@ -495,16 +503,17 @@ app-data/
     ├── meetings/<meeting-id>/
     │   ├── documents/<document-id>.<safe-extension>
     │   ├── audio/<artifact-id>.<safe-extension>   # Planned：录音文件转录阶段再确定
-    │   ├── exports/<export-id>.md                 # 计划中的 Personal Edition Markdown 保存
     │   └── artifacts/                             # Deferred 概念目录
     ├── staging/<random-import-id>.tmp
     ├── deletion-trash/<deletion-id>/
     └── .meetinglens-storage.lock
 ```
 
-当前已实现布局包括 SQLite、受控 documents、staging、deletion-trash 和 storage lock；audio、Markdown exports 与通用 artifacts 行分别为 Planned/Deferred 概念，不表示当前已经创建。数据库保存相对于 `app-data` 的路径；本 PR 不移动现有 SQLite。任何文件访问必须先解析、规范化并确认最终路径仍位于应用私有根目录内。目标路径只由 Rust 使用 meeting/document UUID 构造；原始文件名不能参与路径拼接。拒绝 `..`、绝对路径、盘符、UNC、Alternate Data Streams 和任何逃逸结果。
+当前已实现布局包括 SQLite、受控 documents、staging、deletion-trash 和 storage lock；audio 与通用 artifacts 行分别为 Planned/Deferred 概念，不表示当前已经创建。Markdown Save As 直接写入用户在原生对话框中选择的应用外位置，不创建内部 export 实体、目录或数据库路径。数据库保存相对于 `app-data` 的受控路径；本 PR 不移动现有 SQLite。任何私有文件访问必须先解析、规范化并确认最终路径仍位于批准根目录内。目标路径只由 Rust 使用 meeting/document UUID 构造；原始文件名不能参与路径拼接。拒绝 `..`、绝对路径、盘符、UNC、Alternate Data Streams 和任何逃逸结果。
 
 导入在 `staging` 中创建随机临时文件，流式复制并同时计算 SHA-256；尽早检查声明大小，复制中超过限制立即停止并清理。最终大小、类型和会议累计配额验证成功后，使用同卷原子 rename 进入 `documents`。不把用户文件长期放在 Temp、Git 仓库或当前工作目录，不设置可执行权限，也不调用 Windows 文件关联程序。源文件保持不变。
+
+Markdown 保存不是应用内 artifact 生命周期：Rust 使用当前 `contentVersion` 生成 canonical UTF-8/LF bytes，打开原生 Save As，在用户所选目录创建随机临时普通文件，经 reparse/symlink 防护、flush/sync 后原子替换 `.md` 目标，并在失败时清理临时文件。React 不传入或接收路径，SQLite 不记录目标。用户负责该外部副本的保留和删除。
 
 ## 6. 删除与保留
 
@@ -537,7 +546,7 @@ MVP 1A-2-1 的当前无文件删除状态契约固定如下：
 4. 只有文件和派生数据清理全部成功后，才最终删除数据库记录和 tombstone。
 5. 任何步骤失败时进入 `delete_failed`，保留稳定安全错误码，不伪装成功，也不把残留重新暴露为正常会议数据。
 6. 启动恢复和用户重试使用同一幂等流程；不得因崩溃留下无法识别的孤儿文件。
-7. 不允许“先删数据库再尽力删文件”或“先删文件再尝试删数据库”。外部 provider 已接收的数据不能由本地删除撤回，发送前必须明确提示。
+7. 不允许“先删数据库再尽力删文件”或“先删文件再尝试删数据库”。外部 provider 已接收的数据、系统剪贴板内容和用户通过 Save As 写到应用外的 `.md` 不能由本地会议删除撤回或清理，发送/复制/保存前必须明确提示。
 
 单个文档删除同样先进入 `deleting`。`staged`、`parsed`、`import_failed`、`parse_failed` 可请求删除；`importing`/`parsing` 必须先取消或等待安全终止；`deleting` 的重复请求幂等；`delete_failed` 可重试。物理文件与关联 artifacts 清理成功后才删除元数据，失败则保留 `delete_failed`。删除不得影响用户源文件。
 
@@ -547,7 +556,7 @@ MVP 1B-1A 已同时迁移删除实现和测试；MVP 1B-1B 的 `delete_meeting` 
 
 默认保留策略在实现前由产品决策确认；首个版本不进行静默自动删除。
 
-## 7. 文档错误协议
+## 7. 稳定错误协议
 
 | 错误码                         | Retryable | 含义                                             |
 | ------------------------------ | --------- | ------------------------------------------------ |
@@ -568,6 +577,8 @@ MVP 1B-1A 已同时迁移删除实现和测试；MVP 1B-1B 的 `delete_meeting` 
 | `meeting_delete_pending`       | true      | 会议删除已在进行                                 |
 | `meeting_delete_failed`        | true      | 会议清理失败，可重试                             |
 | `internal_error`               | false     | 未知错误的安全回退                               |
+
+Minutes 新增的稳定边界错误至少包括：`summary_edit_conflict`（`contentVersion` 或 SQL CAS 已过期）、`summary_edit_too_large`、`summary_markdown_too_large` 与 `summary_export_failed`。Picker cancel 是正常结果而不是错误；历史 Mock 编辑、非 latest revision 编辑/重新生成和 `source_deleted` regenerate 使用既有安全状态错误，不泄漏内容或路径。
 
 错误响应只包含稳定 `code`、安全 `message`、明确 `retryable` 和必要的安全 ID。不得返回源绝对路径、用户目录、文件内容、解析器 traceback 或底层异常；前端只根据 code 判断，未知错误 fail closed。
 
