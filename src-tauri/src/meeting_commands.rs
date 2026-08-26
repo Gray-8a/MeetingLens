@@ -1,6 +1,7 @@
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+use crate::audio_transcription_runtime::AudioTranscriptionRuntime;
 use crate::data::{
     CreateMeeting, DataError, Meeting, MeetingService, MeetingStatus, UpdateMeeting,
 };
@@ -150,7 +151,11 @@ pub fn end_meeting(
 pub fn delete_meeting(
     request: MeetingIdRequest,
     service: State<'_, MeetingService>,
+    audio_runtime: State<'_, AudioTranscriptionRuntime>,
 ) -> CommandResult<DeleteMeetingResponse> {
+    audio_runtime
+        .cancel_for_meeting_and_wait(&request.id)
+        .map_err(|_| MeetingCommandError::from(DataError::MeetingDeletePending))?;
     delete_meeting_with_service(&service, request)
 }
 

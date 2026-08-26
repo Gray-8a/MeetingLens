@@ -1661,6 +1661,40 @@ input[aria-invalid="true"] {
   background: var(--surface-soft);
 }
 
+.transcript-input-card--audio {
+  grid-column: 1 / -1;
+  background: var(--surface-soft);
+}
+
+.audio-transcription-policy {
+  display: grid;
+  gap: 6px;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+
+.audio-transcription-progress {
+  display: grid;
+  gap: 10px;
+  padding: 14px;
+  border: 1px dashed var(--line);
+  border-radius: 9px;
+  background: var(--surface);
+}
+
+.audio-transcription-progress > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.audio-transcription-progress progress {
+  width: 100%;
+}
+
 .transcript-input-card textarea {
   min-height: 150px;
 }

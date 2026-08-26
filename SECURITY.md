@@ -31,11 +31,13 @@ MeetingLens 当前采用 Personal Edition 基线，近期只推进总结模式�
 
 MVP 1A-3B-1 的本地会话认证防止局域网设备、普通网页和未持有当前 token 的本机客户端直接调用 Sidecar，并防止错误配置将服务绑定到非 loopback 地址。它不声称防御已取得当前 Windows 用户同等权限、可读取进程内存/环境的恶意软件，也不防御管理员或内核级攻击者。
 
+一次性 Python Worker 的清空环境、固定路径协议、Job Object、资源上限和 Rust 输出复核属于应用级隔离与减损，不是 AppContainer、restricted token 或 ACL 文件系统沙箱。Worker 仍以当前 Windows 用户权限运行；若不可信媒体/文档触发解码器或解析器代码执行漏洞，理论上可能访问该用户可访问的其他资源。依赖锁定、离线模式、最小进程生命周期和及时更新可降低但不能消除这一开发预览残余风险。
+
 ## 4. 凭据管理
 
 ### 当前与开发阶段
 
-- Rust DeepSeek Provider 已接入固定官方 host/model；只有受信任 Rust 执行路径可以消费真实 API key 和发起请求，当前 `feat/summary-mode-minutes` 将正式用户生成入口接入该既有边界。
+- Rust DeepSeek Provider 已接入固定官方 host/model；只有受信任 Rust 执行路径可以消费真实 API key 和发起请求，PR #25 已将正式用户生成入口接入该边界。当前音频转写 Worker 不接收凭据，也不调用 DeepSeek。
 - 真实 DeepSeek 凭据不得保存在 `.env` 或环境变量中；Rust Provider 不提供明文开发回退，只能通过 `SecretStore` 消费 key。
 - `.env.example` 只能包含空值或明显的非秘密占位符，不得暗示 Provider 会从环境中读取 key。
 - 测试使用 fake provider，不调用真实付费 API。
@@ -54,7 +56,7 @@ MVP 1A-3B-1 的本地会话认证防止局域网设备、普通网页和未持�
 
 界面语言是非敏感本地偏好。WebView 只可在命名空间键 `meetinglens.uiLocale` 保存允许的 `zh-CN` 或 `en-US` 枚举；不得在该存储中写入会议、文档、转录、纪要、凭据或路径。未知、损坏或不可访问的值安全回退到系统语言规则和 `en-US`，不得用任意值构造语言包路径、远程请求或动态 import。清除 WebView 存储只重置界面语言，不影响 SQLite、私有文件或 SecretStore。
 
-当前边界不防御取得同等 Windows 用户权限、可读取进程内存或用户 Credential Manager 的恶意软件，也不防御管理员/内核级攻击者。Provider 协议、错误和取消使用本地 fake transport 验证；真实付费 DeepSeek API smoke 未执行，因此不得声称已经验证真实账户、余额或端到端联网结果。
+当前边界不防御取得同等 Windows 用户权限、可读取进程内存或用户 Credential Manager 的恶意软件，也不防御管理员/内核级攻击者。Provider 协议、错误和取消使用本地 fake transport 验证；PR #25 基线上已有一次用户单独授权、极短纯合成转录的真实请求通过。该历史结果不能证明未来账户余额、服务可用性或模型别名行为，自动测试不得重复付费请求。
 
 任何已经出现在聊天、日志或提交中的 key 都应视为已泄漏并立即撤销，而不是仅删除文件。
 
@@ -131,6 +133,7 @@ DeepSeek production identity 固定为 `api.deepseek.com`、`deepseek-v4-pro` �
 - Document permission set 只授予本地 `main` 窗口 select/import、list/get、delete/retry 和 policy 六个自定义 commands；不授予 WebView dialog、fs、shell、process 或 HTTP permission。
 - Transcript permission set 只授予本地 `main` 窗口原子粘贴/原生选择、source/segment 查询、revision 修正、source 删除、导入 policy，以及当前总结输入 UI 所需的有界分页和 source-scoped speaker 命名 commands；不接受源路径，不授予 WebView dialog、fs、shell、process 或 HTTP permission。
 - Summary permission set 只授予本地 `main` 窗口十六个固定 commands：原十二个 policy/run/Consent commands，再加精确 evidence、受限正文更新、canonical Markdown 获取和 Rust 原生 Markdown 保存。Commands 只接受 meeting/source/run/evidence IDs、模板、输出语言、有界分页、confirm 的 `remember`、受限 editable content 和 `expectedContentVersion`；不接受 Provider/model/endpoint、完整结果、evidence、凭据、文件路径或时间戳，也不授予 WebView dialog、fs、shell、process 或 HTTP permission。
+- Audio transcription permission set 只授予本地 `main` 窗口五个固定 commands：policy、status、create-meeting select、add-to-meeting select 和 cancel。选择器由 command 内 Rust 打开；公开 DTO 只含固定格式/限制/CPU-int8/model 状态、opaque job ID、安全进度/状态/error code 与最终 meeting/source/count。最终 source 可返回经 Rust 校验、有界且只作文本显示的 `displayName`/`originalFilename` 元数据；command 不接受或返回文件路径、音频、模型路径、Worker artifact、正文或 segments，也不授予 WebView dialog、fs、shell、process 或 HTTP permission。
 - 文件对话框只由 Rust 打开；返回路径继续留在 Rust 并再次校验，不能由前端传入、拼接或读回任意路径。
 - Sidecar 通过固定名称 allowlist 启动，不向前端暴露通用命令执行。
 - Rust commands 对长度、枚举、UUID、路径、文件大小和超时做边界校验。
@@ -148,7 +151,7 @@ DeepSeek production identity 固定为 `api.deepseek.com`、`deepseek-v4-pro` �
 - 任务只引用由 Rust 注册的 artifact ID，不接受任意绝对路径。
 - 进程退出时清理临时文件；启动时清理已过期 job 目录。
 
-计划中的录音文件转录不通过常驻 HTTP Sidecar，而由 Rust 每次启动一个 CPU int8 faster-whisper Worker。该 Worker 不监听端口、不继承凭据，并复用 Docling 已建立的程序 allowlist、受控文件引用、资源/超时、取消、输出校验和进程树回收边界。
+录音文件转录不通过常驻 HTTP Sidecar，而由 Rust 每次启动一个独立锁定的 CPU-int8 faster-whisper Worker。该 Worker 不监听端口、不继承凭据/proxy/session token、不访问 SQLite/SecretStore；应用协议和当前实现只传入 Rust 为 opaque job 创建、验证的 input/output/model 路径，并只接受该 staging 中的有界 artifact。Rust 执行程序/model allowlist、4 GiB Windows Job Object、六小时 hard timeout、有界协议、可唤醒取消、输出复核、完整进程树回收和启动清理；这里不声称 Worker 受到操作系统级文件系统沙箱约束。
 
 ## 10. 文本转录与参考文档输入防护
 
@@ -181,7 +184,32 @@ DeepSeek production identity 固定为 `api.deepseek.com`、`deepseek-v4-pro` �
 
 PR #21 的 Summary Run Core 已使用 development-only Windows 双启动 harness：Rust 校验系统 Temp 直属隔离 app-data 根和匹配的 `com.gray.meetinglens.summarysmoke.<uuid>` 合成 Tauri identifier，验证 SQLite/WebView2 profile 隔离、completed result、revision、stale、evidence、running recovery、应用代码零外发和最终清理；release 不包含该 harness 或 debug app-data override。这是已完成高风险阶段的历史验收证据，不是以后所有普通 UI PR 的默认矩阵。
 
-### 10.2 参考文档上传
+### 10.2 录音文件本地批量转写
+
+录音文件与实时设备采集是不同边界。当前功能只在用户明确点击后由 Rust 打开原生选择器，接受单个 WAV、MP3、M4A 或含受支持音轨的 MP4；不申请麦克风/系统音频权限，不监控目录，不自动读取最近文件，不接收拖放路径或远程 URL。MP4 只解码音轨，不读取、保留或分析视频帧。
+
+固定输入/输出上限和 fail-closed 规则：
+
+- 单文件最大 2 GiB、最长四小时；单次最多 20,000 segments、单 segment 正文 64 KiB、规范化 transcript 10 MiB、Worker artifact 16 MiB；超限在提交前失败。
+- 扩展名不能单独证明类型。Rust 校验实际 media/container、要求可解码音轨并拒绝 empty、unsupported、type mismatch、无音轨、损坏或超限输入；改扩展名不能绕过。
+- 原始文件名只作受控显示元数据，不参与路径拼接，不进入进度/错误/日志。源绝对路径只在 picker 调用的 Rust 栈内短暂存在，不进入 React、SQLite、Python 请求正文或普通日志。
+- Rust 将源流式复制到 app-private、UUID job staging，计算并复核 SHA-256、大小和媒体属性；用户源文件不被修改或删除。原录音不进入最终 app storage/database，正常/失败/取消终态均清理 staged input/output/work，启动时协调清理 abandoned job。
+
+Worker 与模型边界：
+
+- `workers/transcription` 是独立 Python 3.12/uv 锁定环境，固定 faster-whisper `1.2.1`。每个 job 启动一个进程，只接收一个 stdin JSON 请求，stdout 只允许有界 JSONL progress 和 terminal artifact metadata，不包含正文或路径。
+- `setup-transcription-worker.ps1` 显式建立环境；`provision-transcription-model.ps1` 是唯一允许的模型网络准备步骤，固定 Hugging Face repo、revision、inventory 和逐文件 hash，保存到仓库外。正常 runtime 使用离线模式；缺少、版本不兼容或被修改的模型稳定 fail closed，不隐式下载或更新。
+- Worker 不接收 DeepSeek Key、Sidecar token、proxy、用户环境、SQLite 或用户/前端提供的任意路径，不监听端口，不 shell-open 媒体，不调用系统 ffmpeg；它只接收 Rust 构造并预验证的 input/output/model 路径，解码依赖精确锁定的 PyAV。模型文件本身不包含会议内容，不得进入 Git。
+- Rust 保持对 staging 根和实际文件句柄的所有权，使用 Windows Job Object 限制进程树内存、总超时和 kill-on-close；取消可并行唤醒并终止完整进程树。stdout/stderr、protocol line count/size、artifact path/type/size/hash 都被有界复核；原始 stderr 不返回 WebView。
+- Rust 重新解析并验证 segments 的 UTF-8、控制字符、数量、正文、offset 顺序和 artifact 完整性，验证完成前不写 SQLite。成功只通过一个事务创建 meeting/`imported_audio` source/segments 或给现有 meeting 添加来源；失败/取消不留下部分行。
+
+公开 progress/status 只包含 opaque `jobId`、固定 phase/status、byte/time counters 与 allowlist error code。第一条 channel event 给出 job ID，以便独立 cancel command 在长任务期间并行执行；同一应用一次只运行一个 job。React 从成功结果只接收既有 meeting/source/count 并通过普通 transcript API 分页读取已提交的 segments，不从音频 command 获取 segment bodies。
+
+稳定错误只使用 audio/meeting allowlist（例如 unsupported/type mismatch、empty/too large/too long/no stream、model/worker missing、protocol/integrity/timeout/cancel/busy/persistence 和 `internal_error`），消息由 UI 本地化，不回显路径、文件名、媒体内容、正文、原生异常或 Worker stderr。测试、Windows smoke 和问题报告必须使用短合成媒体，禁止真实会议录音或 voice sample 进入仓库、输出或截图。
+
+schema v6 只扩展既有 transcript 与 frozen Summary source type constraints 以加入 `imported_audio`。speaker/confidence 首版为 null，不做 diarization 或身份推断。实时音频、WASAPI、实时 ASR/字幕/翻译、持续 Sidecar、视频帧处理和通用调度平台继续 Frozen/Deferred。
+
+### 10.3 参考文档上传
 
 所有用户导入文件均为不可信数据；“本地保存”不能作为信任依据。正式入口只允许用户通过 MeetingLens 的 Rust 原生文件选择器主动选择文件。Teams、Zoom、Meet、邮件或聊天附件必须先由用户下载再手动导入；不自动读取附件/云盘，不监控 Downloads 或桌面，不读取剪贴板文件，不接受任意路径拖放、远程 URL 或网络共享自动导入。
 
@@ -207,7 +235,7 @@ Rust 是文件选择、校验、复制和私有存储的信任边界。React/Web
 - 不执行、不记录文件内容，不长期保存到 Temp/Git/工作目录，也不为文件设置可执行权限。
 - 文档内容解析只允许隔离的 Docling Worker 执行；PR #14 已建立独立锁定环境、Rust 注册且带哈希的受控引用、单请求进程、取消、超时、Windows Job Object 内存限制、页数/输出限制和畸形协议测试。`feat/document-parsing-orchestration` 才把该 Worker 接入文档状态与持久化。
 - Worker 不监听端口、不继承凭据/proxy/session token、不访问 SQLite；Docling 的远程服务、插件、VLM 和隐式模型下载均关闭。模型只通过显式脚本下载到仓库外目录，并用固定 revision 和逐文件 SHA-256 manifest 验证。
-- Worker 输出只能位于 Rust 批准的 parser staging 根并使用固定相对文件名；Rust 在持久化前重新验证路径、文件类型、大小、总量与 SHA-256。稳定错误不得包含原文、文件名、绝对路径、环境值或原生异常。
+- Worker 协议只接受 Rust 批准的 parser staging 根内固定相对文件名；Rust 在持久化前重新验证路径、文件类型、大小、总量与 SHA-256。稳定错误不得包含原文、文件名、绝对路径、环境值或原生异常；该协议守卫同样不等同于操作系统级文件系统沙箱。
 - Docling Worker Foundation 已完成；产品接线排在 `feat/audio-file-transcription` 之后，由简化的 `feat/document-parsing-orchestration` 同时完成解析、document chunks/evidence 和现有 Summary pipeline 接线。每次失败自动重试一次，再失败提示用户手动重新导入；当前不建立通用调度器、多级恢复、长期 checkpoint 或企业监控面板。Docling 只增强参考文档证据，不是粘贴/TXT/SRT/VTT 或第一份 transcript-only Summary 的前置依赖。
 
 ## 11. 本地存储与删除
@@ -220,6 +248,7 @@ Rust 是文件选择、校验、复制和私有存储的信任边界。React/Web
 - `draft`/`ready` 接受会议删除；`recording`/`processing`/既有保留状态拒绝；`deleting` 重复请求返回稳定 pending；`delete_failed` 允许幂等重试；未知状态 fail closed。
 - 单文档删除先进入 `deleting`，文件和 artifacts 清理成功后才移除元数据，失败进入 `delete_failed`。`importing`/`parsing` 必须先取消或等待；删除不影响用户源文件。
 - transcript source 不长期复制原始文件；删除协调其 segments、summary snapshot 引用和 stale 状态，但不删除用户源文件。正在使用该 source 的 Summary run 读取不可变快照，不得因并发删除产生不可解释证据。
+- `imported_audio` 只把规范化 source/segments 持久化到 schema v6；原录音只在 active job 的私有 staging 中短暂复制并在终态清理。删除 source/meeting 不影响用户原文件；meeting deletion 开始时必须取消该 meeting 的 active transcription，等待进程/句柄结束并清理 staging 后再完成数据库协调。
 - schema v4 的完整 snapshot 正文只为 run 执行和可重建性保存在本地 SQLite；显式 source 删除会安全清理 terminal snapshot 正文，而整场 meeting 删除会通过 meeting FK/删除协调器清理 summaries、snapshots 与 evidence。schema v5 Provider 偏好是全局设置，不因删除单场会议而改变；用户可在 Settings 单独撤销。会议删除开始前 queued/running Summary runs 先转为 cancelled，避免留下孤立运行。
 - 应用启动时把遗留 `running` Summary run 转为 `failed + summary_interrupted`；不得自动重放可能已经部分执行的 Provider。未来设备采集或持续外发不得因旧状态自动恢复；用户明确选择记住的 Personal Edition DeepSeek Summary 确认除外，并仍须通过 Rust 最小状态校验。
 - queued Summary run 在启动后保持 queued，不得因 remembered Consent 自动执行；用户必须明确继续或取消。
@@ -234,7 +263,7 @@ Rust 是文件选择、校验、复制和私有存储的信任边界。React/Web
 
 禁止记录：密钥、Authorization header、请求/响应正文、转录、文件名、参与者、屏幕内容、环境变量和绝对用户路径。
 
-Summary Provider request/output、editable content、canonical Markdown 和保存路径的 `Debug`、错误映射、测试 assertion 和 command response 同样遵守该 allowlist；不得输出 snapshot 正文、speaker、evidence excerpt、完整 `content_json`、Markdown、所选路径或底层 SQL/SQLite/文件异常。
+Summary Provider request/output、editable content、canonical Markdown，以及 audio filename/path/content/Worker stdout-stderr 和保存路径的 `Debug`、错误映射、测试 assertion 和 command response 同样遵守该 allowlist；不得输出 snapshot 正文、speaker、evidence excerpt、完整 `content_json`、Markdown、所选路径或底层 SQL/SQLite/文件异常。
 
 Sidecar 认证失败只允许记录事件类型、结果和稳定错误码；当前实现默认关闭 Python 请求日志，并禁止 Rust 输出 HeaderMap、原始 reqwest/Python 错误或子进程环境。DeepSeek API key 是外部服务凭据，与短期 Sidecar Session Token 完全不同，二者不得复用。
 
@@ -252,6 +281,7 @@ SecretStore command 不记录请求 DTO、凭据值、长度、首尾字符、Cr
 - 所有直接 npm、Cargo 和 Python 依赖使用精确版本；升级在独立 PR 中完成并记录兼容性验证。
 - Diart、WhisperX 与实时 diarization 当前为 Deferred；未来如解冻，仍必须使用相互隔离的 Worker 环境和 lockfile，不得通过放宽 NumPy/pyannote 约束强行共存。
 - AI 模型下载记录来源与校验和；模型、缓存和 Hugging Face token 不得进入 Git。
+- Transcription Worker 以独立 `uv.lock` 精确锁定 faster-whisper/PyAV 等依赖；模型 provisioning 使用固定 repo/revision/inventory/hash、`token=False`，runtime offline。不得通过系统 ffmpeg、共享 Docling/Sidecar 环境、放宽依赖或关闭 manifest 校验解决兼容性问题。
 
 ## 14. 提交前敏感信息检查
 
@@ -271,13 +301,13 @@ SecretStore command 不记录请求 DTO、凭据值、长度、首尾字符、Cr
 | Implemented      | 转录与总结入口（PR #18–#20）               | 严格 UTF-8、有界解析/分页、Rust 原生选择器、无路径 DTO、浏览器不持久化正文                                            |
 | Implemented      | Summary Run Core（PR #21）                 | schema v4、series/revision、不可变快照、Rust 零网络 Mock、evidence allowlist、stale/删除/取消/恢复                    |
 | Implemented      | `feat/summary-provider-deepseek`（PR #24） | schema v5、Rust-only 固定请求、SecretStore、一次性/记住/撤销、无确认 fail closed、HTTPS/超时/取消、严格校验/脱敏      |
-| Current delivery | `feat/summary-mode-minutes`                | 明确触发 Generate/Continue、typed text-only 结果、受限编辑/contentVersion、精确 evidence、canonical Markdown/原生保存 |
-| Next             | `feat/audio-file-transcription`            | Rust 原生文件边界、一次性 faster-whisper Worker、CPU int8、资源/取消/输出校验、只写既有 transcript 模型               |
-| Planned          | `feat/document-parsing-orchestration`      | Rust-only Docling 调用、一次自动重试、artifact 原子提交、document evidence allowlist、再次失败后提示重新导入          |
+| Implemented      | `feat/summary-mode-minutes`（PR #25）      | 明确触发 Generate/Continue、typed text-only 结果、受限编辑/contentVersion、精确 evidence、canonical Markdown/原生保存 |
+| Current delivery | `feat/audio-file-transcription`            | schema v6、Rust picker/staging、显式模型、一次性 CPU-int8 Worker、进度/取消/资源/输出/清理、既有 transcript 模型      |
+| Next             | `feat/document-parsing-orchestration`      | Rust-only Docling 调用、一次自动重试、artifact 原子提交、document evidence allowlist、再次失败后提示重新导入          |
 | Optional         | `feat/window-context`                      | 用户明确选择窗口、身份复核、权限撤销即暂停、默认不保存帧、screen evidence 与其他来源隔离                              |
 | Frozen/Deferred  | 实时与商业能力                             | 实时采集/ASR/翻译/diarization、checkpoint、浮窗、独立会议工作区、structured visuals、DOCX/PDF、签名和商业分发         |
 
-Docling 的进程/依赖攻击面已由 PR #14 隔离；它不成为第一份 transcript-only 纪要的前置条件。真实外部数据流已被限制在已合并最小 Consent 的 Rust DeepSeek 边界内，正式纪要页面由当前 `feat/summary-mode-minutes` 集成。一个功能 PR 可以同时包含必要的 Data/API/UI，但不得把无关的转录持久化、外部 AI、文件解析或其他信任边界混入同一能力。
+Docling 的进程/依赖攻击面已由 PR #14 隔离；它不成为第一份 transcript-only 纪要的前置条件。真实外部数据流已被限制在已合并最小 Consent 的 Rust DeepSeek 边界内，正式纪要页面已由 PR #25 集成。当前音频 Worker 是另一个独立、离线、本地信任边界，不取得 Summary 凭据。一个功能 PR 可以同时包含必要的 Data/API/UI，但不得把无关的转录持久化、外部 AI、文件解析或其他信任边界混入同一能力。
 
 ## 16. 安全验收门槛
 
@@ -298,4 +328,6 @@ Docling 的进程/依赖攻击面已由 PR #14 隔离；它不成为第一份 tr
 - 仓库和 staged 内容通过敏感信息扫描。
 - PR 实际触及 Windows 凭据库、文件对话框、权限、窗口选择、Worker/Sidecar 回收等桌面安全行为时，必须在用户本机验收；CI 通过不能替代。双隔离和完整双启动不再是普通 UI PR 的默认要求。
 
-当前 `feat/summary-mode-minutes` 因开放真实外发按钮和 Rust 原生 Markdown Save As，必须在 Windows 11 使用隔离 app-data、匹配 synthetic identifier、synthetic SecretStore 和 fake DeepSeek transport 做双启动验收，覆盖 queued/Consent/取消、结果/evidence、编辑/contentVersion、复制/保存、revision/stale/interrupted recovery、WebView storage、integrity/foreign keys、0 真实 Provider 网络和清理。不得读取正常 Credential Manager Key 或修改正常 app-data。未经用户针对可能费用的一次性明确批准，不运行真实付费 smoke。
+PR #25 已在 Windows 11 隔离 app-data、synthetic identifier/SecretStore 和 fake DeepSeek transport 下完成双启动验收；合并后另有一次用户明确授权的短合成 live smoke 通过。未经用户针对新请求的明确批准，不再运行真实付费 smoke。
+
+当前 `feat/audio-file-transcription` 必须在 Windows 11 以合成媒体验证 v5→v6/新库 migration、checksum/integrity/foreign keys/故障回滚，Rust picker 取消，WAV/MP3/M4A/含音轨 MP4 主流程，invalid/type mismatch/no stream/配额、Worker/model missing、busy/timeout/crash/protocol/persistence 等 fail-closed 路径，progress/job ID/并行 cancel，以及正常/失败/取消/重启后的完整进程树、句柄和 staging 清理。必须确认 WebView 持久存储、日志、错误、测试输出和 Git 不含路径、文件名、音频、正文、Worker stderr、模型缓存或凭据；最终 source DTO 仅允许经 Rust 校验的显示文件名元数据，不得返回路径、音频、artifact、正文或 segments。正常 app-data、Credential Manager Key 和仓库外备份不得被修改。音频 smoke 不需要 DeepSeek 外发。

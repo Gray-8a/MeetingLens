@@ -1,7 +1,7 @@
 use sha2::{Digest, Sha256};
 
 use super::transcript_error::{TranscriptError, TranscriptResult};
-use super::transcript_model::{TranscriptPolicy, TranscriptSourceType};
+use super::transcript_model::{StructuredAudioSegment, TranscriptPolicy, TranscriptSourceType};
 
 const UTF8_BOM: &[u8] = b"\xEF\xBB\xBF";
 const HASH_DOMAIN_CUES: &[u8] = b"meetinglens-transcript-cues-v1\0";
@@ -12,8 +12,8 @@ const MAX_SPEAKER_LABEL_CHARS: usize = 80;
 #[cfg_attr(test, derive(Debug))]
 pub(crate) struct ParsedTranscript {
     pub(crate) content_sha256: String,
-    pub(crate) parser_name: &'static str,
-    pub(crate) parser_version: &'static str,
+    pub(crate) parser_name: String,
+    pub(crate) parser_version: String,
     pub(crate) segments: Vec<ParsedSegment>,
 }
 
@@ -36,7 +36,9 @@ pub(crate) fn parse(
         TranscriptSourceType::ImportedTxt
         | TranscriptSourceType::ImportedSrt
         | TranscriptSourceType::ImportedVtt => policy.max_file_bytes,
-        TranscriptSourceType::LiveAsr | TranscriptSourceType::PlatformExport => {
+        TranscriptSourceType::ImportedAudio
+        | TranscriptSourceType::LiveAsr
+        | TranscriptSourceType::PlatformExport => {
             return Err(TranscriptError::InvalidInput);
         }
     };
@@ -54,8 +56,8 @@ pub(crate) fn parse(
             let segments = parse_plain_text(&normalized, policy)?;
             Ok(ParsedTranscript {
                 content_sha256: hash_plain(&normalized),
-                parser_name: "plain_text",
-                parser_version: "1",
+                parser_name: "plain_text".to_string(),
+                parser_version: "1".to_string(),
                 segments,
             })
         }
@@ -63,8 +65,8 @@ pub(crate) fn parse(
             let segments = parse_srt(&normalized, policy)?;
             Ok(ParsedTranscript {
                 content_sha256: hash_cues(&segments),
-                parser_name: "srt",
-                parser_version: "1",
+                parser_name: "srt".to_string(),
+                parser_version: "1".to_string(),
                 segments,
             })
         }
@@ -72,15 +74,79 @@ pub(crate) fn parse(
             let segments = parse_vtt(&normalized, policy)?;
             Ok(ParsedTranscript {
                 content_sha256: hash_cues(&segments),
-                parser_name: "vtt",
-                parser_version: "1",
+                parser_name: "vtt".to_string(),
+                parser_version: "1".to_string(),
                 segments,
             })
         }
-        TranscriptSourceType::LiveAsr | TranscriptSourceType::PlatformExport => {
-            Err(TranscriptError::InvalidInput)
-        }
+        TranscriptSourceType::ImportedAudio
+        | TranscriptSourceType::LiveAsr
+        | TranscriptSourceType::PlatformExport => Err(TranscriptError::InvalidInput),
     }
+}
+
+pub(crate) fn from_structured_audio(
+    segments: Vec<StructuredAudioSegment>,
+    parser_version: String,
+    policy: TranscriptPolicy,
+) -> TranscriptResult<ParsedTranscript> {
+    if segments.is_empty() {
+        return Err(TranscriptError::Empty);
+    }
+    if segments.len() > policy.max_segments {
+        return Err(TranscriptError::SegmentLimitExceeded);
+    }
+
+    let mut parsed = Vec::with_capacity(segments.len());
+    let mut total_text_bytes = 0_usize;
+    let mut previous_end = None;
+    for segment in segments {
+        if segment.start_offset_ms > i64::MAX as u64
+            || segment.end_offset_ms > i64::MAX as u64
+            || segment.end_offset_ms <= segment.start_offset_ms
+            || previous_end.is_some_and(|end| segment.start_offset_ms < end)
+        {
+            return Err(TranscriptError::InvalidTimestamp);
+        }
+        let original_text =
+            normalize_structured_segment_text(&segment.original_text, policy.max_segment_bytes)?;
+        total_text_bytes = total_text_bytes
+            .checked_add(original_text.len())
+            .ok_or(TranscriptError::TooLarge)?;
+        if total_text_bytes > policy.max_file_bytes {
+            return Err(TranscriptError::TooLarge);
+        }
+        previous_end = Some(segment.end_offset_ms);
+        parsed.push(ParsedSegment {
+            speaker_label: None,
+            start_offset_ms: Some(segment.start_offset_ms),
+            end_offset_ms: Some(segment.end_offset_ms),
+            original_text,
+        });
+    }
+
+    Ok(ParsedTranscript {
+        content_sha256: hash_cues(&parsed),
+        parser_name: "faster_whisper".to_string(),
+        parser_version,
+        segments: parsed,
+    })
+}
+
+fn normalize_structured_segment_text(value: &str, max_bytes: usize) -> TranscriptResult<String> {
+    let normalized = value.replace("\r\n", "\n");
+    if normalized.contains('\r') || normalized.chars().any(is_forbidden_control) {
+        return Err(TranscriptError::InvalidEncoding);
+    }
+    let normalized = normalized.trim();
+    validate_segment_text(
+        normalized,
+        TranscriptPolicy {
+            max_segment_bytes: max_bytes,
+            ..TranscriptPolicy::default()
+        },
+    )?;
+    Ok(normalized.to_string())
 }
 
 fn decode_and_normalize(input: &[u8]) -> TranscriptResult<String> {
@@ -814,12 +880,139 @@ mod tests {
     #[test]
     fn future_source_types_cannot_be_created_by_the_parser() {
         assert_eq!(
+            parse_input(TranscriptSourceType::ImportedAudio, b"text"),
+            Err(TranscriptError::InvalidInput)
+        );
+        assert_eq!(
             parse_input(TranscriptSourceType::LiveAsr, b"text"),
             Err(TranscriptError::InvalidInput)
         );
         assert_eq!(
             parse_input(TranscriptSourceType::PlatformExport, b"text"),
             Err(TranscriptError::InvalidInput)
+        );
+    }
+
+    #[test]
+    fn structured_audio_has_a_canonical_cue_hash_and_no_speaker_metadata() {
+        let audio = from_structured_audio(
+            vec![StructuredAudioSegment {
+                start_offset_ms: 1_000,
+                end_offset_ms: 2_000,
+                original_text: "  Hello\r\nworld  ".to_string(),
+            }],
+            "faster-whisper/1.2.1".to_string(),
+            TranscriptPolicy::default(),
+        )
+        .expect("structured audio should adapt");
+        let vtt = parse_input(
+            TranscriptSourceType::ImportedVtt,
+            b"WEBVTT\n\n00:01.000 --> 00:02.000\nHello\nworld\n",
+        )
+        .expect("equivalent VTT should parse");
+
+        assert_eq!(audio.content_sha256, vtt.content_sha256);
+        assert_eq!(audio.parser_name, "faster_whisper");
+        assert_eq!(audio.parser_version, "faster-whisper/1.2.1");
+        assert_eq!(audio.segments[0].speaker_label, None);
+        assert_eq!(audio.segments[0].original_text, "Hello\nworld");
+    }
+
+    #[test]
+    fn structured_audio_fails_closed_for_invalid_timestamps_and_text() {
+        let segment = |start, end, text: &str| StructuredAudioSegment {
+            start_offset_ms: start,
+            end_offset_ms: end,
+            original_text: text.to_string(),
+        };
+        let parse_audio = |segments| {
+            from_structured_audio(
+                segments,
+                "faster-whisper/1.2.1".to_string(),
+                TranscriptPolicy::default(),
+            )
+        };
+
+        assert_eq!(parse_audio(vec![]), Err(TranscriptError::Empty));
+        assert_eq!(
+            parse_audio(vec![segment(2, 1, "body")]),
+            Err(TranscriptError::InvalidTimestamp)
+        );
+        assert_eq!(
+            parse_audio(vec![segment(2, 2, "body")]),
+            Err(TranscriptError::InvalidTimestamp)
+        );
+        assert_eq!(
+            parse_audio(vec![segment(2, 3, "first"), segment(1, 4, "second")]),
+            Err(TranscriptError::InvalidTimestamp)
+        );
+        assert_eq!(
+            parse_audio(vec![segment(0, 3, "first"), segment(2, 4, "second")]),
+            Err(TranscriptError::InvalidTimestamp)
+        );
+        assert_eq!(
+            parse_audio(vec![segment(
+                i64::MAX as u64 + 1,
+                i64::MAX as u64 + 1,
+                "body"
+            )]),
+            Err(TranscriptError::InvalidTimestamp)
+        );
+        assert_eq!(
+            parse_audio(vec![segment(0, 1, "body\0text")]),
+            Err(TranscriptError::InvalidEncoding)
+        );
+        assert_eq!(
+            parse_audio(vec![segment(0, 1, " \n\t ")]),
+            Err(TranscriptError::Empty)
+        );
+    }
+
+    #[test]
+    fn structured_audio_enforces_segment_count_per_segment_and_total_limits() {
+        let policy = TranscriptPolicy {
+            max_pasted_bytes: 100,
+            max_file_bytes: 5,
+            max_segments: 1,
+            max_segment_bytes: 4,
+        };
+        let segment = |text: &str| StructuredAudioSegment {
+            start_offset_ms: 0,
+            end_offset_ms: 1,
+            original_text: text.to_string(),
+        };
+
+        assert_eq!(
+            from_structured_audio(vec![segment("a"), segment("b")], "1".to_string(), policy,),
+            Err(TranscriptError::SegmentLimitExceeded)
+        );
+        assert_eq!(
+            from_structured_audio(vec![segment("12345")], "1".to_string(), policy),
+            Err(TranscriptError::SegmentTooLarge)
+        );
+        let total_policy = TranscriptPolicy {
+            max_segments: 2,
+            max_segment_bytes: 4,
+            ..policy
+        };
+        assert_eq!(
+            from_structured_audio(
+                vec![
+                    StructuredAudioSegment {
+                        start_offset_ms: 0,
+                        end_offset_ms: 1,
+                        original_text: "123".to_string(),
+                    },
+                    StructuredAudioSegment {
+                        start_offset_ms: 1,
+                        end_offset_ms: 2,
+                        original_text: "456".to_string(),
+                    },
+                ],
+                "1".to_string(),
+                total_policy,
+            ),
+            Err(TranscriptError::TooLarge)
         );
     }
 }

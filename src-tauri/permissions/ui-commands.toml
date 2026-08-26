@@ -76,3 +76,14 @@ permissions = [
   "allow-get-summary-markdown",
   "allow-save-summary-markdown",
 ]
+
+[[set]]
+identifier = "audio-transcription-commands"
+description = "Allows the local main window to run one controlled local recording transcription through the Rust trust boundary."
+permissions = [
+  "allow-get-audio-transcription-policy",
+  "allow-get-audio-transcription-status",
+  "allow-select-audio-and-create-meeting",
+  "allow-select-and-add-audio-to-meeting",
+  "allow-cancel-audio-transcription",
+]

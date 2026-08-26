@@ -1,10 +1,10 @@
 # MeetingLens Development Preview User Guide
 
-> Development Preview: this guide describes the local desktop workflows provided by the current `feat/summary-mode-minutes` implementation. It is not a production manual; the branch connects transcript input, explicit DeepSeek authorization, five-section results, editing, evidence, Markdown copy/save, and whole-result regeneration while keeping schema v5.
+> Development Preview: this guide describes the local desktop workflows provided by `main` through PR #25 plus the current `feat/audio-file-transcription` delivery. It is not a production manual; audio transcription adds schema v6 while preserving the existing Summary/DeepSeek behavior.
 
 ## 1. Introduction to MeetingLens
 
-MeetingLens is a local-first Personal Edition meeting workspace for Windows 11. It turns pasted or imported meeting transcripts into editable, evidence-linked minutes that can be copied or saved as Markdown. The current feature implementation can accept, persist, review, and correct transcripts, explicitly authorize the Rust-only DeepSeek path, show the generated result, save body edits, inspect evidence, and regenerate the whole result as a new revision.
+MeetingLens is a local-first Personal Edition meeting workspace for Windows 11. It turns pasted, imported, or locally transcribed meeting content into editable, evidence-linked minutes that can be copied or saved as Markdown. The current feature implementation can transcribe a selected recording locally, persist and correct its normalized transcript, explicitly authorize the Rust-only DeepSeek path, show the generated result, save body edits, inspect evidence, and regenerate the whole result as a new revision.
 
 The same application includes Simplified Chinese (`zh-CN`) and English (`en-US`); two installations are not required.
 
@@ -15,6 +15,7 @@ The current version is a development preview. Available capabilities include:
 - creating, editing, starting, ending, and deleting local meetings;
 - seeing Summary, Translation, and Meeting entries on Home; only Summary can currently be opened, while the Translation and Meeting roadmaps are Frozen/Deferred;
 - pasting UTF-8 meeting notes or importing TXT, SRT, and VTT through the native picker;
+- selecting one WAV, MP3, M4A, or audio-track MP4 file for local faster-whisper CPU-int8 transcription, with safe progress and cancellation;
 - viewing transcript sources, reviewing paginated segments, correcting text and speaker display names, and deleting sources;
 - selecting transcript sources, one of three templates, and Chinese, English, or bilingual output in the Minutes workspace;
 - explicitly generating or continuing a DeepSeek run, viewing queued/running/completed/failed/cancelled status, and cancelling active work;
@@ -24,18 +25,18 @@ The current version is a development preview. Available capabilities include:
 - safely importing, deduplicating, listing, and deleting meeting-file copies through the native picker;
 - viewing Mock Provider, local Sidecar, and database status;
 - storing a DeepSeek API key in Windows Credential Manager without allowing the WebView to read it back;
-- running development validation of the isolated offline Docling Worker, which is not connected to the product UI.
-- validating schema-v4 Summary series/revisions, immutable transcript snapshots, and run-owned evidence, plus schema-v5 minimal remembered consent;
+- running development validation of the isolated offline Docling Worker, which is not connected to the product UI;
+- validating schema-v4 Summary series/revisions, immutable transcript snapshots, and run-owned evidence, schema-v5 minimal remembered consent, and schema-v6 `imported_audio` transcript sources;
 - using Settings to see the fixed DeepSeek host/model, remembered-consent state and time, and to revoke future authorization;
 - validating the Rust DeepSeek protocol, strict JSON/evidence checks, failures, and cancellation with synthetic transports; the deterministic Mock remains test/debug-only and historical Mock runs remain readable/exportable but read-only.
 
-The user-facing application can initiate DeepSeek generation only after an explicit Generate or Continue action and the required disclosure/consent checks. Remembered consent never authorizes page-load sending, restart replay, or background retry. Recording-file transcription, live recording, and realtime transcription are not available. Translation and Meeting still display Coming soon and remain Frozen/Deferred. The Rust production provider is fixed to DeepSeek; Mock is isolated to tests/debug and makes no network request. A real paid DeepSeek API smoke has not been performed, so real key/account/balance/public-network service behavior is not claimed as validated.
+The user-facing application can initiate DeepSeek generation only after an explicit Generate or Continue action and the required disclosure/consent checks. Remembered consent never authorizes page-load sending, restart replay, or background retry. Recording-file transcription is local and available in this source-checkout development preview; live recording and realtime transcription are not. Translation and Meeting still display Coming soon and remain Frozen/Deferred. The Rust production provider is fixed to DeepSeek; Mock is isolated to tests/debug and makes no network request. A separately authorized single request using a very short synthetic transcript passed on the PR #25 baseline; this does not guarantee future account balance, service availability, or model-alias behavior.
 
 ## 3. System requirements
 
 - Windows 11;
 - WebView2;
-- for source development: Node.js 22+, npm 10+, Python 3.12.x, Rust stable, and Visual Studio Build Tools 2022;
+- for source development: Node.js 22+, npm 10+, Python 3.12.x, uv 0.11.21, Rust stable, and Visual Studio Build Tools 2022;
 - the Desktop development with C++ workload with MSVC v143, a Windows 10/11 SDK, and C++ CMake tools.
 
 Windows 11 and Python 3.12 are the project baselines. Other systems or Python versions do not replace formal acceptance on those baselines.
@@ -46,8 +47,12 @@ Install locked dependencies and start the desktop development build from the rep
 
 ```powershell
 npm ci
+.\scripts\setup-transcription-worker.ps1
+.\scripts\provision-transcription-model.ps1
 npm run tauri dev
 ```
+
+Worker setup and model provisioning are explicit developer actions. The pinned model is stored outside the repository; normal transcription runs offline and do not download or update it.
 
 Run the complete automated checks with:
 
@@ -86,6 +91,18 @@ Meeting history remains available. Create meeting manually is an advanced previe
 5. Matching content in the same meeting displays Already added and does not create a second source.
 
 The absolute source path never returns to the WebView, and the source file is not copied, changed, or deleted. TXT, SRT, and VTT use the bounded Rust parser, not Docling, the Python Sidecar, or external AI.
+
+### Transcribe a recording locally
+
+This workflow currently requires a source checkout and debug/`tauri dev` build. Release builds do not yet package or resolve the Worker/model and report audio transcription as unavailable.
+
+1. Optionally enter a title on Summary input, or open Transcript review for an existing eligible meeting.
+2. Select the audio transcription action and choose one WAV, MP3, M4A, or MP4 file. MP4 is accepted only when it contains a supported audio stream; video frames are ignored.
+3. Review the local-only notice. The fixed runtime uses faster-whisper on CPU with int8 compute. The maximum input is 2 GiB and four hours.
+4. Follow selected, validation/copy/probe, model-load, transcription, output-validation, and commit progress. You may cancel while a job is running; only one transcription job runs at a time.
+5. On success, MeetingLens opens or refreshes Transcript review and selects the new `imported_audio` source. Correct its text in the same workspace before generating minutes.
+
+Cancelling the picker is a safe no-op. Rust privately stages and validates the source, and the application protocol accepts only bounded artifacts beneath its controlled job directory. React never receives the original path, staged path, worker artifact, or transcript segments through the audio command. Failure or cancellation leaves no partial source and cleans the worker process tree and staging data. This preview uses path guards and process/resource limits, not an OS-level filesystem sandbox; the one-shot Worker still runs with the current Windows user's permissions. If the Worker or exact pinned model is missing, use the setup/provisioning scripts above; MeetingLens does not silently download a model.
 
 ### Generate meeting minutes
 
@@ -202,13 +219,13 @@ Deletion is irreversible. Confirm that the selected meeting and files are correc
 - Submitted transcript sources and normalized segments are stored in the same private database.
 - Schema v4 stores Summary runs and immutable transcript snapshots locally. Its durable limit remains 20,000 final segments and 10 MiB of UTF-8 text; the production DeepSeek policy is limited to 1 MiB and fails before transport when exceeded. Explicit source deletion redacts terminal full-text snapshots while retaining only cited evidence.
 - Schema v5 stores at most one minimal remembered DeepSeek preference: provider, policy version/fingerprint, and consent/update times. It never stores transcript text, run IDs, prompts, responses, paths, or keys. One-time consent exists only in Rust memory for up to 10 minutes and is consumed once.
-- Minutes editing reuses schema v5: it updates the current revision's five-section `content_json` and sticky `is_user_edited` flag. A Rust-derived `contentVersion` protects edits and Markdown output but is not stored in SQLite. There is no separate Provider-draft copy or edit-history table in the same revision.
+- Schema v6 adds only the `imported_audio` source type to the existing transcript and frozen Summary-source constraints. It stores normalized text/timing in the existing transcript tables, not the original recording or an audio path. Minutes editing still updates the existing revision's five-section `content_json`; Rust-derived `contentVersion` remains non-persistent.
 - Unsubmitted pasted text exists only briefly in React memory and is cleared after save, cancel, or navigation away.
 - Transcript bodies, speakers, and source paths are not written to localStorage, sessionStorage, IndexedDB, or console.
 - Imported copies are stored in private application storage; React does not receive absolute paths.
 - The DeepSeek key is stored in Windows Credential Manager.
 - Interface language is the only application setting allowed in WebView preference storage.
-- The current preview does not record audio or read the screen. The user-facing Generate/Continue controls can ask the Rust provider to send only a frozen, explicitly authorized transcript scope to the fixed DeepSeek endpoint; React, Python, and Docling cannot make that request.
+- The current preview does not capture live audio or read the screen. Selected recording files are processed locally in private temporary staging and are cleaned after terminal completion; the normalized `imported_audio` transcript is retained in SQLite. The user-facing Generate/Continue controls can ask the Rust provider to send only a frozen, explicitly authorized transcript scope to the fixed DeepSeek endpoint; the transcription Worker never receives the DeepSeek key and never performs that request.
 - Canonical Markdown is generated in Rust. Native Save As does not store a destination path in SQLite or return it to React; clipboard and external `.md` copies remain outside MeetingLens lifecycle control.
 - Tests and issue reports must use synthetic data only.
 
@@ -218,7 +235,6 @@ See [SECURITY.md](../SECURITY.md) for the detailed boundaries.
 
 The following near-term Personal Edition capabilities are not implemented:
 
-- local batch transcription of a recording file;
 - simplified Docling product orchestration and document evidence;
 - optional user-selected window context.
 
@@ -228,14 +244,14 @@ The following capabilities are Frozen/Deferred and are not part of the current P
 - realtime speaker diarization and identity enhancement;
 - realtime translation, caption overlay, checkpoints, and automatic topic detection;
 - independent Translation and Meeting workspaces;
-- section/paragraph regeneration, edit history/restore, rich HTML results, collaborative conflict merging, Structured Visuals, video import, commercial distribution, and DOCX/PDF export;
+- section/paragraph regeneration, edit history/restore, rich HTML results, collaborative conflict merging, Structured Visuals, video-frame analysis/general video processing, commercial distribution, and DOCX/PDF export;
 - a production PDF user manual and final screenshot workflow.
 
 ## 15. Frequently asked questions
 
 ### Why can I not generate minutes after saving a DeepSeek key?
 
-Saving a key only configures SecretStore; it does not validate the account or authorize a request. Open Minutes, select at least one non-empty transcript source, choose the template/language, and select Generate. Rust still requires an eligible meeting, a valid frozen scope, current consent, and a terminal-safe run state. Only stable safe errors are shown; a real paid API smoke has not been performed by this project.
+Saving a key only configures SecretStore; it does not validate the account or authorize a request. Open Minutes, select at least one non-empty transcript source, choose the template/language, and select Generate. Rust still requires an eligible meeting, a valid frozen scope, current consent, and a terminal-safe run state. Only stable safe errors are shown. One separately authorized synthetic request passed on the PR #25 baseline, but your current key/account/service state is checked only by a request you explicitly authorize.
 
 ### Why does a queued result ask me to continue after restart?
 
@@ -244,6 +260,10 @@ MeetingLens never treats remembered consent as permission for startup or backgro
 ### Does transcript import copy or delete the source file?
 
 No. Rust reads it only during selection and stores normalized segments; the absolute path does not enter the WebView or SQLite. Deleting a transcript source does not affect the user's file.
+
+### Does audio transcription upload or keep my recording?
+
+No. The selected file is copied only into app-private temporary staging for a local one-shot Worker. The original file is unchanged, the staged copy is cleaned after completion/cancellation/failure, and only the normalized `imported_audio` source and segments are committed. The model must be provisioned explicitly; the runtime does not download it or send audio to DeepSeek.
 
 ### Why is there no parsed result after importing a file?
 
@@ -264,6 +284,8 @@ No. It resets only the non-sensitive interface-language preference. Meetings and
 - Database unavailable: stop write actions and retain the safe error code; do not edit or delete database files directly.
 - File import fails: check the type, size, quota, and file integrity; do not rename an extension to bypass validation.
 - Transcript import fails: confirm that it is a strict UTF-8 TXT/SRT/VTT file no larger than 10 MiB and that cue/timestamp syntax is complete. Do not include the path or transcript body in a report.
+- Audio transcription is unavailable: run the locked Worker setup and explicit model-provisioning scripts, then restart the application. Do not copy a model into the repository or weaken its manifest/revision checks.
+- Audio transcription fails: use WAV/MP3/M4A/MP4 with a valid audio stream, no larger than 2 GiB or four hours. A changed extension does not bypass media validation. Retry only after the running job reaches a terminal state; do not include the filename, path, audio, transcript, or worker stderr in a report.
 - Correction conflict: reload the current segment before editing again; do not bypass revision protection.
 - Minutes generation is blocked: configure the key, select a non-empty source, review the disclosure, and use Generate/Continue explicitly. Do not retry by changing Provider URLs or bypassing consent.
 - Minutes edit conflict: reload the current revision before reapplying the edit; stale `contentVersion` output is intentionally rejected.
@@ -282,9 +304,9 @@ The completed and next Personal Edition delivery path is:
 4. `feat/summary-run-core` (PR #21 merged): schema v4, immutable full-text snapshots, series/revisions, evidence allowlisting, recovery, and the Rust zero-network Mock;
 5. `docs/personal-edition-descope` (PR #23 merged): Personal Edition scope, Frozen/Deferred boundaries, and development-process re-baseline;
 6. `feat/summary-provider-deepseek` (PR #24 merged): schema v5 minimal preference, Rust DeepSeek/SecretStore, strict JSON/evidence, one-time/remember/revoke, cancellation and fail-closed behavior; no general Consent Data Core;
-7. `feat/summary-mode-minutes` (current feature delivery, expected PR #25, daily-use milestone): formal Generate/consent/status, five-section Chinese/English/bilingual results and exact evidence, protected body editing, canonical Markdown copy/native save, and whole-result regeneration while preserving old revisions; no section regeneration or DOCX/PDF;
-8. `feat/audio-file-transcription` (next only after the current feature is reviewed and merged; expected PR #26): locally batch-transcribe a user-imported meeting recording through a one-shot worker; no live audio, WASAPI, or realtime ASR;
-9. `feat/document-parsing-orchestration` (expected PR #27): simplified wiring of the existing Docling Worker, document chunks/evidence, one automatic retry, then a prompt to re-import;
+7. `feat/summary-mode-minutes` (PR #25 merged, daily-use milestone): formal Generate/consent/status, five-section Chinese/English/bilingual results and exact evidence, protected body editing, canonical Markdown copy/native save, and whole-result regeneration while preserving old revisions; one separately authorized synthetic live smoke passed;
+8. `feat/audio-file-transcription` (current feature delivery, expected PR #26): schema v6, explicit Worker/model provisioning, and local WAV/MP3/M4A/audio-track MP4 batch transcription through a one-shot CPU-int8 worker; no live audio, WASAPI, or realtime ASR;
+9. `feat/document-parsing-orchestration` (next only after the current feature is reviewed and merged; expected PR #27): simplified wiring of the existing Docling Worker, document chunks/evidence, one automatic retry, then a prompt to re-import;
 10. `feat/window-context` (optional, expected PR #28 or later): read only a specific window explicitly selected by the user, and only after a repeated real need is confirmed.
 
-The current `feat/summary-mode-minutes` delivery targets the daily-use loop from an existing transcript to real minutes that can be viewed, edited, copied, or saved. Realtime capture/ASR, realtime translation, speaker diarization, checkpoints, independent Translation/Meeting workspaces, Structured Visuals, commercial distribution, and DOCX/PDF remain Frozen/Deferred. Minimal Consent is for a single-user Personal Edition and is not an enterprise compliance audit system; a request without valid confirmation must fail closed. [DEVELOPMENT_PLAN.md](../DEVELOPMENT_PLAN.md) is authoritative for future stages and branches; expected PR numbers are not authoritative identifiers.
+The current `feat/audio-file-transcription` delivery adds a high-value local recording input to the completed daily-use Summary loop. Realtime capture/ASR, realtime translation, speaker diarization, checkpoints, independent Translation/Meeting workspaces, Structured Visuals, commercial distribution, and DOCX/PDF remain Frozen/Deferred. Minimal Consent is for a single-user Personal Edition and is not an enterprise compliance audit system; a request without valid confirmation must fail closed. [DEVELOPMENT_PLAN.md](../DEVELOPMENT_PLAN.md) is authoritative for future stages and branches; expected PR numbers are not authoritative identifiers.

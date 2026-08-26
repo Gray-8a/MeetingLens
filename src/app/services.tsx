@@ -1,5 +1,9 @@
 import { isTauri } from "@tauri-apps/api/core";
 import { createContext, useContext, type ReactNode } from "react";
+import {
+  audioTranscriptionApi,
+  type AudioTranscriptionApi,
+} from "../api/audioTranscription";
 import { documentApi, type DocumentApi } from "../api/document";
 import { meetingApi, type MeetingApi } from "../api/meeting";
 import { secretApi, type SecretApi } from "../api/secret";
@@ -9,6 +13,7 @@ import { checkSidecarHealth, type SidecarStatus } from "../lib/sidecar";
 import { ProviderRegistry } from "../providers/runtime";
 
 export interface AppServices {
+  audioTranscriptionApi: AudioTranscriptionApi;
   documentApi: DocumentApi;
   meetingApi: MeetingApi;
   secretApi: SecretApi;
@@ -21,6 +26,7 @@ export interface AppServices {
 
 export function createDefaultAppServices(): AppServices {
   return {
+    audioTranscriptionApi,
     documentApi,
     meetingApi,
     secretApi,

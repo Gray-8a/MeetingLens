@@ -14,6 +14,7 @@ import { ServicesProvider, type AppServices } from "./app/services";
 import { SummaryResultView } from "./components/SummaryResultView";
 import i18n from "./i18n";
 import { ProviderRegistry } from "./providers/runtime";
+import { FakeAudioTranscriptionApi } from "./test/fakeAudioTranscriptionApi";
 import { FakeDocumentApi } from "./test/fakeDocumentApi";
 import {
   FakeMeetingApi,
@@ -80,6 +81,10 @@ function renderMinutes({
     );
   });
   const services: AppServices = {
+    audioTranscriptionApi: new FakeAudioTranscriptionApi(
+      meetingApi,
+      transcriptApi,
+    ),
     documentApi: new FakeDocumentApi(),
     meetingApi,
     secretApi: new FakeSecretApi(),

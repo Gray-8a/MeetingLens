@@ -4,7 +4,7 @@
 
 MeetingLens 是一款面向 Windows 11 的本地优先 AI 会议助手，当前采用 **Personal Edition / 自用版基线**。第一核心目标是：让单个用户以最少步骤，将已有会议转录或粘贴文本发送给经明确确认的 DeepSeek Provider，获得详实、可编辑、可追溯的会议纪要，并通过 Markdown 复制或保存。
 
-产品优先把“会上说了什么”转化成可核验的决定、行动项、风险和未决问题。转录是最重要的第一类来源；录音文件事后批量转录和文档证据是可复用同一管线的后续增强，窗口上下文只有在用户确认真实需要后才可选启动。实时音频、实时 ASR、说话人增强、实时翻译和独立会议工作区不属于当前自用版的近期完成标准。
+产品优先把“会上说了什么”转化成可核验的决定、行动项、风险和未决问题。转录是最重要的第一类来源；当前 `feat/audio-file-transcription` 把录音文件事后批量转写接入同一管线，文档证据是下一阶段增强，窗口上下文只有在用户确认真实需要后才可选启动。实时音频、实时 ASR、说话人增强、实时翻译和独立会议工作区不属于当前自用版的近期完成标准。
 
 长期三模式愿景与复用规则以 `SIMPLIFIED_MODE_SPEC.md` 为准；本文件是产品能力、行为规则和验收边界的权威规格；实际实施顺序以 `DEVELOPMENT_PLAN.md` 为准。当前只优先完成总结模式。翻译和独立会议模式工作区是 Frozen/Deferred 的长期愿景，此前已经合并的工程与安全基础继续保留，不删除代码或数据。
 
@@ -33,14 +33,14 @@ Personal Edition 是单人自用的单机桌面产品，不引入账号体系、
 
 首页保留三个主要模式入口和历史记录，但当前 Personal Edition 只把总结模式作为近期可进入的产品主线。用户不需要先理解 Provider、Docling、设备协议或内部状态机。
 
-- **总结模式（Current）**：可粘贴 UTF-8 文本或通过 Rust 原生选择器导入 TXT/SRT/VTT，预览和修正规范化片段，并在当前 `feat/summary-mode-minutes` 实现中选择来源、模板和输出语言，经明确确认后调用 Rust DeepSeek Provider，再查看、修改、复制或保存结果。
+- **总结模式（Current）**：可粘贴 UTF-8 文本、通过 Rust 原生选择器导入 TXT/SRT/VTT，或在本地转写 WAV/MP3/M4A/含音轨 MP4；随后预览和修正规范化片段，选择来源、模板和输出语言，经明确确认后调用 Rust DeepSeek Provider，再查看、修改、复制或保存结果。
 - **翻译模式（Frozen/Deferred）**：保留长期愿景和共享数据边界，当前不开发实时字幕、持续翻译外发、checkpoint 或浮窗。
 - **会议模式（Frozen/Deferred）**：未来如解冻，优先复用录音/转录输入、现有 Transcript Workspace 和同一 Summary pipeline，不建立第二套数据库或转录/摘要模型。
 - **历史记录（Current）**：当前查看本地会议和已实现的转录入口；未来摘要和导出结果仍复用同一历史管线。
 
-音频文件批量转录是 `feat/summary-mode-minutes` 达到日常可用后计划的增强，当前尚未显示为可用入口；视频导入继续 Deferred。参考材料仍通过独立 Document UI 管理，不与转录来源混淆。
+音频文件批量转录是当前 `feat/audio-file-transcription` 交付：只处理用户明确选择文件中的音轨，MP4 不等于视频帧/画面处理。参考材料仍通过独立 Document UI 管理，不与转录来源混淆；通用视频导入、视频关键帧和视觉分析继续 Deferred。
 
-### 4.2 生成会议纪要（Current delivery）
+### 4.2 生成会议纪要（Current）
 
 1. 用户选择一个或多个可用来源；近期 transcript-only MVP 只消费转录来源。
 2. Rust 先在本地创建 queued run 并原子冻结不可变输入快照；这一步不读取 Key，也不发起网络，后续编辑不改变本次 run。
@@ -86,15 +86,15 @@ Phase 0 已通过 PR #1 合并，并在 Windows 本机实际启动 Tauri 窗口�
 
 ### 5.3 Personal Edition 近期主线：完成日常可用总结模式
 
-PR #1–#24 已合并。文档安全存储、原生导入 UI、Docling Worker Foundation、zh-CN/en-US、Transcript Data Core、安全 Transcript Command API、Summary Mode Input UI、schema v4 Summary Run Core、Personal Edition 重定基线，以及 schema v5 Rust-only DeepSeek/SecretStore/最小 Consent 已完成。当前 `feat/summary-mode-minutes` 在这些边界上交付正式生成、五区结果、精确 evidence、受限正文编辑、canonical Markdown、显式复制、Rust 原生 Save As 和整份重新生成。它不修改 schema v5、既有 Provider 协议或 Prompt。Docling Worker 仍未接入 SQLite、Commands 或产品 UI。
+PR #1–#25 已合并。文档安全存储、原生导入 UI、Docling Worker Foundation、zh-CN/en-US、Transcript Data Core、安全 Transcript Command API、schema v4 Summary Run Core、Personal Edition 重定基线、schema v5 Rust-only DeepSeek/SecretStore/最小 Consent，以及正式生成、五区结果、精确 evidence、受限正文编辑、canonical Markdown 复制/原生保存和整份重新生成已完成。PR #25 基线上另有一次用户授权的极短纯合成 DeepSeek live smoke 通过。当前 `feat/audio-file-transcription` 追加 schema v6、本地批量转写和既有 Transcript/Summary 接入；Docling Worker 仍未接入 SQLite、Commands 或产品 UI。
 
 当前最短路线如下。分支名和阶段能力范围是权威标识；未来 PR 编号只表示预期顺序：
 
 1. **`docs/personal-edition-descope`（PR #23 已完成）**：重新定义 Personal Edition、冻结/简化范围和风险分级验收。
 2. **`feat/summary-provider-deepseek`（PR #24 已完成）**：schema v5 最小 remembered Consent、Rust DeepSeek Provider、SecretStore 读取、固定真实请求、严格响应/evidence、安全错误/取消，以及本次同意/记住/撤销；不建立通用 Consent Data Core。
-3. **`feat/summary-mode-minutes`（当前功能分支，预计 PR #25，日常可用里程碑）**：模板、中文/英文/双语输出、正式生成入口、五区纪要和 evidence、canonical Markdown 查看/复制/原生保存、受限正文修改和整份重新生成；继续使用现有 series/revision，不覆盖旧 revision，不开发章节级重生成或 DOCX/PDF。
-4. **`feat/audio-file-transcription`（当前功能经用户决定合并后的下一阶段，预计 PR #26）**：导入会议录音文件，通过本地 faster-whisper CPU int8 一次性受控 Worker 批量转写，并写入现有 transcript 数据模型；不做实时音频、WASAPI、实时字幕或实时 diarization。
-5. **`feat/document-parsing-orchestration`（预计 PR #27）**：将已有 Docling Worker 接入正式数据流，生成 document chunks/evidence，失败自动重试一次，再失败提示手动重新导入；不建立重型通用调度平台。
+3. **`feat/summary-mode-minutes`（PR #25 已完成，日常可用里程碑）**：模板、中文/英文/双语输出、正式生成入口、五区纪要和 evidence、canonical Markdown 查看/复制/原生保存、受限正文修改和整份重新生成；继续使用现有 series/revision，不覆盖旧 revision，不开发章节级重生成或 DOCX/PDF。
+4. **`feat/audio-file-transcription`（当前功能分支，预计 PR #26）**：schema v6 `imported_audio`、WAV/MP3/M4A/含音轨 MP4、显式 Worker/模型 provisioning、本地 faster-whisper CPU int8 一次性 Worker、进度/取消/清理，并写入现有 transcript 数据模型；不做实时音频、WASAPI、实时字幕或实时 diarization。
+5. **`feat/document-parsing-orchestration`（当前功能经用户决定合并后的唯一下一阶段，预计 PR #27）**：将已有 Docling Worker 接入正式数据流，生成 document chunks/evidence，失败自动重试一次，再失败提示手动重新导入；不建立重型通用调度平台。
 6. **`feat/window-context`（可选，预计 PR #28 或更后）**：只有在用户确认经常需要屏幕分享上下文后才启动；必须明确选择具体窗口，身份变化时暂停或重新确认，默认不保存关键帧。
 
 Frozen/Deferred：实时会议录音、实时 ASR、实时说话人分离、实时翻译、字幕浮窗、checkpoint、自动话题判断、独立翻译/会议工作区、Structured Visuals、安装包完善、签名、SBOM、托盘、自动更新、商业/企业分发，以及 DOCX/PDF 导出。它们当前不开发，但不删除已有基础或未来恢复可能。
@@ -105,15 +105,15 @@ Docling 是参考文档解析增强，不是 transcript-only 纪要的强制前�
 
 #### 5.3.1 第一版转录输入与限制
 
-近期只实现粘贴严格 UTF-8 文本，以及 TXT、SRT、VTT。普通文本按非空段落或明确发言行保序转换；仅识别明确的 `姓名: 内容`，不确定时 speaker 为空，不用大模型猜测。SRT/VTT 保留 cue 顺序、相对时间、原始语言和明确说话人标签，不自动翻译。
+当前实现粘贴严格 UTF-8 文本、TXT/SRT/VTT，以及录音文件批量转写产生的 `imported_audio`。普通文本按非空段落或明确发言行保序转换；仅识别明确的 `姓名: 内容`，不确定时 speaker 为空，不用大模型猜测。SRT/VTT 保留 cue 顺序、相对时间、原始语言和明确说话人标签，不自动翻译。音频 segment 保留本地模型输出的相对时间，首版 speaker/confidence 为 null，不做 diarization 或身份推断。
 
-限制固定为：粘贴内容最多 2 MiB、转录文件最多 10 MiB、每个 source 最多 20,000 个 segments、单 segment 正文最多 64 KiB。输入必须为严格 UTF-8，拒绝 NUL 和除 TAB/LF/CR 外的危险 C0 控制字符。文本中的 URL、代码和指令只作为数据，不执行、不访问网络、不写入普通日志。
+限制固定为：粘贴内容最多 2 MiB、文本转录文件最多 10 MiB；音频单文件最多 2 GiB、最长四小时，只允许 WAV/MP3/M4A/含音轨 MP4。每个 source 最多 20,000 个 segments、单 segment 正文最多 64 KiB、规范化 transcript 最多 10 MiB。正文必须为严格 UTF-8，拒绝 NUL 和除 TAB/LF/CR 外的危险 C0 控制字符。文本中的 URL、代码和指令只作为数据，不执行、不访问网络、不写入普通日志。
 
 Summary run 的多来源聚合限制独立固定为：最多 20,000 个 final segments、规范化正文合计最多 10 MiB UTF-8 bytes。来源按用户选择顺序、片段按稳定 ordinal 冻结并产生全局 ordinal；空输入、重复/跨 meeting source、只有 partial segments 或任何超限都整体拒绝，不截断、不抽样。
 
 普通用户检查页面不得一次读取或渲染 20,000 个 segments。列表由后端按稳定 `ordinal` 顺序分页，生产单页上限为 200，并返回总数和后续页信息；不得在前端先取得全量再切片。同一 source 内相同 `speaker_label` 可由用户统一设置或清空 `speaker_name`，每条受影响 segment 的 revision 必须递增且 `corrected_at` 更新；原始 label 不变，映射不跨 source/meeting，也不推断真实身份。
 
-`platform_export` 是保留来源类型；Teams、Zoom、飞书、腾讯会议等平台专用 adapter 只有获得脱敏真实样例后才增加。当前不承诺 DOCX/CSV/JSON 平台模板或视频转录。音频文件转录尚未实现，但已计划由后续 `feat/audio-file-transcription` 通过本地批量 Worker 接入现有 transcript 数据模型。
+`platform_export` 是保留来源类型；Teams、Zoom、飞书、腾讯会议等平台专用 adapter 只有获得脱敏真实样例后才增加。当前不承诺 DOCX/CSV/JSON 平台模板或视频画面转录。MP4 只是音频容器输入，画面被忽略；当前音频 Worker 直接接入现有 transcript 数据模型。
 
 解析后持久化规范化 segments、原始显示文件名、来源类型和内容 SHA-256，但不长期复制原始转录文件；源文件不被修改或删除。重新解析需要用户再次选择源文件。该哈希用于来源识别和同会议重复检测，不代表可信或防病毒。
 
@@ -129,7 +129,7 @@ production run 固定记录 `deepseek/external/deepseek-v4-pro/summary-deepseek-
 
 集中式 `summaryApi` 固定包含十六个方法：原十二个 policy/run/Consent commands，再增加按 ID 精确读取 evidence、受限正文更新、canonical Markdown 获取和 Rust 原生 Markdown Save As。DTO（含嵌套结果）统一 camelCase 并严格拒绝扩展；run/evidence 列表采用默认 50、最大 100 的 keyset 分页。WebView 只能提交 ID、模板/语言、分页、`remember`、受限可编辑字段和 Rust 派生的 `expectedContentVersion`；不能提交 Provider/model/endpoint、完整结果、evidence、文件路径、凭据或时间戳。React 不能直接提交 Provider 结果或自行写文件。
 
-completed 结果派生 `contentVersion`：Rust 对规范化 typed `SummaryContent` JSON 计算 SHA-256 并返回 64 位小写十六进制，非 completed 状态返回 null。编辑、Markdown 获取和保存必须带当前 `expectedContentVersion`，后端在事务内重读并比较，防止多个窗口或过期页面静默覆盖/导出旧内容。该值不写入 SQLite，因此本功能保持 schema v5 且不增加 migration。
+completed 结果派生 `contentVersion`：Rust 对规范化 typed `SummaryContent` JSON 计算 SHA-256 并返回 64 位小写十六进制，非 completed 状态返回 null。编辑、Markdown 获取和保存必须带当前 `expectedContentVersion`，后端在事务内重读并比较，防止多个窗口或过期页面静默覆盖/导出旧内容。该值不写入 SQLite；schema v6 没有改变该编辑契约。
 
 segment 修正把依赖旧 revision 的 run 标为 `segment_revised` stale，但旧快照/结果不变；latest DeepSeek revision 可以由用户明确整份重新生成。queued/running run 使用的 source 删除稳定拒绝；terminal source 删除保留已引用、最多 1,024 UTF-8 bytes 的 evidence，清理完整正文快照并标 `source_deleted` stale，此时历史结果仍可查看、编辑、复制和保存，但同 series 不再重新生成。会议删除先取消 active runs，再由既有协调器清理 summaries、snapshots 和 evidence；任何路径都不得静默重生成。
 
@@ -141,7 +141,7 @@ segment 修正把依赖旧 revision 的 run 标为 `segment_revised` stale，但
 
 第一版只接受用户通过 MeetingLens 原生文件选择器主动选择的本地文件。Teams、Zoom、Google Meet、邮件或聊天中的附件必须先由用户自行下载，再手动导入。首版不自动读取聊天/云盘附件，不监控 Downloads 或桌面，不读取剪贴板文件，不接受任意路径拖放、远程 URL 或网络共享自动导入。
 
-所有导入文件均视为不可信数据。MeetingLens 只复制和保存参考文档，不启动文件、不调用系统文件关联或 Microsoft Office 自动化、不执行宏/脚本/嵌入对象、不自动访问外部链接，也不在 WebView 中直接渲染未经处理的文件。参考文档内容解析只能由隔离、离线、受 Rust 限制的 Docling Worker 执行；粘贴文本与 TXT/SRT/VTT 转录由 Rust 的有界轻量 parser 处理，不经过 Docling。当前 Python HTTP Sidecar 和 DeepSeek 均不接收文件内容。已有 Worker Foundation 不持久化解析结果，只有后续 `feat/document-parsing-orchestration` 才能接入参考文档生命周期。
+所有导入文件均视为不可信数据。MeetingLens 只长期复制和保存参考文档，不启动文件、不调用系统文件关联或 Microsoft Office 自动化、不执行宏/脚本/嵌入对象、不自动访问外部链接，也不在 WebView 中直接渲染未经处理的文件。参考文档内容解析只能由隔离、离线、受 Rust 限制的 Docling Worker 执行；粘贴文本与 TXT/SRT/VTT 转录由 Rust 的有界轻量 parser 处理。音频由独立一次性 faster-whisper Worker 在 Rust 私有 staging 中本地处理，原录音终态后清理；Python HTTP Sidecar 和 DeepSeek 均不接收音频或文件内容。已有 Docling Worker Foundation 不持久化解析结果，只有后续 `feat/document-parsing-orchestration` 才能接入参考文档生命周期。
 
 React 只接收 document ID、原始显示名称、安全类型、大小、状态和导入时间。Rust 负责原生选择、最终校验、私有存储和路径边界，源文件绝对路径不得写入 SQLite 或返回前端。
 
@@ -152,10 +152,11 @@ React 只接收 document ID、原始显示名称、安全类型、大小、状�
 - 文档：`.pdf`、`.docx`、`.pptx`、`.xlsx`
 - 文本：`.txt`、`.md`、`.csv`
 - 图片：`.png`、`.jpg`、`.jpeg`
+- 本地音频转写：`.wav`、`.mp3`、`.m4a`、`.mp4`（MP4 必须含音轨，只处理音频）
 
 明确拒绝旧 Office 二进制格式、宏文档、普通归档、可执行文件、脚本、HTML、双重扩展伪装、空文件和无法确定安全类型的文件。扩展名不能作为唯一依据；Rust 必须结合文件签名或安全类型识别，类型不一致或未知时 fail closed。OOXML 虽是 ZIP 容器，但不因此允许普通 ZIP；导入阶段不解压，完整结构验证留给隔离 Worker。未知内容不得自动当作纯文本。
 
-默认配额为：单文件最大 100 MiB、单次选择最多 10 个文件、单场会议最多 20 个文件、单场会议累计最大 500 MiB、原始文件名 UTF-8 表示最大 255 bytes。Rust 是最终执行者，必须防止通过多次调用绕过累计配额；前端校验只改善体验。全局磁盘配额管理器属于后续实现；PR #14 已为隔离 Docling Worker 实现 4 GiB Job Object 内存上限和 150 秒处理时限。
+参考文档默认配额为：单文件最大 100 MiB、单次选择最多 10 个、单场会议最多 20 个、累计最大 500 MiB、原始文件名 UTF-8 最大 255 bytes。音频每次只选一个，最大 2 GiB/四小时，输出最多 20,000 segments、单段 64 KiB、transcript 10 MiB、artifact 16 MiB；同一时间只运行一个 job。Rust 是最终执行者，前端校验只改善体验。Docling 与 audio Worker 各自使用 4 GiB Job Object；Docling 150 秒，audio hard timeout 六小时。
 
 ### 5.4 总结模式参考材料增强（Planned）
 
@@ -164,11 +165,15 @@ React 只接收 document ID、原始显示名称、安全类型、大小、状�
 - Docling 不参与粘贴/TXT/SRT/VTT 的轻量解析，也不阻塞第一份 transcript-only 纪要
 - 继续保留独立进程、资源限制、Rust 路径边界、不向 React 暴露路径和不静默外发文件的安全约束
 
-### 5.5 音频文件批量转录（Planned）
+### 5.5 音频文件批量转录（Current delivery）
 
-- 用户主动导入已有会议录音文件，本地 faster-whisper 以 CPU int8 和一次性受控 Worker 运行
-- 转写结果写入现有 `transcript_sources/transcript_segments`，进入现有 Transcript Workspace 和 Summary pipeline
-- 当前尚未实现，不得描述为可用，也不增加实时音频、WASAPI、持续 Sidecar、实时字幕、实时 ASR 或实时 diarization
+- 用户主动导入一个 WAV/MP3/M4A/含音轨 MP4；Rust 原生 picker 取消无副作用，原始路径不返回 React，用户原文件不被修改或删除
+- Rust 在 UUID 私有 staging 流式复制并校验大小、SHA-256、container/type 和音轨；empty、mismatch、no stream、超限或损坏 fail closed
+- 独立 Python 3.12 Worker 固定 faster-whisper `1.2.1`、small 模型 revision、CPU int8；环境和模型通过单独脚本显式 provision，模型保存在仓库外且正常 runtime 离线，不隐式下载
+- 每个任务一个 Worker 进程，不监听端口、不继承凭据/proxy、不访问 SQLite/SecretStore；Rust 控制资源、超时、进度、并行取消、进程树回收、协议/输出复核和启动清理
+- React 只收到安全 policy/status/progress/error 与最终 meeting/source/count，不收到文件名、路径、音频、Worker artifact 或音频 Command 返回的 segments
+- schema v6 只加入 `imported_audio` source type；成功原子写入现有 `transcript_sources/transcript_segments` 并进入现有 Transcript Workspace/Summary pipeline，失败/取消不留部分行或 staging
+- 不增加实时音频、WASAPI、持续 Sidecar、实时字幕、实时 ASR、实时 diarization、说话人推断、视频帧处理或通用任务调度平台
 
 ### 5.6 可选屏幕与窗口上下文
 
@@ -217,22 +222,22 @@ React 只接收 document ID、原始显示名称、安全类型、大小、状�
 - 自动读取 Teams/Zoom/飞书/腾讯会议云端数据或聊天附件
 - 自动下载会议录制，或声称支持所有平台专有转录模板
 - 自动推断缺失的负责人、截止日期或会议共识
-- 当前阶段声称已支持音频文件转录，或把视频转录、实时音频、视频关键帧和跨会议声纹复用纳入近期交付
+- 把含音轨 MP4 支持声称为视频画面/关键帧转录，或把实时音频、WASAPI、实时 ASR 和跨会议声纹复用纳入当前交付
 - 自动判断话题结束、把屏幕变化直接当作会议结论，或默认持续捕获整个桌面
 - 执行模型生成的 HTML、JavaScript 或任意图表代码
 
 ## 7. 主要界面
 
 1. **首页（Current）**：总结、翻译、会议三个入口和历史记录；当前只有总结模式进入实际工作流，翻译和会议入口保持禁用并标为 Frozen/Deferred。
-2. **总结输入工作区（Current）**：粘贴/导入、来源和分页片段预览、正文与说话人显示名修正，并进入统一 Minutes 工作区。
-3. **总结结果工作区（Current delivery）**：来源、模板和输出语言、显式 Generate/Continue/Cancel、运行状态、五区纪要、精确 evidence、纯文本 Markdown 预览/复制/原生保存、受限正文修改、revision 历史和整份重新生成。
-4. **会议结果增强（Planned/Optional）**：音频文件转录、文档 evidence 和可选窗口上下文只在对应阶段完成后显示。
+2. **总结输入工作区（Current）**：粘贴/导入、本地音频转写与安全进度/取消、来源和分页片段预览、正文与说话人显示名修正，并进入统一 Minutes 工作区。
+3. **总结结果工作区（Current）**：来源、模板和输出语言、显式 Generate/Continue/Cancel、运行状态、五区纪要、精确 evidence、纯文本 Markdown 预览/复制/原生保存、受限正文修改、revision 历史和整份重新生成。
+4. **会议结果增强（Planned/Optional）**：文档 evidence 和可选窗口上下文只在对应阶段完成后显示。
 5. **实时设置和会议中工作区（Frozen/Deferred）**：实时音频、翻译、字幕、checkpoint、说话人分离和独立会议布局当前不开发。
 6. **设置（Current）**：DeepSeek Key 配置状态、固定 Provider/host/model、remembered Consent 状态与时间、撤销入口、界面语言和本地诊断；不显示 Key、不允许编辑 model/base URL，也不允许脱离具体 run 提前授权。
 
 ## 8. 关键数据对象
 
-- 当前已实现对象以 schema v5 和 `DATA_MODEL.md` 为准，包括 Meeting、Document、TranscriptSource、TranscriptSegment、Summary、SummarySource、EvidenceItem 和最小 ProviderConsentPreference
+- 当前已实现对象以 schema v6 和 `DATA_MODEL.md` 为准，包括 Meeting、Document、`imported_audio` 在内的 TranscriptSource/TranscriptSegment、Summary、SummarySource、EvidenceItem 和最小 ProviderConsentPreference
 - DocumentChunk、ScreenEvent、Translation、SpeakerAlias 等仅在相应 Planned 或 Frozen/Deferred 阶段恢复后增加，不得描述为当前已实现
 - schema v5 仅追加 `provider_consent_preferences` 当前偏好表，保存固定 provider/policy fingerprint 与 consented/updated UTC 时间；没有独立 `consent_events`、session/audit log、正文、run ID、Prompt、响应、路径或 Key
 
@@ -251,7 +256,7 @@ React 只接收 document ID、原始显示名称、安全类型、大小、状�
 
 ## 10. DeepSeek 约定
 
-DeepSeek Provider 已由 Rust 实现，当前功能分支将其接入普通用户明确触发的生成与正式结果 UI。production 身份固定为 Provider `deepseek`、mode `external`、host `api.deepseek.com`、model `deepseek-v4-pro`、prompt version `summary-deepseek-v1`，endpoint 固定为 `https://api.deepseek.com/chat/completions`，不能由 WebView 或用户修改。
+DeepSeek Provider 与普通用户明确触发的生成/结果 UI 已由 PR #24/#25 完成。production 身份固定为 Provider `deepseek`、mode `external`、host `api.deepseek.com`、model `deepseek-v4-pro`、prompt version `summary-deepseek-v1`，endpoint 固定为 `https://api.deepseek.com/chat/completions`，不能由 WebView 或用户修改。
 
 - DeepSeek 请求只能由 Rust `SummaryProvider` 发起；React、Python Sidecar 和 Docling Worker 均不得直接调用 Provider。
 - Provider 响应必须严格解析并限制结构、大小和 evidence 引用；未知、重复、跨 run 或不匹配的 evidence 继续由 Rust fail closed。
@@ -265,7 +270,7 @@ DeepSeek Provider 已由 Rust 实现，当前功能分支将其接入普通用�
 - Summary run 使用不可变输入快照；输入后续变化不影响当前 run，整份重新生成创建 revision，用户编辑不得被静默覆盖。受限编辑、Markdown 获取和 Save As 使用当前 `contentVersion` 防止过期写入/导出；Rust 是修改、渲染和文件写入的权威。章节/段落级重生成、复杂 stale UI、编辑历史时间线和协作冲突合并当前冻结。
 - 未知 evidence ID 必须拒绝或标记，模型自然语言不得被当作不存在的证据引用。
 - Markdown 预览、显式 clipboard write 和原生 Save As 使用同一 Rust canonical renderer；不执行模型 HTML/Markdown，不读取剪贴板，不向 React 暴露路径。用户主动复制或保存到应用外的副本不在 MeetingLens 删除保证内。
-- 自动测试只使用明显合成数据与本地 fake transport；真实付费 DeepSeek API smoke 未执行时不得宣称协议已通过真实账户联网验收。
+- 自动测试只使用明显合成数据与本地 fake transport。PR #25 基线上已有一次用户明确授权、极短纯合成转录的 live smoke 通过；不得把它扩大为未来服务保证或自动重复付费请求。
 
 ## 11. Phase 0 验收标准
 

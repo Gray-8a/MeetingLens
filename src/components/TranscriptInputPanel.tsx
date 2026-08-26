@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
+import type { AudioTranscriptionResult } from "../api/audioTranscription";
 import { useServices } from "../app/services";
 import type {
   TranscriptErrorCode,
@@ -14,6 +15,7 @@ import {
   transcriptErrorCode,
   utf8ByteLength,
 } from "../lib/transcriptPresentation";
+import { AudioTranscriptionPanel } from "./AudioTranscriptionPanel";
 import { ErrorNotice, InfoNotice } from "./UiState";
 
 interface CreateTarget {
@@ -34,7 +36,9 @@ export function TranscriptInputPanel({
   target: CreateTarget | ExistingTarget;
   interactionDisabled?: boolean;
   onCancel?: () => void;
-  onCompleted: (result: TranscriptImportResult) => void;
+  onCompleted: (
+    result: TranscriptImportResult | AudioTranscriptionResult,
+  ) => void;
 }) {
   const { t } = useTranslation();
   const { transcriptApi } = useServices();
@@ -44,6 +48,7 @@ export function TranscriptInputPanel({
     null,
   );
   const [busy, setBusy] = useState<"paste" | "import" | null>(null);
+  const [audioBusy, setAudioBusy] = useState(false);
   const [errorCode, setErrorCode] = useState<TranscriptErrorCode | null>(null);
   const [duplicate, setDuplicate] = useState(false);
   const mounted = useRef(true);
@@ -76,7 +81,7 @@ export function TranscriptInputPanel({
 
   async function submitPaste(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
-    if (busy !== null || interactionDisabled) return;
+    if (busy !== null || audioBusy || interactionDisabled) return;
     if (pastedText.trim().length === 0) {
       setErrorCode("transcript_empty");
       return;
@@ -115,7 +120,7 @@ export function TranscriptInputPanel({
   }
 
   async function selectAndImport() {
-    if (busy !== null || interactionDisabled) return;
+    if (busy !== null || audioBusy || interactionDisabled) return;
     setBusy("import");
     setErrorCode(null);
     setDuplicate(false);
@@ -140,7 +145,7 @@ export function TranscriptInputPanel({
   }
 
   function cancel() {
-    if (busy !== null || interactionDisabled) return;
+    if (busy !== null || audioBusy || interactionDisabled) return;
     setTitle("");
     setPastedText("");
     setDuplicate(false);
@@ -157,7 +162,7 @@ export function TranscriptInputPanel({
           </label>
           <input
             autoComplete="off"
-            disabled={busy !== null || interactionDisabled}
+            disabled={busy !== null || audioBusy || interactionDisabled}
             id="summary-meeting-title"
             maxLength={200}
             onChange={(event) => setTitle(event.target.value)}
@@ -194,7 +199,7 @@ export function TranscriptInputPanel({
             <textarea
               aria-describedby={`transcript-byte-count-${target.kind}`}
               aria-invalid={byteLimitExceeded}
-              disabled={busy !== null || interactionDisabled}
+              disabled={busy !== null || audioBusy || interactionDisabled}
               id={`transcript-paste-${target.kind}`}
               onChange={(event) => {
                 setPastedText(event.target.value);
@@ -218,7 +223,10 @@ export function TranscriptInputPanel({
               className="button button--primary"
               data-acceptance={`submit-paste-${target.kind}`}
               disabled={
-                busy !== null || interactionDisabled || byteLimitExceeded
+                busy !== null ||
+                audioBusy ||
+                interactionDisabled ||
+                byteLimitExceeded
               }
               type="submit"
             >
@@ -229,7 +237,7 @@ export function TranscriptInputPanel({
             {onCancel ? (
               <button
                 className="button button--ghost"
-                disabled={busy !== null || interactionDisabled}
+                disabled={busy !== null || audioBusy || interactionDisabled}
                 onClick={cancel}
                 type="button"
               >
@@ -249,7 +257,7 @@ export function TranscriptInputPanel({
         <button
           className="button button--secondary"
           data-acceptance={`select-transcript-${target.kind}`}
-          disabled={busy !== null || interactionDisabled}
+          disabled={busy !== null || audioBusy || interactionDisabled}
           onClick={() => void selectAndImport()}
           type="button"
         >
@@ -258,6 +266,21 @@ export function TranscriptInputPanel({
             : t("summaryMode.importButton")}
         </button>
       </section>
+
+      <AudioTranscriptionPanel
+        interactionDisabled={busy !== null || interactionDisabled}
+        onBusyChange={setAudioBusy}
+        onCompleted={onCompleted}
+        target={
+          target.kind === "create"
+            ? {
+                kind: "create",
+                meetingTitle,
+                primaryLanguage: defaultPrimaryLanguage,
+              }
+            : target
+        }
+      />
     </div>
   );
 }

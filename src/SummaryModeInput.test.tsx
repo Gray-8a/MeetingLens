@@ -9,6 +9,10 @@ import {
 import userEvent from "@testing-library/user-event";
 import App from "./App";
 import type {
+  AudioTranscriptionProgress,
+  AudioTranscriptionResult,
+} from "./api/audioTranscription";
+import type {
   RenameSpeakerInSourceResponse,
   TranscriptImportResult,
   TranscriptSegmentResponse,
@@ -16,6 +20,7 @@ import type {
 import type { AppServices } from "./app/services";
 import { ProviderRegistry } from "./providers/runtime";
 import i18n from "./i18n";
+import { FakeAudioTranscriptionApi } from "./test/fakeAudioTranscriptionApi";
 import { FakeDocumentApi } from "./test/fakeDocumentApi";
 import {
   deferred,
@@ -38,11 +43,18 @@ function renderHarness(
   path: string,
   meetings: ReturnType<typeof syntheticMeeting>[] = [],
   seed?: (transcriptApi: FakeTranscriptApi) => void,
+  configureAudio?: (audioApi: FakeAudioTranscriptionApi) => void,
 ) {
   const meetingApi = new FakeMeetingApi(meetings);
   const transcriptApi = new FakeTranscriptApi(meetingApi);
   seed?.(transcriptApi);
+  const audioTranscriptionApi = new FakeAudioTranscriptionApi(
+    meetingApi,
+    transcriptApi,
+  );
+  configureAudio?.(audioTranscriptionApi);
   const services: AppServices = {
+    audioTranscriptionApi,
     documentApi: new FakeDocumentApi(),
     meetingApi,
     secretApi: new FakeSecretApi(),
@@ -62,7 +74,13 @@ function renderHarness(
   };
   window.history.replaceState(null, "", `#${path}`);
   const view = render(<App services={services} />);
-  return { meetingApi, services, transcriptApi, view };
+  return {
+    audioTranscriptionApi,
+    meetingApi,
+    services,
+    transcriptApi,
+    view,
+  };
 }
 
 function seedSource(
@@ -288,6 +306,227 @@ describe("Summary mode entry", () => {
     expect(window.location.hash).toBe("#/summary");
   });
 
+  it("advertises the bounded local CPU audio workflow", async () => {
+    renderHarness("/summary");
+    expect(
+      await screen.findByRole("heading", {
+        name: "Transcribe a recording locally",
+      }),
+    ).toBeInTheDocument();
+    expect(
+      await screen.findByText("Local CPU · int8 · small model"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(/WAV, MP3, M4A or audio-track MP4 · up to 2 GiB/),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /does not upload the recording or use live audio capture/,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("treats audio picker cancellation as a no-op", async () => {
+    const user = userEvent.setup();
+    const { audioTranscriptionApi, meetingApi } = renderHarness("/summary");
+    audioTranscriptionApi.pickerCancelled = true;
+    const button = await screen.findByRole("button", {
+      name: "Choose audio and transcribe",
+    });
+    await waitFor(() => expect(button).toBeEnabled());
+    await user.click(button);
+
+    await waitFor(() =>
+      expect(audioTranscriptionApi.createCalls).toHaveLength(1),
+    );
+    expect(meetingApi.meetings).toHaveLength(0);
+    expect(window.location.hash).toBe("#/summary");
+    expect(
+      screen.queryByText("Transcription cancelled"),
+    ).not.toBeInTheDocument();
+  });
+
+  it("creates an audio transcript and opens it in the Workspace", async () => {
+    const user = userEvent.setup();
+    const { audioTranscriptionApi, transcriptApi } = renderHarness("/summary");
+    await user.type(
+      await screen.findByLabelText("Meeting title"),
+      "Synthetic audio review",
+    );
+    const button = screen.getByRole("button", {
+      name: "Choose audio and transcribe",
+    });
+    await waitFor(() => expect(button).toBeEnabled());
+    await user.click(button);
+
+    expect(await screen.findByText("Audio transcription")).toBeInTheDocument();
+    expect(
+      await screen.findByText("First synthetic audio segment"),
+    ).toBeInTheDocument();
+    expect(window.location.hash).toMatch(/^#\/meetings\/.+\/transcript$/);
+    expect(audioTranscriptionApi.createCalls).toEqual([
+      { title: "Synthetic audio review", primaryLanguage: "en-AU" },
+    ]);
+    expect(transcriptApi.sources[0]).toMatchObject({
+      sourceType: "imported_audio",
+      originalFilename: "synthetic.wav",
+    });
+  });
+
+  it("shows bounded progress and sends cancellation by opaque job ID", async () => {
+    const user = userEvent.setup();
+    const { audioTranscriptionApi } = renderHarness("/summary");
+    const pending = deferred<AudioTranscriptionResult>();
+    let emitProgress: ((progress: AudioTranscriptionProgress) => void) | null =
+      null;
+    const selectSpy = vi
+      .spyOn(audioTranscriptionApi, "selectAudioAndCreateMeeting")
+      .mockImplementation((_request, handler) => {
+        emitProgress = handler;
+        return pending.promise;
+      });
+    const jobId = "77777777-7777-4777-8777-777777777777";
+    const cancelledProgress: AudioTranscriptionProgress = {
+      jobId,
+      phase: "cancelled",
+      status: "cancelled",
+      bytesProcessed: 512,
+      totalBytes: 1024,
+      processedMs: 5_000,
+      durationMs: 10_000,
+      errorCode: "audio_cancelled",
+    };
+    const cancelSpy = vi
+      .spyOn(audioTranscriptionApi, "cancel")
+      .mockResolvedValue(cancelledProgress);
+    const button = await screen.findByRole("button", {
+      name: "Choose audio and transcribe",
+    });
+    await waitFor(() => expect(button).toBeEnabled());
+    await user.click(button);
+    expect(button).toBeDisabled();
+    await user.click(button);
+    expect(selectSpy).toHaveBeenCalledTimes(1);
+    act(() => {
+      emitProgress?.({
+        ...cancelledProgress,
+        phase: "transcribing",
+        status: "running",
+        errorCode: null,
+      });
+    });
+
+    expect(
+      await screen.findByText("Transcribing on the CPU"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("50%")).toBeInTheDocument();
+    expect(screen.getByLabelText("Transcript text")).toBeDisabled();
+    const audioCard = screen
+      .getByRole("heading", { name: "Transcribe a recording locally" })
+      .closest("section");
+    await user.click(
+      within(audioCard as HTMLElement).getByRole("button", {
+        name: "Cancel",
+      }),
+    );
+    await waitFor(() => expect(cancelSpy).toHaveBeenCalledWith(jobId));
+    expect(
+      await screen.findByText("Transcription cancelled"),
+    ).toBeInTheDocument();
+
+    await act(async () => {
+      pending.resolve({
+        cancelled: true,
+        jobId,
+        meeting: null,
+        source: null,
+        segmentCount: 0,
+      });
+      await pending.promise;
+    });
+  });
+
+  it("best-effort cancels an active local transcription when its UI unmounts", async () => {
+    const user = userEvent.setup();
+    const pending = deferred<AudioTranscriptionResult>();
+    let emitProgress: ((progress: AudioTranscriptionProgress) => void) | null =
+      null;
+    const { audioTranscriptionApi, view } = renderHarness("/summary");
+    vi.spyOn(
+      audioTranscriptionApi,
+      "selectAudioAndCreateMeeting",
+    ).mockImplementation((_request, handler) => {
+      emitProgress = handler;
+      return pending.promise;
+    });
+    const active: AudioTranscriptionProgress = {
+      jobId: "77777777-7777-4777-8777-777777777777",
+      phase: "transcribing",
+      status: "running",
+      bytesProcessed: 1024,
+      totalBytes: 1024,
+      processedMs: 1_000,
+      durationMs: 10_000,
+      errorCode: null,
+    };
+    const cancelSpy = vi
+      .spyOn(audioTranscriptionApi, "cancel")
+      .mockResolvedValue({
+        ...active,
+        phase: "cancelled",
+        status: "cancelled",
+        errorCode: "audio_cancelled",
+      });
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Choose audio and transcribe",
+      }),
+    );
+    act(() => emitProgress?.(active));
+    view.unmount();
+
+    await waitFor(() => expect(cancelSpy).toHaveBeenCalledWith(active.jobId));
+    await act(async () => {
+      pending.resolve({
+        cancelled: true,
+        jobId: active.jobId,
+        meeting: null,
+        source: null,
+        segmentCount: 0,
+      });
+      await pending.promise;
+    });
+  });
+
+  it("fails closed when the local model is unavailable", async () => {
+    renderHarness("/summary", [], undefined, (api) => {
+      api.policy.modelAvailable = false;
+    });
+    expect(
+      await screen.findByText(
+        "The local transcription model is not installed.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Choose audio and transcribe" }),
+    ).toBeDisabled();
+  });
+
+  it("fails closed while another local transcription is busy", async () => {
+    renderHarness("/summary", [], undefined, (api) => {
+      api.policy.busy = true;
+    });
+    expect(
+      await screen.findByText(
+        "Another audio transcription is already running.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Choose audio and transcribe" }),
+    ).toBeDisabled();
+  });
+
   it.each([
     ["imported_txt", "TXT transcript"],
     ["imported_srt", "SRT subtitles"],
@@ -401,6 +640,32 @@ describe("Existing meeting transcript input", () => {
     expect(transcriptApi.sources[0]?.sourceType).toBe("imported_srt");
   });
 
+  it("adds audio to an existing Workspace and selects the new source", async () => {
+    const user = userEvent.setup();
+    const { audioTranscriptionApi } = renderHarness(
+      `/meetings/${meetingIds.draft}/transcript`,
+      [syntheticMeeting()],
+    );
+    const button = await screen.findByRole("button", {
+      name: "Choose audio and transcribe",
+    });
+    await waitFor(() => expect(button).toBeEnabled());
+    await user.click(button);
+
+    await waitFor(() =>
+      expect(audioTranscriptionApi.addCalls).toEqual([
+        { meetingId: meetingIds.draft },
+      ]),
+    );
+    expect(await screen.findByText("Audio transcription")).toBeInTheDocument();
+    expect(
+      await screen.findByText("First synthetic audio segment"),
+    ).toBeInTheDocument();
+    expect(window.location.hash).toBe(
+      `#/meetings/${meetingIds.draft}/transcript`,
+    );
+  });
+
   it("shows duplicate imports without adding another source", async () => {
     const user = userEvent.setup();
     const { transcriptApi } = renderHarness(
@@ -472,6 +737,7 @@ describe("Transcript Workspace", () => {
     ["imported_txt", "TXT transcript"],
     ["imported_srt", "SRT subtitles"],
     ["imported_vtt", "VTT subtitles"],
+    ["imported_audio", "Audio transcription"],
     ["live_asr", "Live transcript"],
     ["platform_export", "Platform transcript"],
   ] as const)("localizes %s source metadata", async (sourceType, label) => {

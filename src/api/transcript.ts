@@ -27,6 +27,7 @@ export type TranscriptSourceType =
   | "imported_txt"
   | "imported_srt"
   | "imported_vtt"
+  | "imported_audio"
   | "live_asr"
   | "platform_export";
 
@@ -249,6 +250,7 @@ const sourceTypes = new Set<TranscriptSourceType>([
   "imported_txt",
   "imported_srt",
   "imported_vtt",
+  "imported_audio",
   "live_asr",
   "platform_export",
 ]);
@@ -705,6 +707,12 @@ function parseSource(value: unknown): TranscriptSourceResponse {
     createdAt: value.createdAt,
     updatedAt: value.updatedAt,
   };
+}
+
+export function parseTranscriptSourceResponse(
+  value: unknown,
+): TranscriptSourceResponse {
+  return parseSource(value);
 }
 
 function parseSourceList(

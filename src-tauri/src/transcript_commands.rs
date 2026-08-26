@@ -252,7 +252,7 @@ impl fmt::Debug for TranscriptSourceResponse {
 }
 
 impl TranscriptSourceResponse {
-    fn from_overview(overview: crate::data::TranscriptSourceOverview) -> Self {
+    pub(crate) fn from_overview(overview: crate::data::TranscriptSourceOverview) -> Self {
         let source = overview.source;
         Self {
             id: source.id,

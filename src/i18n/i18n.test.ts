@@ -1,4 +1,5 @@
 import appSource from "../App.tsx?raw";
+import audioTranscriptionSource from "../components/AudioTranscriptionPanel.tsx?raw";
 import documentSource from "../components/DocumentPanel.tsx?raw";
 import deepSeekConsentSource from "../components/DeepSeekConsentDialog.tsx?raw";
 import summaryResultSource from "../components/SummaryResultView.tsx?raw";
@@ -17,7 +18,10 @@ import summaryInputSource from "../pages/SummaryModeInputPage.tsx?raw";
 import summaryMinutesSource from "../pages/SummaryMinutesPage.tsx?raw";
 import transcriptWorkspaceSource from "../pages/TranscriptWorkspacePage.tsx?raw";
 import { MeetingApiError } from "../api/meeting";
-import { transcriptErrorMessage } from "./errors";
+import {
+  audioTranscriptionErrorMessage,
+  transcriptErrorMessage,
+} from "./errors";
 import { meetingErrorMessage, statusLabel, uiError } from "../lib/presentation";
 import i18n, {
   changeUiLocale,
@@ -31,6 +35,7 @@ import zhCN from "./locales/zh-CN.json";
 
 const uiSources = [
   appSource,
+  audioTranscriptionSource,
   documentSource,
   deepSeekConsentSource,
   summaryResultSource,
@@ -140,6 +145,40 @@ describe("MeetingLens i18n foundation", () => {
     );
   });
 
+  it("localizes stable audio worker errors without backend details", async () => {
+    await i18n.changeLanguage("zh-CN");
+    expect(audioTranscriptionErrorMessage("audio_worker_crashed")).toBe(
+      "本地转写 Worker 意外停止。",
+    );
+    expect(audioTranscriptionErrorMessage("audio_model_missing")).toBe(
+      "尚未安装本地转写模型。",
+    );
+  });
+
+  it("localizes every public audio transcription phase", async () => {
+    const phases = [
+      "selected",
+      "validating_input",
+      "copying",
+      "probing",
+      "model_loading",
+      "transcribing",
+      "validating_output",
+      "committing",
+      "completed",
+      "failed",
+      "cancelled",
+    ] as const;
+    for (const locale of ["en-US", "zh-CN"] as const) {
+      await i18n.changeLanguage(locale);
+      for (const phase of phases) {
+        const key = `audioTranscription.phase.${phase}` as const;
+        expect(i18n.exists(key)).toBe(true);
+        expect(i18n.t(key)).not.toBe(key);
+      }
+    }
+  });
+
   it("formats dates centrally for the active locale", async () => {
     const value = "2026-07-30T01:02:00.000Z";
     await i18n.changeLanguage("en-US");
@@ -182,6 +221,7 @@ describe("MeetingLens i18n foundation", () => {
       "transcriptWorkspace.sourceType.imported_txt",
       "transcriptWorkspace.sourceType.imported_srt",
       "transcriptWorkspace.sourceType.imported_vtt",
+      "transcriptWorkspace.sourceType.imported_audio",
       "transcriptWorkspace.sourceType.live_asr",
       "transcriptWorkspace.sourceType.platform_export",
     ] as const;
@@ -274,6 +314,7 @@ describe("MeetingLens i18n foundation", () => {
   it("keeps transcript UI out of browser persistence, console and direct Tauri invoke", () => {
     const transcriptUiSources = [
       speakerRenameSource,
+      audioTranscriptionSource,
       transcriptInputSource,
       transcriptSegmentSource,
       transcriptSourceListSource,

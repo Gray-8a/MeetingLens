@@ -1,10 +1,10 @@
 # MeetingLens 开发预览使用手册
 
-> 开发预览版：本手册描述当前 `feat/summary-mode-minutes` 实现提供的本地桌面流程。它不是正式产品手册；该功能分支在保持 schema v5 的前提下，接通转录输入、明确 DeepSeek 授权、五区结果、编辑、evidence、Markdown 复制/保存和整份重新生成。
+> 开发预览版：本手册描述 `main` 截至 PR #25 以及当前 `feat/audio-file-transcription` 交付提供的本地桌面流程。它不是正式产品手册；音频转写新增 schema v6，同时保持既有 Summary/DeepSeek 行为。
 
 ## 1. MeetingLens 简介
 
-MeetingLens 是面向 Windows 11 的本地优先 Personal Edition / 自用版会议工作台。它把粘贴或导入的会议转录转化为可编辑、带 evidence 且可复制或保存为 Markdown 的会议纪要。当前功能实现可以接收、持久化、检查和修正转录，明确授权 Rust-only DeepSeek 路径，查看生成结果，保存正文修改，检查 evidence，并以新 revision 整份重新生成。
+MeetingLens 是面向 Windows 11 的本地优先 Personal Edition / 自用版会议工作台。它把粘贴、导入或本地转写的会议内容转化为可编辑、带 evidence 且可复制或保存为 Markdown 的会议纪要。当前功能实现可以在本机转写用户选择的录音，持久化并修正规范化转录，明确授权 Rust-only DeepSeek 路径，查看生成结果，保存正文修改，检查 evidence，并以新 revision 整份重新生成。
 
 同一个应用内置简体中文（`zh-CN`）和 English（`en-US`），不需要安装两个版本。
 
@@ -15,6 +15,7 @@ MeetingLens 是面向 Windows 11 的本地优先 Personal Edition / 自用版会
 - 创建、编辑、开始、结束和删除本地会议；
 - 在首页看到总结、翻译和会议三个模式入口；当前只有总结模式可进入，翻译和会议模式路线为 Frozen/Deferred；
 - 粘贴 UTF-8 会议记录，或通过系统文件选择器导入 TXT、SRT、VTT；
+- 选择单个 WAV、MP3、M4A 或含音轨 MP4，由本地 faster-whisper CPU int8 转写，并安全显示进度和取消；
 - 查看转录来源、分页检查片段、修正正文与说话人显示名称，并删除来源；
 - 在 Minutes 工作区选择转录来源、三种模板之一和中文/英文/双语输出；
 - 明确发起或继续 DeepSeek run、查看 queued/running/completed/failed/cancelled 状态并取消 active run；
@@ -24,18 +25,18 @@ MeetingLens 是面向 Windows 11 的本地优先 Personal Edition / 自用版会
 - 通过系统文件选择器安全导入、去重、列出和删除会议文件副本；
 - 查看 Mock Provider、本地 Sidecar 和数据库状态；
 - 将 DeepSeek API Key 保存到 Windows Credential Manager，且 WebView 无法读回；
-- 运行独立离线 Docling Worker 的开发验证，但该 Worker 尚未接入产品界面。
-- 验证 schema v4 Summary series/revision、不可变转录快照与 run-owned evidence，以及 schema v5 最小 remembered Consent；
+- 运行独立离线 Docling Worker 的开发验证，但该 Worker 尚未接入产品界面；
+- 验证 schema v4 Summary series/revision、不可变转录快照与 run-owned evidence、schema v5 最小 remembered Consent，以及 schema v6 `imported_audio` 转录来源；
 - 在设置中查看固定 DeepSeek host/model、remembered Consent 状态与时间，并撤销未来授权；
 - 使用合成 transport 验证 Rust DeepSeek 协议、严格 JSON/evidence、失败和取消；确定性 Mock 仅用于测试/debug，历史 Mock run 可查看/导出但严格只读。
 
-当前普通用户界面只有在明确点击“生成”或“继续生成”并通过 disclosure/Consent 检查后才能发起 DeepSeek 生成。remembered Consent 不授权页面加载、应用启动或后台重试自动发送。录音文件转写、实时录音和实时转录仍不可用；翻译模式和会议模式显示“即将推出”且路线状态为 Frozen/Deferred。Rust production Provider 固定为 DeepSeek；Mock 隔离在测试/debug 且不访问网络。真实付费 DeepSeek API smoke 尚未执行，因此不声称已验证真实 Key、账户、余额或公网服务状态。
+当前普通用户界面只有在明确点击“生成”或“继续生成”并通过 disclosure/Consent 检查后才能发起 DeepSeek 生成。remembered Consent 不授权页面加载、应用启动或后台重试自动发送。录音文件本地转写已在源码 checkout 的开发预览中提供；实时录音和实时转录仍不可用。翻译模式和会议模式显示“即将推出”且路线状态为 Frozen/Deferred。Rust production Provider 固定为 DeepSeek；Mock 隔离在测试/debug 且不访问网络。PR #25 基线上已有一次单独授权、极短纯合成转录的真实请求通过；这不保证未来账户余额、服务可用性或模型别名行为。
 
 ## 3. 系统要求
 
 - Windows 11；
 - WebView2；
-- 从源码运行时需要 Node.js 22+、npm 10+、Python 3.12.x、Rust stable 和 Visual Studio Build Tools 2022；
+- 从源码运行时需要 Node.js 22+、npm 10+、Python 3.12.x、uv 0.11.21、Rust stable 和 Visual Studio Build Tools 2022；
 - Build Tools 需要 Desktop development with C++、MSVC v143、Windows 10/11 SDK 和 C++ CMake tools。
 
 Windows 11 与 Python 3.12 是项目基线，其他系统或 Python 版本不能替代正式验收。
@@ -46,8 +47,12 @@ Windows 11 与 Python 3.12 是项目基线，其他系统或 Python 版本不能
 
 ```powershell
 npm ci
+.\scripts\setup-transcription-worker.ps1
+.\scripts\provision-transcription-model.ps1
 npm run tauri dev
 ```
+
+Worker 安装和模型 provisioning 都是明确的开发者操作。锁定模型保存在仓库外；正常转写离线运行，不会下载或自动更新模型。
 
 完整自动检查使用：
 
@@ -86,6 +91,18 @@ npm run check
 5. 相同内容在同一会议中会显示“已经添加”，不会保存第二份来源。
 
 源绝对路径不会返回 WebView，源文件不会被复制、修改或删除。TXT、SRT、VTT 使用 Rust 轻量解析器，不经过 Docling、Python Sidecar 或外部 AI。
+
+### 在本地转写录音
+
+当前流程需要源码 checkout 和 debug/`tauri dev` 构建。release build 尚未打包或解析 Worker/模型，会把音频转写报告为不可用。
+
+1. 可在总结模式输入页填写标题，也可以打开现有可编辑会议的转录检查页。
+2. 选择音频转写入口，挑选一个 WAV、MP3、M4A 或 MP4 文件；MP4 必须含受支持音轨，视频帧不会被读取。
+3. 查看“仅本机”说明。固定运行时使用 faster-whisper、CPU 和 int8；单文件最大 2 GiB、最长四小时。
+4. 查看选择、输入验证/复制/探测、模型加载、转写、输出验证和提交进度。运行中可以取消；同一时间只运行一个转写任务。
+5. 成功后 MeetingLens 会打开或刷新转录检查页，并选中新建的 `imported_audio` 来源；生成纪要前可在同一工作区修正正文。
+
+取消文件选择是安全的无操作。Rust 在私有临时区复制并验证源文件，应用协议只接受受控 job 目录中的有界 artifact。React 不会通过音频 Command 收到原路径、临时路径、Worker artifact 或转录片段。失败或取消不会留下部分来源，并会清理 Worker 进程树和临时数据。该开发预览使用路径守卫和进程/资源限制，而不是操作系统级文件系统沙箱；一次性 Worker 仍以当前 Windows 用户权限运行。若 Worker 或精确锁定模型缺失，请运行上面的安装/provisioning 脚本；MeetingLens 不会静默下载模型。
 
 ### 生成会议纪要
 
@@ -202,13 +219,13 @@ Key 保存在当前 Windows 用户的 Credential Manager 中，而不是 SQLite�
 - 已提交的转录来源和规范化片段保存在同一私有数据库中；
 - schema v4 在本地保存 Summary runs 与不可变转录快照；持久约束仍为最多 20,000 个 final segments 和 10 MiB UTF-8 正文，production DeepSeek policy 限制为 1 MiB，超限会在网络前失败。显式来源删除会清理终态完整正文快照，只保留已引用 evidence；
 - schema v5 最多保存一行最小 DeepSeek remembered 偏好：provider、policy version/fingerprint 与同意/更新时间，不保存正文、run ID、Prompt、响应、路径或 Key；一次性同意只在 Rust 内存中保留最多 10 分钟并单次消费；
-- Minutes 编辑复用 schema v5：更新当前 revision 的五区 `content_json` 和 sticky `is_user_edited` 标记。Rust 派生的 `contentVersion` 保护编辑与 Markdown 输出，但不写入 SQLite；同一 revision 没有独立 Provider 原稿副本或编辑历史表；
+- schema v6 只在既有 transcript 与冻结 Summary 来源约束中加入 `imported_audio`；既有 transcript 表保存规范化正文/时间，不保存原录音或音频路径。Minutes 编辑仍更新既有 revision 的五区 `content_json`，Rust 派生的 `contentVersion` 仍不持久化；
 - 未提交的粘贴文本只短暂存在于 React 内存，保存、取消或离开页面后清除；
 - 转录正文、说话人和源路径不会写入 localStorage、sessionStorage、IndexedDB 或 console；
 - 导入文件副本位于应用私有存储，React 不取得绝对路径；
 - DeepSeek Key 位于 Windows Credential Manager；
 - 界面语言是唯一允许写入 WebView 偏好存储的应用设置；
-- 当前预览版不会录音或读取屏幕；面向用户的“生成/继续生成”只能请求 Rust Provider 把明确授权的冻结转录范围发送到固定 DeepSeek endpoint，React、Python 和 Docling 不能发起该请求；
+- 当前预览版不会实时采集音频或读取屏幕；用户选择的录音只在私有临时区由本地 Worker 处理，终态后清理，规范化 `imported_audio` 转录保存在 SQLite。面向用户的“生成/继续生成”只能请求 Rust Provider 把明确授权的冻结转录范围发送到固定 DeepSeek endpoint；转写 Worker 不接收 DeepSeek Key，也不能发起该请求；
 - canonical Markdown 由 Rust 生成；原生 Save As 不把目标路径写入 SQLite 或返回 React，剪贴板和外部 `.md` 副本不受 MeetingLens 生命周期控制；
 - 测试和问题报告只能使用合成数据。
 
@@ -218,7 +235,6 @@ Key 保存在当前 Windows 用户的 Credential Manager 中，而不是 SQLite�
 
 以下 Personal Edition 近期计划尚未实现：
 
-- 录音文件本地批量转写；
 - 简化 Docling 产品编排与 document evidence；
 - 可选的用户明确选择窗口上下文。
 
@@ -228,14 +244,14 @@ Key 保存在当前 Windows 用户的 Credential Manager 中，而不是 SQLite�
 - 实时说话人分离和身份增强；
 - 实时翻译、字幕浮窗、checkpoint 和自动话题判断；
 - 独立翻译/会议模式工作区；
-- 章节/段落级重新生成、编辑历史/恢复、富 HTML 结果、多人冲突合并、Structured Visuals、视频导入、商业分发以及 DOCX/PDF 导出；
+- 章节/段落级重新生成、编辑历史/恢复、富 HTML 结果、多人冲突合并、Structured Visuals、视频帧分析/通用视频处理、商业分发以及 DOCX/PDF 导出；
 - 正式 PDF 用户手册和成品截图流程。
 
 ## 15. 常见问题
 
 ### 为什么已经保存 DeepSeek Key，却不能生成纪要？
 
-保存 Key 只配置 SecretStore，不会验证账户或授权请求。请打开 Minutes，选择至少一个非空转录来源、模板和语言，再明确点击“生成”。Rust 仍会检查 meeting 资格、冻结范围、当前 Consent 和安全 run 状态。界面只显示稳定安全错误；本项目尚未执行真实付费 API smoke。
+保存 Key 只配置 SecretStore，不会验证账户或授权请求。请打开 Minutes，选择至少一个非空转录来源、模板和语言，再明确点击“生成”。Rust 仍会检查 meeting 资格、冻结范围、当前 Consent 和安全 run 状态。界面只显示稳定安全错误。PR #25 基线上已有一次单独授权的合成请求通过，但当前 Key/账户/服务状态只有在你明确授权的请求中才会检查。
 
 ### 为什么重启后 queued 结果要求我继续？
 
@@ -244,6 +260,10 @@ MeetingLens 不会把 remembered Consent 当作启动或后台发送授权。从
 ### 导入转录会复制或删除原文件吗？
 
 不会。Rust 只在选择期间读取源文件并保存规范化片段，绝对路径不进入 WebView 或 SQLite。删除转录来源不会影响用户原文件。
+
+### 音频转写会上传或长期保存我的录音吗？
+
+不会。所选文件只会复制到应用私有临时区，交给本地一次性 Worker 处理；终态、取消或失败后都会清理临时副本，只提交规范化 `imported_audio` 来源和片段。模型必须由用户明确 provision；运行时不会下载模型，也不会把音频发送给 DeepSeek。
 
 ### 导入文件后为什么没有解析结果？
 
@@ -264,6 +284,8 @@ MeetingLens 不会把 remembered Consent 当作启动或后台发送授权。从
 - 数据库不可用：停止写入操作并保留错误代码，不要直接修改或删除数据库文件。
 - 文件导入失败：检查格式、大小、配额和文件完整性；不要通过改扩展名绕过校验。
 - 转录导入失败：确认文件是严格 UTF-8 TXT/SRT/VTT、大小不超过 10 MiB，并且 cue/时间格式完整；不要把路径或转录正文放入问题报告。
+- 音频转写不可用：运行锁定的 Worker 安装与显式模型 provisioning 脚本，再重启应用；不要把模型复制进仓库或削弱 manifest/revision 校验。
+- 音频转写失败：使用含有效音轨且不超过 2 GiB/四小时的 WAV、MP3、M4A 或 MP4；只改扩展名不能绕过媒体校验。等现有任务进入终态后再重试；问题报告中不要附文件名、路径、音频、转录正文或 Worker stderr。
 - 修正冲突：重新加载当前片段再编辑，不要尝试绕过 revision 保护。
 - 纪要生成被阻止：配置 Key、选择非空来源、检查 disclosure，并明确点击“生成/继续生成”；不要修改 Provider URL 或绕过 Consent 来重试。
 - 纪要编辑冲突：重新加载当前 revision 后再应用修改；过期 `contentVersion` 会被主动拒绝。
@@ -282,9 +304,9 @@ Personal Edition 已完成和下一阶段交付路径是：
 4. `feat/summary-run-core`（PR #21 已合并）：schema v4、完整正文快照、series/revision、evidence allowlist、恢复和 Rust zero-network Mock；
 5. `docs/personal-edition-descope`（PR #23 已合并）：Personal Edition、Frozen/Deferred 范围和开发流程重定基线；
 6. `feat/summary-provider-deepseek`（PR #24 已合并）：schema v5 最小偏好、Rust DeepSeek/SecretStore、严格 JSON/evidence、本次同意/记住/撤销、取消和 fail closed；不建立通用 Consent Data Core；
-7. `feat/summary-mode-minutes`（当前功能交付，预计 PR #25，日常可用里程碑）：正式生成/Consent/状态、中文/英文/双语五区结果和精确 evidence、受保护正文编辑、canonical Markdown 复制/原生保存，以及保留旧 revision 的整份重新生成；不开发章节级重生成或 DOCX/PDF；
-8. `feat/audio-file-transcription`（仅在当前功能经审查并合并后的下一阶段，预计 PR #26）：通过本地一次性 Worker 批量转写用户导入的会议录音；不做实时音频、WASAPI 或实时 ASR；
-9. `feat/document-parsing-orchestration`（预计 PR #27）：简化接入已有 Docling Worker、document chunks/evidence、失败自动重试一次，再失败提示重新导入；
+7. `feat/summary-mode-minutes`（PR #25 已合并，日常可用里程碑）：正式生成/Consent/状态、中文/英文/双语五区结果和精确 evidence、受保护正文编辑、canonical Markdown 复制/原生保存，以及保留旧 revision 的整份重新生成；另有一次单独授权的纯合成真实 smoke 通过；
+8. `feat/audio-file-transcription`（当前功能交付，预计 PR #26）：schema v6、显式 Worker/模型 provisioning，以及本地一次性 CPU-int8 Worker 对 WAV/MP3/M4A/含音轨 MP4 的批量转写；不做实时音频、WASAPI 或实时 ASR；
+9. `feat/document-parsing-orchestration`（仅在当前功能经审查并合并后的下一阶段，预计 PR #27）：简化接入已有 Docling Worker、document chunks/evidence、失败自动重试一次，再失败提示重新导入；
 10. `feat/window-context`（可选，预计 PR #28 或更后）：仅在确认真实需要后读取用户明确选择的具体窗口。
 
-当前 `feat/summary-mode-minutes` 以“已有转录 → 生成、查看、修改、复制或保存真实纪要”为日常可用闭环目标。实时采集/ASR、实时翻译、说话人分离、checkpoint、独立翻译/会议工作区、Structured Visuals、商业分发及 DOCX/PDF 保持 Frozen/Deferred。最小 Consent 只适用于单人自用版，不是企业合规审计系统；未确认时必须 fail closed。未来阶段和分支以 [DEVELOPMENT_PLAN.md](../DEVELOPMENT_PLAN.md) 为准，预期 PR 编号不是权威标识。
+当前 `feat/audio-file-transcription` 在已经完成的日常 Summary 闭环上增加高价值本地录音输入。实时采集/ASR、实时翻译、说话人分离、checkpoint、独立翻译/会议工作区、Structured Visuals、商业分发及 DOCX/PDF 保持 Frozen/Deferred。最小 Consent 只适用于单人自用版，不是企业合规审计系统；未确认时必须 fail closed。未来阶段和分支以 [DEVELOPMENT_PLAN.md](../DEVELOPMENT_PLAN.md) 为准，预期 PR 编号不是权威标识。
