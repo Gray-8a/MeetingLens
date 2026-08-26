@@ -2,11 +2,13 @@
 
 MeetingLens is a privacy-first, Windows-first desktop assistant currently following a **Personal Edition** baseline. Its near-term product path turns pasted or imported meeting transcripts into detailed, editable, evidence-linked minutes that can be copied or saved as Markdown. Summary is the only mode under active near-term development; Translation and the independent Meeting workspace remain a shared-engine long-term vision that is frozen/deferred rather than deleted.
 
-PR #1–#24 are merged. The meeting data/UI foundation, authenticated Sidecar boundary, Windows SecretStore, secure document import, isolated Docling Worker, packaged zh-CN/en-US UI, Transcript Data Core, safe Transcript Command API, Summary Mode Input UI, schema-v4 Summary Run Core, Personal Edition re-baseline, and schema-v5 Rust-only DeepSeek/consent foundation are complete. The current `feat/summary-mode-minutes` delivery wires that foundation into the formal Generate and results workspace: users can select transcript sources, template, and output language; explicitly authorize a frozen run; view its five-section result and evidence; edit and save the current revision; copy canonical Markdown; save it through a Rust-owned native dialog; and regenerate the whole result without overwriting earlier revisions.
+PR #1–#25 are merged. The meeting data/UI foundation, authenticated Sidecar boundary, Windows SecretStore, secure document import, isolated Docling Worker, packaged zh-CN/en-US UI, Transcript Data Core, safe Transcript Command API, schema-v4 Summary Run Core, schema-v5 Rust-only DeepSeek/consent foundation, and the complete Summary minutes workspace are available on `main`. Users can select transcript sources, template, and output language; explicitly authorize a frozen run; view its five-section result and evidence; edit and save the current revision; copy canonical Markdown; save it through a Rust-owned native dialog; and regenerate the whole result without overwriting earlier revisions.
+
+The current `feat/audio-file-transcription` delivery adds schema v6 and user-initiated local batch transcription for WAV, MP3, M4A, and audio-track MP4 files. Rust owns file selection, validation, private staging, worker control, cancellation, cleanup, and the atomic `imported_audio` transcript commit. A pinned one-shot faster-whisper Worker runs locally on CPU int8; its environment and model are provisioned explicitly and remain separate from the authenticated Sidecar and Docling Worker.
 
 The TypeScript preview Provider runtime still uses deterministic in-memory mocks for its legacy capability previews. Production persistent Summary runs are owned separately by Rust and fixed to DeepSeek; the deterministic Rust Mock is retained only behind test/debug isolation. Historical Mock runs remain readable and exportable but are read-only and cannot become a new DeepSeek revision.
 
-The long-term three-mode vision is described in [the simplified three-mode specification](SIMPLIFIED_MODE_SPEC.md), product behavior in [the product specification](PRODUCT_SPEC.md), and the authoritative Personal Edition implementation order in [the development plan](DEVELOPMENT_PLAN.md). After the current Summary minutes delivery is reviewed and merged by the user, the next implementation stage is batch audio-file transcription, followed by simplified Docling orchestration and an optional user-confirmed window-context stage. Realtime capture/ASR, realtime translation, speaker diarization, Translation/Meeting workspaces, structured visuals, commercial distribution, and DOCX/PDF export are frozen/deferred.
+The long-term three-mode vision is described in [the simplified three-mode specification](SIMPLIFIED_MODE_SPEC.md), product behavior in [the product specification](PRODUCT_SPEC.md), and the authoritative Personal Edition implementation order in [the development plan](DEVELOPMENT_PLAN.md). After the current audio-file transcription delivery is reviewed and merged by the user, the next implementation stage is simplified Docling orchestration, followed only if needed by an optional user-confirmed window-context stage. Realtime capture/ASR, realtime translation, speaker diarization, Translation/Meeting workspaces, structured visuals, commercial distribution, and DOCX/PDF export are frozen/deferred.
 
 Development-preview user guides are available in [简体中文](docs/USER_GUIDE.zh-CN.md) and [English](docs/USER_GUIDE.en-US.md).
 
@@ -15,6 +17,7 @@ Development-preview user guides are available in [简体中文](docs/USER_GUIDE.
 - Node.js 22 or newer
 - npm 10 or newer
 - Python 3.12.x
+- uv 0.11.21
 - Rust stable and the platform-specific Tauri desktop prerequisites
 
 On Windows 11, install Microsoft C++ Build Tools with the **Desktop development with C++** workload, including MSVC v143, a Windows 10/11 SDK, and C++ CMake tools. WebView2 is also required; current Windows 11 installations normally include it. See the [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/).
@@ -37,7 +40,16 @@ An ordinary PowerShell session may not place `link.exe` directly on `PATH`; Carg
 npm ci
 py -3.12 -m pip install --requirement requirements-dev.txt
 .\scripts\setup-docling-worker.ps1
+.\scripts\setup-transcription-worker.ps1
 ```
+
+The transcription model is not downloaded during setup or application startup. Provision the exact pinned model explicitly when local audio transcription is needed:
+
+```powershell
+.\scripts\provision-transcription-model.ps1
+```
+
+Provisioning is the only transcription-model network step. Normal transcription runs offline against the verified local model inventory.
 
 Do not place real DeepSeek credentials in `.env` or environment variables. Configure the key through Settings so Rust stores it in Windows Credential Manager; any `.env` used for non-sensitive local flags must remain ignored and untracked.
 
@@ -54,6 +66,7 @@ npm run typecheck       # TypeScript
 npm run test            # React unit tests
 npm run test:sidecar    # Python sidecar tests
 npm run check:docling-worker # Locked, offline Docling worker checks
+npm run check:transcription-worker # Locked, offline transcription worker checks
 npm run build           # Frontend production build
 npm run check           # All locally runnable frontend/Python checks
 ```
@@ -96,7 +109,13 @@ The validated local model inventory is 564,981,412 bytes. Windows CPU smoke curr
 
 ## Transcript-first summary path
 
-MeetingLens supports bounded pasted UTF-8 text and Rust-owned native TXT/SRT/VTT import. Transcripts are distinct from reference documents: they use a lightweight local parser, do not require Docling, and persist normalized sources and ordered segments rather than copying the original transcript file indefinitely. Source paths never reach the WebView, and deleting a source does not change the user's original file. Platform-specific export adapters require sanitized real samples before support is claimed. Audio-file transcription is planned but not implemented; it will use a bounded one-shot local worker after the usable Summary loop. Video import remains deferred.
+MeetingLens supports bounded pasted UTF-8 text, Rust-owned native TXT/SRT/VTT import, and user-initiated local transcription of WAV, MP3, M4A, and MP4 files that contain a supported audio stream. Transcripts are distinct from reference documents: they persist normalized sources and ordered segments rather than copying the original transcript or audio file indefinitely. Source paths never reach the WebView, and deleting a source does not change the user's original file. Platform-specific export adapters require sanitized real samples before support is claimed. MP4 support extracts only its audio stream; video frames, visual analysis, and general video import remain deferred.
+
+Audio transcription accepts at most one file per job, 2 GiB and four hours, and produces at most 20,000 validated segments / 10 MiB of transcript text. Rust copies the selected file into an app-private UUID staging area, validates extension and media/audio-stream identity, launches a single locked Python 3.12 faster-whisper process on CPU int8, revalidates its bounded artifact, and atomically creates an `imported_audio` source in the existing transcript model. The UI receives only safe policy, progress, cancellation, error-code, meeting, and source DTOs—never source paths, staged paths, raw worker artifacts, or segment bodies through the audio command channel. Picker cancellation has no side effect; explicit cancellation and failures leave no partial transcript and clean the process tree and staging directory. Startup reconciliation removes abandoned staging.
+
+Schema v6 is an append-only migration from v5 that expands the existing transcript-source and frozen Summary-source constraints to include `imported_audio`; it does not create a second meeting, transcript, job, or Summary model. The schema-v5 `provider_consent_preferences` design is unchanged.
+
+Audio transcription in this development preview currently runs only from a source checkout with a debug/`tauri dev` build after the explicit Worker and model setup below. Release builds deliberately report the Worker as unavailable because the packaged Worker/model layout and resolver remain part of the frozen installer/distribution work; this PR does not claim release-package audio support.
 
 The Summary input workspace reads segments through stable ordinal pagination with a production page limit of 200 rather than loading up to 20,000 rows at once. Users may correct text or set a display name for matching source labels; revisions prevent silent overwrites, and source-level naming preserves the original label without inferring identity. The meeting model does not yet have an independent editable occurrence date, so the UI labels `created_at` only as creation time.
 
@@ -118,7 +137,7 @@ The structured result contract remains schema v1 with exactly five regions: `ove
 
 Preview, explicit clipboard copy, and file save use the same deterministic Rust Markdown renderer. The UI renders untrusted result/evidence text as text rather than executable HTML, never reads the clipboard, and never receives a selected filesystem path. Rust opens the native Save As dialog and writes the `.md` file atomically. Clipboard text and files saved outside MeetingLens are user-controlled copies and are not removed by meeting deletion.
 
-The Rust transport is fixed to `https://api.deepseek.com/chat/completions`, disables redirects and environment proxies, uses bounded connect/total timeouts, sends one non-streaming JSON-only request with thinking disabled, performs no automatic retry, and caps request/response sizes. Only Rust performs the network request and consumes SecretStore. Automated acceptance uses synthetic transports and data; no real paid DeepSeek API smoke is claimed.
+The Rust transport is fixed to `https://api.deepseek.com/chat/completions`, disables redirects and environment proxies, uses bounded connect/total timeouts, sends one non-streaming JSON-only request with thinking disabled, performs no automatic retry, and caps request/response sizes. Only Rust performs the network request and consumes SecretStore. Automated acceptance continues to use synthetic transports and data. A separately authorized, single-request smoke with a very short synthetic transcript passed on the PR #25 `main` baseline; that result does not guarantee future account balance, service availability, or model-alias behavior and is not repeated automatically.
 
 ## Project documents
 
@@ -153,9 +172,9 @@ The Rust transport is fixed to `https://api.deepseek.com/chat/completions`, disa
 19. **Status alignment — complete:** Summary Run Core status and acceptance documentation (`docs/summary-run-core-status`, PR #22).
 20. **Personal Edition re-baseline — complete:** define the shortest route, frozen capabilities, and risk-tiered acceptance (`docs/personal-edition-descope`, PR #23).
 21. **DeepSeek Provider foundation — complete:** schema v5 minimal remembered consent, Rust-only fixed DeepSeek transport, SecretStore consumption, strict JSON/evidence validation, one-time/remember/revoke, safe cancellation/errors, and reusable consent/settings UI (`feat/summary-provider-deepseek`, PR #24).
-22. **Current delivery — daily-use milestone:** formal Generate/consent/status wiring, five-section results and evidence, protected body editing, canonical Markdown view/copy/native save, and whole-result regeneration without overwriting earlier revisions (`feat/summary-mode-minutes`; expected PR #25).
-23. **Next after review and merge — batch audio transcription:** import a meeting recording and transcribe it locally through a one-shot, CPU-int8 faster-whisper worker into the existing transcript model (`feat/audio-file-transcription`; expected PR #26). This is not realtime capture, WASAPI, realtime ASR, or realtime diarization.
-24. **Simplified reference enrichment:** connect the completed Docling Worker, produce document chunks/evidence, retry one failed parse once, and otherwise ask the user to re-import (`feat/document-parsing-orchestration`; expected PR #27).
+22. **Daily-use milestone — complete:** formal Generate/consent/status wiring, five-section results and evidence, protected body editing, canonical Markdown view/copy/native save, and whole-result regeneration without overwriting earlier revisions (`feat/summary-mode-minutes`, PR #25). One separately authorized synthetic live smoke passed on this baseline.
+23. **Current delivery — batch audio transcription:** import a WAV/MP3/M4A/audio-track MP4 recording and transcribe it locally through a one-shot, CPU-int8 faster-whisper worker into schema-v6 `imported_audio` transcript sources (`feat/audio-file-transcription`; expected PR #26). This is not realtime capture, WASAPI, realtime ASR, or realtime diarization.
+24. **Next after review and merge — simplified reference enrichment:** connect the completed Docling Worker, produce document chunks/evidence, retry one failed parse once, and otherwise ask the user to re-import (`feat/document-parsing-orchestration`; expected PR #27).
 25. **Optional window context:** start only after the user confirms a repeated real need, and only for an explicitly selected window (`feat/window-context`; expected PR #28 or later).
 
 Expected PR numbers are descriptive only; branch names and capability boundaries are authoritative. Realtime capture/ASR, the realtime Sidecar stack, realtime translation, speaker diarization, Translation/Meeting workspaces, checkpoints, structured visuals, installer/signing/SBOM/tray/auto-update work, and DOCX/PDF export are frozen/deferred, not deleted. When a single user capability has clear boundaries, one focused PR may include the necessary data layer, Rust commands, TypeScript API, and UI; unrelated capabilities and distinct security/network/device trust boundaries must not be bundled together.
@@ -170,4 +189,4 @@ Acceptance is risk-tiered. Documentation PRs require Markdown/format/link/route 
 
 Do not place real recordings, transcripts, screenshots, uploaded meeting documents, local databases, logs, or credentials in this repository. Tests and examples use synthetic data only.
 
-Direct dependencies are pinned to exact versions and lockfiles are committed. Docling is isolated in its own locked worker and is never installed in the foundation Sidecar. Other heavy AI components such as Diart, WhisperX, faster-whisper, and Screenpipe remain uninstalled until their assigned feature branches validate compatibility, licensing, model downloads, and Windows resource use.
+Direct dependencies are pinned to exact versions and lockfiles are committed. Docling and faster-whisper are isolated in separate locked one-shot Workers and are never installed in the foundation Sidecar. The transcription model is explicitly provisioned outside Git and verified before offline use. Other heavy AI components such as Diart, WhisperX, and Screenpipe remain uninstalled until their assigned feature branches validate compatibility, licensing, model downloads, and Windows resource use.

@@ -1,0 +1,11 @@
+# Automatically generated - DO NOT EDIT!
+
+[[permission]]
+identifier = "allow-select-and-add-audio-to-meeting"
+description = "Enables the select_and_add_audio_to_meeting command without any pre-configured scope."
+commands.allow = ["select_and_add_audio_to_meeting"]
+
+[[permission]]
+identifier = "deny-select-and-add-audio-to-meeting"
+description = "Denies the select_and_add_audio_to_meeting command without any pre-configured scope."
+commands.deny = ["select_and_add_audio_to_meeting"]

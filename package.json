@@ -15,6 +15,8 @@
     "test:sidecar": "python -m unittest discover -s sidecar/tests -v",
     "test:docling-worker": "uv run --project workers/docling --frozen python -m unittest discover -s workers/docling/tests -v",
     "check:docling-worker": "uv lock --project workers/docling --check && uv run --project workers/docling --frozen ruff format --check workers/docling/src workers/docling/tests workers/docling/windows_smoke.py && uv run --project workers/docling --frozen ruff check workers/docling/src workers/docling/tests workers/docling/windows_smoke.py && npm run test:docling-worker",
+    "test:transcription-worker": "uv run --project workers/transcription --frozen python -m unittest discover -s workers/transcription/tests -v",
+    "check:transcription-worker": "uv lock --project workers/transcription --check && uv run --project workers/transcription --frozen ruff format --check workers/transcription/src workers/transcription/tests workers/transcription/windows_smoke.py && uv run --project workers/transcription --frozen ruff check workers/transcription/src workers/transcription/tests workers/transcription/windows_smoke.py && npm run test:transcription-worker",
     "check:sidecar": "python -m compileall -q sidecar && npm run test:sidecar",
     "check:i18n": "node scripts/check-i18n.mjs",
     "check:docs": "node scripts/check-docs.mjs",

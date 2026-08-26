@@ -76,11 +76,13 @@ pub use summary_service::SummaryService;
 pub use transcript_dev_harness::{TranscriptSmokeV2Seed, seed_transcript_smoke_v2};
 pub use transcript_error::{TranscriptError, TranscriptResult};
 pub use transcript_model::{
-    PASTED_TEXT_MAX_BYTES, SummaryInputSegment, TRANSCRIPT_FILE_MAX_BYTES, TRANSCRIPT_MAX_SEGMENTS,
-    TRANSCRIPT_PAGE_DEFAULT_LIMIT, TRANSCRIPT_PAGE_MAX_LIMIT, TRANSCRIPT_SEGMENT_MAX_BYTES,
-    TranscriptImportInput, TranscriptImportOutcome, TranscriptPolicy, TranscriptSegment,
-    TranscriptSegmentPage, TranscriptSource, TranscriptSourceOverview, TranscriptSourceType,
-    TranscriptSpeakerGroup, TranscriptSpeakerGroupPage, UpdateTranscriptSegment,
+    AUDIO_TRANSCRIPT_PARSER_VERSION, PASTED_TEXT_MAX_BYTES, StructuredAudioSegment,
+    StructuredAudioTranscript, SummaryInputSegment, TRANSCRIPT_FILE_MAX_BYTES,
+    TRANSCRIPT_MAX_SEGMENTS, TRANSCRIPT_PAGE_DEFAULT_LIMIT, TRANSCRIPT_PAGE_MAX_LIMIT,
+    TRANSCRIPT_SEGMENT_MAX_BYTES, TranscriptImportInput, TranscriptImportOutcome, TranscriptPolicy,
+    TranscriptSegment, TranscriptSegmentPage, TranscriptSource, TranscriptSourceOverview,
+    TranscriptSourceType, TranscriptSpeakerGroup, TranscriptSpeakerGroupPage,
+    UpdateTranscriptSegment,
 };
 pub use transcript_service::TranscriptService;
 pub use transcript_workflow::{

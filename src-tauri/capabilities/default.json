@@ -6,6 +6,7 @@
   "local": true,
   "permissions": [
     "core:default",
+    "audio-transcription-commands",
     "document-management-commands",
     "meeting-data-commands",
     "sidecar-status-command",

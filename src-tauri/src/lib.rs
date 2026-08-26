@@ -1,3 +1,7 @@
+mod audio_transcription_commands;
+mod audio_transcription_error;
+mod audio_transcription_runtime;
+mod audio_transcription_worker;
 pub mod data;
 pub mod docling_worker;
 mod document_commands;
@@ -11,6 +15,14 @@ mod summary_runtime;
 #[cfg(debug_assertions)]
 pub fn run_deepseek_summary_offline_smoke() {
     summary_runtime::offline_smoke::run();
+}
+
+#[cfg(debug_assertions)]
+pub fn run_local_audio_transcription_smoke(
+    smoke_root: impl AsRef<std::path::Path>,
+    input_path: impl AsRef<std::path::Path>,
+) -> Result<(), &'static str> {
+    audio_transcription_runtime::run_local_audio_smoke(smoke_root.as_ref(), input_path.as_ref())
 }
 mod transcript_commands;
 
@@ -126,14 +138,22 @@ pub fn run() {
                 secret_store.clone(),
                 summary_provider,
             );
+            let audio_transcription_runtime =
+                audio_transcription_runtime::AudioTranscriptionRuntime::initialize(
+                    meeting_service.clone(),
+                );
             app.manage(meeting_service);
             app.manage(secret_store);
             app.manage(summary_runtime);
+            app.manage(audio_transcription_runtime);
             app.manage(sidecar::SidecarRuntime::start());
             Ok(())
         })
         .on_window_event(|window, event| {
             if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
+                window
+                    .state::<audio_transcription_runtime::AudioTranscriptionRuntime>()
+                    .shutdown();
                 window.state::<sidecar::SidecarRuntime>().shutdown();
             }
         })
@@ -167,6 +187,11 @@ pub fn run() {
             transcript_commands::update_transcript_segment,
             transcript_commands::delete_transcript_source,
             transcript_commands::get_transcript_import_policy,
+            audio_transcription_commands::get_audio_transcription_policy,
+            audio_transcription_commands::get_audio_transcription_status,
+            audio_transcription_commands::select_audio_and_create_meeting,
+            audio_transcription_commands::select_and_add_audio_to_meeting,
+            audio_transcription_commands::cancel_audio_transcription,
             summary_commands::get_summary_policy,
             summary_commands::get_deepseek_provider_status,
             summary_commands::get_summary_external_disclosure,

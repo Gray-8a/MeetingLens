@@ -8,7 +8,8 @@ use super::repository;
 use super::summary_repository;
 use super::transcript_error::{TranscriptError, TranscriptResult};
 use super::transcript_model::{
-    NewTranscriptSegment, NewTranscriptSource, SummaryInputSegment, TRANSCRIPT_MAX_SEGMENTS,
+    AUDIO_TRANSCRIPT_PARSER_VERSION, NewTranscriptSegment, NewTranscriptSource,
+    StructuredAudioTranscript, SummaryInputSegment, TRANSCRIPT_MAX_SEGMENTS,
     TRANSCRIPT_PAGE_DEFAULT_LIMIT, TRANSCRIPT_PAGE_MAX_LIMIT, TranscriptImportInput,
     TranscriptImportOutcome, TranscriptPolicy, TranscriptSegment, TranscriptSegmentPage,
     TranscriptSource, TranscriptSourceOverview, TranscriptSourceType, TranscriptSpeakerGroupPage,
@@ -20,6 +21,7 @@ use super::{transcript_parser, transcript_repository};
 const MAX_DISPLAY_NAME_BYTES: usize = 255;
 const MAX_FILENAME_BYTES: usize = 255;
 const MAX_LANGUAGE_BYTES: usize = 35;
+const MAX_PARSER_VERSION_BYTES: usize = 64;
 const MAX_SPEAKER_NAME_BYTES: usize = 255;
 
 #[derive(Clone, Debug)]
@@ -91,6 +93,24 @@ impl TranscriptService {
         self.import(meeting_id, TranscriptSourceType::ImportedVtt, input)
     }
 
+    pub fn import_audio_transcript(
+        &self,
+        meeting_id: &str,
+        transcript: StructuredAudioTranscript,
+    ) -> TranscriptResult<TranscriptImportOutcome> {
+        validate_uuid(meeting_id)?;
+        let prepared = self.prepare_audio_import(transcript)?;
+
+        let _guard = self.database.mutation_guard().map_err(map_data_error)?;
+        let mut connection = self.database.connect().map_err(map_data_error)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(TranscriptError::from)?;
+        let outcome = self.import_prepared(&transaction, meeting_id, prepared)?;
+        transaction.commit().map_err(TranscriptError::from)?;
+        Ok(outcome)
+    }
+
     fn import(
         &self,
         meeting_id: &str,
@@ -115,7 +135,7 @@ impl TranscriptService {
         source_type: TranscriptSourceType,
         mut input: TranscriptImportInput,
     ) -> TranscriptResult<PreparedTranscriptImport> {
-        if !source_type.is_currently_importable() {
+        if !source_type.is_text_importable() {
             return Err(TranscriptError::InvalidInput);
         }
         if source_type == TranscriptSourceType::PastedText {
@@ -136,6 +156,37 @@ impl TranscriptService {
             original_filename,
             language,
             base_started_at,
+            parsed,
+        })
+    }
+
+    pub(crate) fn prepare_audio_import(
+        &self,
+        transcript: StructuredAudioTranscript,
+    ) -> TranscriptResult<PreparedTranscriptImport> {
+        let display_name = normalize_display_name(&transcript.display_name)?;
+        let original_filename = validate_original_filename(
+            TranscriptSourceType::ImportedAudio,
+            Some(transcript.original_filename),
+        )?;
+        let language = normalize_optional_language(transcript.language)?;
+        let parser_version =
+            normalize_required(&transcript.parser_version, MAX_PARSER_VERSION_BYTES)?;
+        if parser_version != AUDIO_TRANSCRIPT_PARSER_VERSION {
+            return Err(TranscriptError::InvalidInput);
+        }
+        let parsed = transcript_parser::from_structured_audio(
+            transcript.segments,
+            parser_version,
+            self.policy,
+        )?;
+
+        Ok(PreparedTranscriptImport {
+            source_type: TranscriptSourceType::ImportedAudio,
+            display_name,
+            original_filename,
+            language,
+            base_started_at: None,
             parsed,
         })
     }
@@ -610,6 +661,10 @@ fn filename_extension_matches(source_type: TranscriptSourceType, filename: &str)
         (TranscriptSourceType::ImportedTxt, Some("txt"))
             | (TranscriptSourceType::ImportedSrt, Some("srt"))
             | (TranscriptSourceType::ImportedVtt, Some("vtt"))
+            | (
+                TranscriptSourceType::ImportedAudio,
+                Some("wav" | "mp3" | "m4a" | "mp4")
+            )
     )
 }
 
@@ -750,6 +805,20 @@ mod tests {
         }
     }
 
+    fn audio_input(filename: &str, body: &str) -> StructuredAudioTranscript {
+        StructuredAudioTranscript {
+            display_name: filename.to_string(),
+            original_filename: filename.to_string(),
+            language: Some("en-AU".to_string()),
+            parser_version: "faster-whisper/1.2.1".to_string(),
+            segments: vec![super::super::transcript_model::StructuredAudioSegment {
+                start_offset_ms: 250,
+                end_offset_ms: 1_250,
+                original_text: body.to_string(),
+            }],
+        }
+    }
+
     fn imported_source(outcome: TranscriptImportOutcome) -> TranscriptSource {
         match outcome {
             TranscriptImportOutcome::Imported { source, .. } => *source,
@@ -879,6 +948,123 @@ mod tests {
             ),
             Ok(TranscriptImportOutcome::Imported { .. })
         ));
+    }
+
+    #[test]
+    fn imports_structured_audio_atomically_with_null_speaker_and_confidence() {
+        let (_directory, meetings, meeting_id) = setup();
+        let transcripts = meetings.transcripts();
+        let source = imported_source(
+            transcripts
+                .import_audio_transcript(
+                    &meeting_id,
+                    audio_input("synthetic.m4a", "Synthetic audio transcript"),
+                )
+                .expect("audio transcript should import"),
+        );
+
+        assert_eq!(source.source_type, TranscriptSourceType::ImportedAudio);
+        assert_eq!(source.original_filename.as_deref(), Some("synthetic.m4a"));
+        assert_eq!(source.parser_name, "faster_whisper");
+        assert_eq!(source.parser_version, "faster-whisper/1.2.1");
+        assert_eq!(source.base_started_at, None);
+        let segments = transcripts
+            .list_segments(&meeting_id, &source.id)
+            .expect("audio segments should list");
+        assert_eq!(segments.len(), 1);
+        assert_eq!(segments[0].speaker_label, None);
+        assert_eq!(segments[0].speaker_name, None);
+        assert_eq!(segments[0].confidence, None);
+        assert_eq!(segments[0].translated_text, None);
+        assert!(segments[0].is_final);
+
+        assert_eq!(
+            transcripts
+                .import_audio_transcript(
+                    &meeting_id,
+                    audio_input("same-content.mp4", "Synthetic audio transcript"),
+                )
+                .expect("same canonical transcript should deduplicate"),
+            TranscriptImportOutcome::Duplicate {
+                source_id: source.id
+            }
+        );
+    }
+
+    #[test]
+    fn audio_import_accepts_only_safe_extensions_and_bounded_metadata() {
+        let (_directory, meetings, meeting_id) = setup();
+        let transcripts = meetings.transcripts();
+        for extension in ["wav", "mp3", "m4a", "mp4"] {
+            let mut input = audio_input(
+                &format!("synthetic.{extension}"),
+                &format!("Synthetic {extension} transcript"),
+            );
+            input.display_name = format!("Synthetic {extension}");
+            assert!(matches!(
+                transcripts.import_audio_transcript(&meeting_id, input),
+                Ok(TranscriptImportOutcome::Imported { .. })
+            ));
+        }
+
+        for filename in [
+            "synthetic.flac",
+            "synthetic.m4a.exe",
+            "C:\\private\\synthetic.wav",
+            "../synthetic.mp3",
+        ] {
+            assert_eq!(
+                transcripts.import_audio_transcript(
+                    &meeting_id,
+                    audio_input(filename, &format!("Rejected {filename}")),
+                ),
+                Err(TranscriptError::InvalidInput)
+            );
+        }
+        let mut bad_version = audio_input("synthetic.wav", "Rejected parser version");
+        bad_version.parser_version = "x".repeat(MAX_PARSER_VERSION_BYTES + 1);
+        assert_eq!(
+            transcripts.import_audio_transcript(&meeting_id, bad_version),
+            Err(TranscriptError::InvalidInput)
+        );
+        let mut unpinned_version = audio_input("synthetic.mp3", "Rejected unpinned version");
+        unpinned_version.parser_version = "faster-whisper/other".to_string();
+        assert_eq!(
+            transcripts.import_audio_transcript(&meeting_id, unpinned_version),
+            Err(TranscriptError::InvalidInput)
+        );
+    }
+
+    #[test]
+    fn audio_source_and_segments_roll_back_together_on_persistence_failure() {
+        let (_directory, meetings, meeting_id) = setup();
+        let transcripts = meetings.transcripts();
+        let connection = transcripts
+            .database
+            .connect()
+            .expect("database should connect");
+        connection
+            .execute_batch(
+                "CREATE TRIGGER reject_audio_segment BEFORE INSERT ON transcript_segments
+                 BEGIN SELECT RAISE(ABORT, 'synthetic failure'); END;",
+            )
+            .expect("failure trigger should install");
+        drop(connection);
+
+        assert_eq!(
+            transcripts.import_audio_transcript(
+                &meeting_id,
+                audio_input("synthetic.wav", "Synthetic rollback transcript"),
+            ),
+            Err(TranscriptError::PersistenceFailed)
+        );
+        assert!(
+            transcripts
+                .list_sources(&meeting_id)
+                .expect("sources should remain readable")
+                .is_empty(),
+            "the source insert must roll back with its failed segments"
+        );
     }
 
     #[test]

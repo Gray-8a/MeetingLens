@@ -8,6 +8,7 @@ pub const PASTED_TEXT_MAX_BYTES: usize = 2 * 1024 * 1024;
 pub const TRANSCRIPT_FILE_MAX_BYTES: usize = 10 * 1024 * 1024;
 pub const TRANSCRIPT_MAX_SEGMENTS: usize = 20_000;
 pub const TRANSCRIPT_SEGMENT_MAX_BYTES: usize = 64 * 1024;
+pub const AUDIO_TRANSCRIPT_PARSER_VERSION: &str = "faster-whisper/1.2.1";
 pub const TRANSCRIPT_PAGE_DEFAULT_LIMIT: u64 = 100;
 pub const TRANSCRIPT_PAGE_MAX_LIMIT: u64 = 200;
 
@@ -28,6 +29,46 @@ pub struct TranscriptImportInput {
     pub base_started_at: Option<String>,
 }
 
+#[derive(Clone, PartialEq, Eq)]
+pub struct StructuredAudioTranscript {
+    pub display_name: String,
+    pub original_filename: String,
+    pub language: Option<String>,
+    pub parser_version: String,
+    pub segments: Vec<StructuredAudioSegment>,
+}
+
+impl fmt::Debug for StructuredAudioTranscript {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StructuredAudioTranscript")
+            .field("display_name", &"[REDACTED]")
+            .field("original_filename", &"[REDACTED]")
+            .field("language", &self.language)
+            .field("parser_version", &self.parser_version)
+            .field("segment_count", &self.segments.len())
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct StructuredAudioSegment {
+    pub start_offset_ms: u64,
+    pub end_offset_ms: u64,
+    pub original_text: String,
+}
+
+impl fmt::Debug for StructuredAudioSegment {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("StructuredAudioSegment")
+            .field("start_offset_ms", &self.start_offset_ms)
+            .field("end_offset_ms", &self.end_offset_ms)
+            .field("original_text", &"[REDACTED]")
+            .finish()
+    }
+}
+
 impl Default for TranscriptPolicy {
     fn default() -> Self {
         Self {
@@ -42,6 +83,7 @@ impl Default for TranscriptPolicy {
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TranscriptSourceType {
+    ImportedAudio,
     ImportedSrt,
     ImportedTxt,
     ImportedVtt,
@@ -53,6 +95,7 @@ pub enum TranscriptSourceType {
 impl TranscriptSourceType {
     pub const fn as_str(self) -> &'static str {
         match self {
+            Self::ImportedAudio => "imported_audio",
             Self::ImportedSrt => "imported_srt",
             Self::ImportedTxt => "imported_txt",
             Self::ImportedVtt => "imported_vtt",
@@ -62,7 +105,7 @@ impl TranscriptSourceType {
         }
     }
 
-    pub const fn is_currently_importable(self) -> bool {
+    pub const fn is_text_importable(self) -> bool {
         matches!(
             self,
             Self::ImportedSrt | Self::ImportedTxt | Self::ImportedVtt | Self::PastedText
@@ -71,6 +114,7 @@ impl TranscriptSourceType {
 
     pub(crate) fn from_database(value: &str) -> TranscriptResult<Self> {
         match value {
+            "imported_audio" => Ok(Self::ImportedAudio),
             "imported_srt" => Ok(Self::ImportedSrt),
             "imported_txt" => Ok(Self::ImportedTxt),
             "imported_vtt" => Ok(Self::ImportedVtt),
@@ -383,21 +427,44 @@ mod tests {
     }
 
     #[test]
-    fn only_the_first_four_source_types_are_currently_importable() {
+    fn only_text_source_types_use_the_bounded_text_parser() {
         for source_type in [
             TranscriptSourceType::ImportedSrt,
             TranscriptSourceType::ImportedTxt,
             TranscriptSourceType::ImportedVtt,
             TranscriptSourceType::PastedText,
         ] {
-            assert!(source_type.is_currently_importable());
+            assert!(source_type.is_text_importable());
         }
         for source_type in [
+            TranscriptSourceType::ImportedAudio,
             TranscriptSourceType::LiveAsr,
             TranscriptSourceType::PlatformExport,
         ] {
-            assert!(!source_type.is_currently_importable());
+            assert!(!source_type.is_text_importable());
         }
+    }
+
+    #[test]
+    fn structured_audio_debug_redacts_user_controlled_text_and_filenames() {
+        let input = StructuredAudioTranscript {
+            display_name: "Private display".to_string(),
+            original_filename: "private-recording.wav".to_string(),
+            language: Some("en-AU".to_string()),
+            parser_version: "faster-whisper/1.2.1".to_string(),
+            segments: vec![StructuredAudioSegment {
+                start_offset_ms: 0,
+                end_offset_ms: 1_000,
+                original_text: "Private transcript body".to_string(),
+            }],
+        };
+
+        let debug = format!("{input:?}");
+        assert!(!debug.contains("Private display"));
+        assert!(!debug.contains("private-recording.wav"));
+        assert!(!debug.contains("Private transcript body"));
+        assert!(debug.contains("segment_count"));
+        assert!(!format!("{:?}", input.segments[0]).contains("Private transcript body"));
     }
 
     #[test]

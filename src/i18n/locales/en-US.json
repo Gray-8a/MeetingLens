@@ -155,6 +155,32 @@
     "duplicate": "Already added",
     "duplicateBody": "The same transcript is already attached to this meeting."
   },
+  "audioTranscription": {
+    "title": "Transcribe a recording locally",
+    "description": "Choose one recording and turn it into reviewable transcript segments with the local faster-whisper worker.",
+    "localOnly": "Processing stays on this device. MeetingLens does not upload the recording or use live audio capture.",
+    "runtime": "Local CPU · int8 · {{model}} model",
+    "limits": "WAV, MP3, M4A or audio-track MP4 · up to {{size}} and {{duration}}",
+    "button": "Choose audio and transcribe",
+    "transcribing": "Transcribing locally…",
+    "progressLabel": "Local audio transcription progress",
+    "cancelling": "Cancelling…",
+    "cancelled": "Transcription cancelled",
+    "cancelledBody": "No transcript source was committed. You can choose the file again when ready.",
+    "phase": {
+      "selected": "Recording selected",
+      "validating_input": "Validating the recording",
+      "copying": "Copying to private staging",
+      "probing": "Checking the audio stream",
+      "model_loading": "Loading the local model",
+      "transcribing": "Transcribing on the CPU",
+      "validating_output": "Validating transcript segments",
+      "committing": "Saving the transcript",
+      "completed": "Transcription complete",
+      "failed": "Transcription failed",
+      "cancelled": "Transcription cancelled"
+    }
+  },
   "transcriptWorkspace": {
     "eyebrow": "Transcript review",
     "title": "Review transcript",
@@ -176,6 +202,7 @@
       "imported_txt": "TXT transcript",
       "imported_srt": "SRT subtitles",
       "imported_vtt": "VTT subtitles",
+      "imported_audio": "Audio transcription",
       "live_asr": "Live transcript",
       "platform_export": "Platform transcript"
     },
@@ -678,6 +705,31 @@
       "meeting_not_found": "The meeting was not found.",
       "meeting_invalid_state": "The meeting cannot be changed in its current state.",
       "internal_error": "MeetingLens could not complete that action."
+    },
+    "audio": {
+      "audio_picker_unavailable": "The audio file picker is unavailable.",
+      "audio_invalid_input": "The audio transcription details are invalid.",
+      "audio_unsupported_type": "Choose a WAV, MP3, M4A or MP4 file with an audio track.",
+      "audio_type_mismatch": "The recording content does not match its filename type.",
+      "audio_empty": "The recording is empty.",
+      "audio_too_large": "The recording is larger than the allowed limit.",
+      "audio_too_long": "The recording is longer than the allowed limit.",
+      "audio_stream_missing": "No supported audio stream was found in this file.",
+      "audio_model_missing": "The local transcription model is not installed.",
+      "audio_model_incompatible": "The installed transcription model is not compatible with this MeetingLens version.",
+      "audio_worker_unavailable": "Local audio transcription is unavailable on this device.",
+      "audio_worker_start_failed": "The local transcription worker could not start.",
+      "audio_worker_crashed": "The local transcription worker stopped unexpectedly.",
+      "audio_protocol_error": "The local transcription worker returned an invalid response.",
+      "audio_output_too_large": "The generated transcript exceeds the allowed limit.",
+      "audio_integrity_failed": "The recording or generated transcript could not be verified safely.",
+      "audio_timeout": "Local audio transcription timed out.",
+      "audio_cancelled": "Audio transcription was cancelled.",
+      "audio_transcription_busy": "Another audio transcription is already running.",
+      "audio_persistence_failed": "The generated transcript could not be saved.",
+      "meeting_not_found": "The meeting was not found.",
+      "meeting_invalid_state": "The meeting cannot be changed in its current state.",
+      "internal_error": "MeetingLens could not complete the audio transcription."
     },
     "document": {
       "document_invalid_type": "This file type is not supported.",

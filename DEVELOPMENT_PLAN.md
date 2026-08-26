@@ -4,7 +4,7 @@
 
 本文件是 MeetingLens 当前实施顺序、分支名、停止线和验收条件的权威文档。产品行为、安全边界和数据事实分别由 `PRODUCT_SPEC.md`、`SECURITY.md`、`DATA_MODEL.md` 和 `ARCHITECTURE.md` 说明；这些文档不得形成第二条实施路线。
 
-截至 PR #24，`main` 已完成工程与安全基础、安全文件导入、隔离 Docling Worker、zh-CN/en-US 与 Help、粘贴/TXT/SRT/VTT 转录工作区、schema v4 Summary Run Core、Personal Edition 重定基线，以及 schema v5 Rust-only DeepSeek Provider、SecretStore 和最小外发 Consent。当前 `feat/summary-mode-minutes` 功能分支在此基础上交付正式日常纪要闭环。当前基线和本功能实现共同具备：
+截至 PR #25，`main` 已完成工程与安全基础、安全文件导入、隔离 Docling Worker、zh-CN/en-US 与 Help、粘贴/TXT/SRT/VTT 转录工作区、schema v4 Summary Run Core、schema v5 Rust-only DeepSeek Provider/SecretStore/最小外发 Consent，以及正式生成、结果、编辑、evidence、Markdown 复制/保存和整份重新生成的日常纪要闭环。PR #25 基线上另有一次用户明确授权、极短纯合成转录的真实 DeepSeek smoke 通过。当前 `feat/audio-file-transcription` 在此基础上交付本地录音文件批量转写。当前基线和本功能实现共同具备：
 
 - `transcript_sources` / `transcript_segments`、有界分页、正文修正和 source-scoped speaker 显示名；
 - `summaries` / `summary_sources` / `evidence_items`；
@@ -17,13 +17,14 @@
 - 正式 Minutes 路由、集中式十六方法 `summaryApi`、可复用双语 Consent Dialog 和 Settings 安全状态/撤销；
 - 固定五区 `overview/decisions/actionItems/risks/openQuestions` 结果、按 ID evidence、受限正文编辑和派生 `contentVersion` 并发保护；
 - 同一 Rust canonical Markdown renderer 支持纯文本预览、显式 clipboard write 和 Rust 原生 Save As；React 不接收路径。
+- schema v6 `imported_audio`、WAV/MP3/M4A/含音轨 MP4 原生选择、本地 faster-whisper CPU int8 一次性 Worker、显式模型 provisioning、进度/取消与原子写入既有 transcript 模型。
 
-当前功能分支实现正式纪要生成按钮接线、结果页、Markdown 复制/保存、正文编辑和整份重新生成；尚未实现录音文件转录、Docling 产品编排、document evidence、实时音频、实时 ASR、实时翻译或独立会议模式工作区。真实付费 DeepSeek API smoke 未执行，文档不得声称通过真实账户端到端验收。
+当前功能分支实现录音文件转录；尚未实现 Docling 产品编排、document evidence、实时音频、实时 ASR、实时翻译或独立会议模式工作区。DeepSeek 的一次受控合成 live smoke 只是当时真实链路的证据，不代表未来账户余额、服务状态或模型别名行为，也不得在自动测试中重复付费请求。
 
 MeetingLens 现在采用 **Personal Edition / 自用版基线**：Windows-first、local-first、transcript-first，优先让单个用户尽快完成：
 
 ```text
-粘贴或导入转录
+粘贴、导入或在本地转写录音
 → 用户确认后由 Rust 调用 DeepSeek
 → 查看并修改纪要
 → 一键复制或保存 Markdown
@@ -74,12 +75,13 @@ PR #23 是本次重大路线重构所需的最后一个普通独立路线文档 
 | PR #22    | Summary Run Core 合并后状态与路线文档同步                                                                    | 已完成并合并                         |
 | PR #23    | Personal Edition 范围、Frozen/Deferred 边界与风险分级验收重新定基线                                          | 已完成并合并                         |
 | PR #24    | schema v5、Rust-only DeepSeek、SecretStore、最小 Consent、严格 JSON/evidence、取消与稳定错误                 | 已完成并合并                         |
+| PR #25    | 正式 Generate/Consent、五区结果/evidence、编辑、canonical Markdown 复制/保存和整份重新生成                   | 已完成并合并                         |
 
 历史阶段曾按 Data/API/UI 或多个安全基础 PR 拆分，这是已完成工作的审查记录，不再构成所有新功能必须采用相同拆法的通用规则。
 
 PR #21 的 Windows 验收使用 development-only 系统 Temp 直属隔离 app-data 根，并让两次 Tauri 启动使用与根 UUID 匹配的合成 identifier，从而隔离 SQLite 和 WebView2 profile。两次启动覆盖 run/result/revision/stale/evidence、running recovery、SQLite integrity、零 MeetingLens 应用层外发、无正文浏览器持久化及最终清理。该记录必须保留为 Summary Run Core 的历史验收证据，但双隔离 app-data 和完整双启动不是普通 UI PR 的默认门槛。
 
-当前 SQLite schema 版本仍为 v5：保留 v4 Summary Core，并只追加最小 `provider_consent_preferences` 表。`feat/summary-mode-minutes` 不增加 migration；正文编辑仍使用既有 `content_json` / `is_user_edited`，`contentVersion` 是 Rust 派生的并发令牌而不是持久字段。
+`main` 的 SQLite schema 版本为 v5：保留 v4 Summary Core，并只追加最小 `provider_consent_preferences` 表。当前 `feat/audio-file-transcription` 通过事务性、带 checksum 的追加 migration 升级为 v6，只扩展既有 transcript/summary-source 类型约束以允许 `imported_audio`；不新增第二套会议、转录、任务或 Summary 模型。正文编辑仍使用既有 `content_json` / `is_user_edited`，`contentVersion` 是 Rust 派生的并发令牌而不是持久字段。
 
 ## 4. 已完成：Personal Edition Re-baseline
 
@@ -120,7 +122,7 @@ Personal Edition 不建立通用 `consent_events` 审计体系，不创建 Conse
 
 这套最小 Consent 只适用于单人自用版，不是面向团队、客户或公众分发的企业合规方案。真实 Provider 会产生外部数据处理和潜在费用；用户在实际使用前仍须确认价格/条款和发送范围。自动测试只使用 fake transport、Mock 与合成数据，不得读取聊天中出现过的 key，不得从 `.env`、环境变量、Python 或命令行消费真实 DeepSeek 凭据。
 
-该阶段没有实现完整纪要结果页面、正式生成按钮接线、Markdown 文件保存、持久正文编辑、Docling、录音文件转录、实时功能或通用 Consent schema；其中正式纪要 UI 由当前下一节的独立功能分支实现。
+该阶段没有实现完整纪要结果页面、正式生成按钮接线、Markdown 文件保存、持久正文编辑、Docling、录音文件转录、实时功能或通用 Consent schema；其中正式纪要 UI 已由下一节记录的 PR #25 完成。
 
 里程碑：
 
@@ -128,11 +130,11 @@ Personal Edition 不建立通用 `consent_events` 审计体系，不创建 Conse
 真实 AI Provider 接通，但正式日常纪要工作区尚未完成
 ```
 
-## 6. 当前交付：Summary Mode Minutes
+## 6. 已完成：Summary Mode Minutes
 
 分支：`feat/summary-mode-minutes`
 
-预期顺序：PR #25。
+实际 PR：PR #25。
 
 范围：
 
@@ -147,11 +149,11 @@ Personal Edition 不建立通用 `consent_events` 审计体系，不创建 Conse
 - `segment_revised` 提示可重新生成，`source_deleted` 保留历史查看/编辑/复制/保存但禁止同 series regenerate；
 - 同步更新所有受影响文档和中英文用户说明。
 
-本阶段不开发章节/段落级 regenerate、自动局部更新、复杂 stale 提示、编辑历史时间线、多人协作、冲突合并、DOCX/PDF 导出、Office 兼容性矩阵、Docling 或音频转录。
+本阶段没有开发章节/段落级 regenerate、自动局部更新、复杂 stale 提示、编辑历史时间线、多人协作、冲突合并、DOCX/PDF 导出、Office 兼容性矩阵、Docling 或音频转录。
 
 模型不得发明参会人、负责人、截止日期或会议共识；关键决定、行动项和争议必须引用当前 run 的有效 evidence。用户修改不会重新验证 evidence，因此界面和文档必须明确 evidence 证明原始冻结转录引用而不是后续编辑。重新生成不得静默覆盖旧 revision 或用户已保存的结果。
 
-用户写入系统剪贴板或通过原生 Save As 保存到应用外的 `.md` 是用户控制的副本，不写入 SQLite，也不受 MeetingLens 会议删除协调管理。真实付费 DeepSeek API smoke 默认不执行且不是合并门槛；没有用户针对可能费用的一次性明确批准时，只能使用 fake transport 和合成数据验收。
+用户写入系统剪贴板或通过原生 Save As 保存到应用外的 `.md` 是用户控制的副本，不写入 SQLite，也不受 MeetingLens 会议删除协调管理。自动验收只使用 fake transport 和合成数据。PR #25 合并后，用户另行明确授权了一次极短纯合成 DeepSeek live smoke 并通过；它不改变默认禁止自动付费 smoke 的规则。
 
 日常可用里程碑：
 
@@ -162,7 +164,7 @@ Personal Edition 不建立通用 `consent_events` 审计体系，不创建 Conse
 → 复制或保存 Markdown
 ```
 
-## 7. 然后：Audio-file Transcription
+## 7. 当前交付：Audio-file Transcription
 
 分支：`feat/audio-file-transcription`
 
@@ -170,12 +172,14 @@ Personal Edition 不建立通用 `consent_events` 审计体系，不创建 Conse
 
 范围：
 
-- 用户通过 Rust 原生选择器主动导入会议录音文件；
-- 本地 faster-whisper、CPU int8；
-- 每个受控请求使用一次性 Worker 进程，复用 Docling Worker 已验证的进程隔离、清理和协议原则；
-- Rust 控制路径、输入校验、资源上限、取消、进程树回收和安全错误；
-- 转写结果写入既有 `transcript_sources` / `transcript_segments`，进入现有 Transcript Workspace 和 Summary pipeline；
-- 如需 schema 变化，基于合并时最新版本追加 migration 并完成高风险验收；不得复用或修改 v1–v4。
+- 用户通过 Rust 原生选择器主动导入一个 WAV、MP3、M4A 或含受支持音轨的 MP4；单任务上限 2 GiB、四小时，MP4 只处理音轨；
+- 本地 faster-whisper `1.2.1`、固定 `Systran/faster-whisper-small` revision、CPU int8；Worker 环境与模型通过单独脚本显式 provision，模型在仓库外，正常运行完全离线且不自动下载；
+- 每个受控请求使用一个一次性 Python 3.12 Worker，stdin 单请求、stdout 有界 JSONL 进度/终态元数据，不监听端口、不取得 DeepSeek Key/数据库/任意路径，也不把正文、路径或 Worker stderr返回 React；
+- Rust 拥有原生选择、扩展名与媒体/音轨验证、私有 UUID staging、SHA-256、资源/超时、Windows Job Object、进度、并行取消、进程树回收、启动清理和稳定脱敏错误；同一时间只允许一个 transcription job；
+- picker 取消无副作用；失败/取消不提交部分 transcript，并清理 job staging。成功结果在一个原子工作流中创建 meeting 或追加来源，然后进入既有 Transcript Workspace；
+- schema v6 只把 `imported_audio` 加入 `transcript_sources` 与 `summary_sources.source_type_snapshot` 的既有约束；音频 segment 使用原始时间偏移和正文，speaker/confidence 保持 null，不持久化原录音或内部路径；
+- React 只接收 local CPU/int8 policy、安全 phase/status/progress、stable error code 和 meeting/source 结果；不接收源/临时/模型路径、音频、Worker artifact 或通过音频 Command 返回的 segments；
+- 转写结果继续复用 `transcript_sources` / `transcript_segments`、分页/修正/删除和现有 Summary pipeline；不建立通用任务调度平台。
 
 本阶段不做实时音频、WASAPI、麦克风/系统音频采集、实时字幕、实时 ASR、实时 diarization、说话人身份推断、实时翻译或第二套 transcript 模型。
 
@@ -185,7 +189,7 @@ Personal Edition 不建立通用 `consent_events` 审计体系，不创建 Conse
 覆盖使用其他软件录制、会后批量转写并生成纪要的场景
 ```
 
-## 8. 再后：简化 Docling 编排
+## 8. 下一阶段：简化 Docling 编排
 
 分支：`feat/document-parsing-orchestration`
 
@@ -321,7 +325,17 @@ PR #23 是迁移到新流程的文档 PR，自身仍须遵守任务开始时已�
 
 `feat/summary-mode-minutes` 虽不修改 schema/Provider transport，但首次把真实外发入口和应用外文件写入开放给普通 UI，因此使用 development-only 隔离 app-data、匹配的合成 identifier、synthetic SecretStore 与 fake DeepSeek transport 执行双启动 Windows 11 验收。必须覆盖 explicit Generate/Consent/Cancel、queued 不自动恢复、result/evidence、编辑/contentVersion、Markdown 复制/原生保存、revision/stale/interrupted recovery、WebView storage、SQLite integrity/foreign keys、应用代码 0 真实外发及最终 Temp/app-data 清理；不得接触正常 app-data、Credential Manager 中的生产 Key 或仓库外备份。
 
-真实付费 DeepSeek API smoke 默认不运行且不是该 PR 的合并门槛。只有用户在了解潜在费用后给出针对一次请求的明确批准，才可使用现有 SecretStore Key 和极短合成转录执行；否则最终报告必须明确真实 Key、账户权限、余额、公网 TLS 与当时服务状态未验证。
+PR #25 合并后的用户授权 live smoke 已用极短纯合成转录验证一次真实 Key/网络/Provider/UI 链路；不在 PR #26 自动重复，也不把该历史结果描述成持续服务保证。任何新的付费请求仍需用户针对当次请求明确批准。
+
+`feat/audio-file-transcription` 修改 schema、文件/进程信任边界和 Python Worker，必须额外覆盖：
+
+- v5 → v6 与全新库升级、migration checksum、事务故障回滚/再次启动、`PRAGMA integrity_check` 和 `PRAGMA foreign_key_check`；v1–v5 migration 与既有数据/tree 不得被改写；
+- Windows 11 原生 picker 的取消无副作用，以及 WAV/MP3/M4A/含音轨 MP4 的真实短合成媒体主流程；MP4 只验收音轨，不声称支持视频帧；
+- empty/unsupported/type mismatch/no audio stream/2 GiB/四小时/segment/text/artifact 上限、Worker/模型缺失或不兼容、协议损坏、超时、崩溃、持久化失败、busy 和未知错误均 fail closed；
+- 进度阶段、首 event job ID、运行中并行取消、单 job 互斥、取消/异常/正常完成的进程树/句柄/staging 清理，以及重启对 abandoned staging 的协调清理；
+- 显式模型 provisioning 的固定 repo/revision/inventory/hash，正常 runtime 离线、无自动下载；Worker 不继承凭据/proxy，不监听端口，不访问 SQLite/SecretStore；
+- React/WebView 不取得源/临时/模型路径、音频、Worker artifacts 或音频 Command 返回的 segments；日志、错误、测试输出不含文件名、私人路径、音频、转录正文或原始 stderr；
+- `imported_audio` 成功后进入现有分页/修正/Summary 流程，删除来源和 meeting deletion/cancel 不留下部分数据库行、音频副本或孤儿 Worker。
 
 当前标准检查命令包括：
 
@@ -330,6 +344,8 @@ PR #23 是迁移到新流程的文档 PR，自身仍须遵守任务开始时已�
 - `npm run typecheck`
 - `npm run test`
 - `npm run test:sidecar`
+- `npm run check:docling-worker`
+- `npm run check:transcription-worker`
 - `npm run build`
 - `cargo fmt --manifest-path src-tauri/Cargo.toml -- --check`
 - `cargo test --locked --manifest-path src-tauri/Cargo.toml`
@@ -347,7 +363,7 @@ PR #23 是迁移到新流程的文档 PR，自身仍须遵守任务开始时已�
 
 ### Migration 与数据
 
-- migration 只能追加、在事务中执行并记录 checksum；不得修改、替换或复用已合并的 v1–v5 或任何后续 migration。
+- migration 只能追加、在事务中执行并记录 checksum；不得修改、替换或复用已合并的 v1–v5；v6 一经合并也同样永久不可变。
 - 数据层变化必须有自动测试；破坏性 migration、数据删除或不可逆转换必须先备份并获得用户批准。
 - schema v4 的 Summary series/revision、不可变 input snapshot、stale 字段、evidence 和 completed/failed/cancelled 状态机必须保留。
 
@@ -384,12 +400,12 @@ PR #23 是迁移到新流程的文档 PR，自身仍须遵守任务开始时已�
 
 ## 14. 当前下一步
 
-当前任务是完成并审查 `feat/summary-mode-minutes`：在 schema v5 和已合并的 Rust-only DeepSeek/最小 Consent 上交付正式 Generate、五区结果/evidence、受限编辑、canonical Markdown、复制/原生 Save As、revision/stale 和整份重新生成。
+当前任务是完成并审查 `feat/audio-file-transcription`：在 PR #25 的日常 Summary 闭环上交付 schema v6 `imported_audio`、Rust 安全选择/私有 staging、本地 faster-whisper CPU int8 一次性 Worker、显式模型 provisioning、进度/取消/清理和既有 Transcript Workspace/Summary pipeline 接入。
 
 该功能通过审查并由用户决定合并后，唯一明确下一阶段为：
 
 ```text
-feat/audio-file-transcription
+feat/document-parsing-orchestration
 ```
 
-在用户审查并明确决定是否合并当前功能前，不得创建或开始该下一分支。不得创建 `feat/consent-data-core`，不得顺带接入 Docling 或任何 Frozen / Deferred 阶段。
+在用户审查并明确决定是否合并当前功能前，不得创建或开始该下一分支。不得创建 `feat/consent-data-core`，不得在本 PR 顺带接入 Docling、window context 或任何 Frozen / Deferred 阶段。

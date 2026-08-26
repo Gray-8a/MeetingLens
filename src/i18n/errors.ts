@@ -1,3 +1,4 @@
+import type { AudioTranscriptionErrorCode } from "../api/audioTranscription";
 import type { DocumentErrorCode } from "../api/document";
 import type { SecretErrorCode } from "../api/secret";
 import type { SummaryErrorCode } from "../api/summary";
@@ -133,6 +134,32 @@ const transcriptErrorKeys = {
   internal_error: "error.transcript.internal_error",
 } as const satisfies Record<TranscriptErrorCode, string>;
 
+const audioTranscriptionErrorKeys = {
+  audio_picker_unavailable: "error.audio.audio_picker_unavailable",
+  audio_invalid_input: "error.audio.audio_invalid_input",
+  audio_unsupported_type: "error.audio.audio_unsupported_type",
+  audio_type_mismatch: "error.audio.audio_type_mismatch",
+  audio_empty: "error.audio.audio_empty",
+  audio_too_large: "error.audio.audio_too_large",
+  audio_too_long: "error.audio.audio_too_long",
+  audio_stream_missing: "error.audio.audio_stream_missing",
+  audio_model_missing: "error.audio.audio_model_missing",
+  audio_model_incompatible: "error.audio.audio_model_incompatible",
+  audio_worker_unavailable: "error.audio.audio_worker_unavailable",
+  audio_worker_start_failed: "error.audio.audio_worker_start_failed",
+  audio_worker_crashed: "error.audio.audio_worker_crashed",
+  audio_protocol_error: "error.audio.audio_protocol_error",
+  audio_output_too_large: "error.audio.audio_output_too_large",
+  audio_integrity_failed: "error.audio.audio_integrity_failed",
+  audio_timeout: "error.audio.audio_timeout",
+  audio_cancelled: "error.audio.audio_cancelled",
+  audio_transcription_busy: "error.audio.audio_transcription_busy",
+  audio_persistence_failed: "error.audio.audio_persistence_failed",
+  meeting_not_found: "error.audio.meeting_not_found",
+  meeting_invalid_state: "error.audio.meeting_invalid_state",
+  internal_error: "error.audio.internal_error",
+} as const satisfies Record<AudioTranscriptionErrorCode, string>;
+
 export function documentErrorMessage(code: DocumentErrorCode): string {
   return i18n.t(documentErrorKeys[code]);
 }
@@ -155,4 +182,10 @@ export function sidecarErrorMessage(code: SidecarErrorCode): string {
 
 export function transcriptErrorMessage(code: TranscriptErrorCode): string {
   return i18n.t(transcriptErrorKeys[code]);
+}
+
+export function audioTranscriptionErrorMessage(
+  code: AudioTranscriptionErrorCode,
+): string {
+  return i18n.t(audioTranscriptionErrorKeys[code]);
 }

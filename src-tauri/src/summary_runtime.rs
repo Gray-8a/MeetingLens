@@ -888,7 +888,7 @@ pub(crate) mod offline_smoke {
             .expect("schema version should be readable");
         assert_eq!(integrity, "ok");
         assert_eq!(foreign_key_violations, 0);
-        assert_eq!(schema_version, 5);
+        assert_eq!(schema_version, 6);
         drop(connection);
         drop(runtime);
         drop(reopened);

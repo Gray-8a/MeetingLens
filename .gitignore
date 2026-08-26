@@ -98,6 +98,10 @@ docling-models/
 .docling-models/
 workers/docling/models/
 workers/docling/parser-staging/
+transcription-models/
+.transcription-models/
+workers/transcription/models/
+workers/transcription/staging/
 *.doc
 *.docx
 *.pdf

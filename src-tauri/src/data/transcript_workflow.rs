@@ -9,7 +9,8 @@ use super::repository;
 use super::service::MeetingService;
 use super::transcript_error::TranscriptError;
 use super::transcript_model::{
-    TranscriptImportInput, TranscriptImportOutcome, TranscriptSourceOverview, TranscriptSourceType,
+    StructuredAudioTranscript, TranscriptImportInput, TranscriptImportOutcome,
+    TranscriptSourceOverview, TranscriptSourceType,
 };
 use super::transcript_repository;
 use super::transcript_service::TranscriptService;
@@ -133,6 +134,39 @@ impl TranscriptImportWorkflow {
         })
     }
 
+    pub fn create_meeting_from_audio_transcript(
+        &self,
+        meeting: CreateMeeting,
+        transcript: StructuredAudioTranscript,
+    ) -> TranscriptWorkflowResult<TranscriptImportWorkflowOutcome> {
+        let prepared_meeting = MeetingService::prepare_create(meeting)?;
+        let prepared_transcript = self.transcripts.prepare_audio_import(transcript)?;
+
+        let _guard = self.database.mutation_guard()?;
+        let mut connection = self.database.connect()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(DataError::from)?;
+        let meeting = MeetingService::insert_prepared(&transaction, &prepared_meeting)?;
+        let transcript =
+            self.transcripts
+                .import_prepared(&transaction, &meeting.id, prepared_transcript)?;
+        let duplicate = matches!(transcript, TranscriptImportOutcome::Duplicate { .. });
+        let source = transcript_repository::get_source_overview(
+            &transaction,
+            &meeting.id,
+            transcript_source_id(&transcript),
+        )?;
+        transaction.commit().map_err(DataError::from)?;
+
+        Ok(TranscriptImportWorkflowOutcome {
+            meeting,
+            transcript,
+            source,
+            duplicate,
+        })
+    }
+
     pub fn add_transcript_to_meeting(
         &self,
         meeting_id: &str,
@@ -140,6 +174,38 @@ impl TranscriptImportWorkflow {
         transcript: TranscriptImportInput,
     ) -> TranscriptWorkflowResult<TranscriptImportWorkflowOutcome> {
         let prepared_transcript = self.transcripts.prepare_import(source_type, transcript)?;
+
+        let _guard = self.database.mutation_guard()?;
+        let mut connection = self.database.connect()?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(DataError::from)?;
+        let transcript =
+            self.transcripts
+                .import_prepared(&transaction, meeting_id, prepared_transcript)?;
+        let meeting = repository::get(&transaction, meeting_id)?;
+        let duplicate = matches!(transcript, TranscriptImportOutcome::Duplicate { .. });
+        let source = transcript_repository::get_source_overview(
+            &transaction,
+            meeting_id,
+            transcript_source_id(&transcript),
+        )?;
+        transaction.commit().map_err(DataError::from)?;
+
+        Ok(TranscriptImportWorkflowOutcome {
+            meeting,
+            transcript,
+            source,
+            duplicate,
+        })
+    }
+
+    pub fn add_audio_transcript_to_meeting(
+        &self,
+        meeting_id: &str,
+        transcript: StructuredAudioTranscript,
+    ) -> TranscriptWorkflowResult<TranscriptImportWorkflowOutcome> {
+        let prepared_transcript = self.transcripts.prepare_audio_import(transcript)?;
 
         let _guard = self.database.mutation_guard()?;
         let mut connection = self.database.connect()?;
@@ -218,6 +284,20 @@ mod tests {
         }
     }
 
+    fn audio(filename: &str, text: &str) -> StructuredAudioTranscript {
+        StructuredAudioTranscript {
+            display_name: filename.to_string(),
+            original_filename: filename.to_string(),
+            language: Some("en-AU".to_string()),
+            parser_version: "faster-whisper/1.2.1".to_string(),
+            segments: vec![crate::data::StructuredAudioSegment {
+                start_offset_ms: 0,
+                end_offset_ms: 1_000,
+                original_text: text.to_string(),
+            }],
+        }
+    }
+
     fn imported_source(outcome: &TranscriptImportWorkflowOutcome) -> (&str, usize) {
         match &outcome.transcript {
             TranscriptImportOutcome::Imported {
@@ -260,6 +340,27 @@ mod tests {
                 .segment_count,
             2
         );
+    }
+
+    #[test]
+    fn atomically_creates_a_meeting_from_structured_audio() {
+        let directory = TestDirectory::new();
+        let meetings = MeetingService::initialize(&directory.0).expect("service should initialize");
+        let outcome = meetings
+            .transcript_imports()
+            .create_meeting_from_audio_transcript(
+                create_meeting("Synthetic audio meeting"),
+                audio("synthetic.mp3", "Synthetic audio transcript"),
+            )
+            .expect("audio workflow should commit");
+
+        assert_eq!(outcome.meeting.status, MeetingStatus::Draft);
+        assert_eq!(
+            outcome.source.source.source_type,
+            TranscriptSourceType::ImportedAudio
+        );
+        assert_eq!(outcome.source.segment_count, 1);
+        assert!(!outcome.duplicate);
     }
 
     #[test]
@@ -313,6 +414,34 @@ mod tests {
         assert_eq!(
             error,
             TranscriptWorkflowError::Transcript(TranscriptError::PersistenceFailed)
+        );
+        assert!(meetings.list().expect("meetings should list").is_empty());
+    }
+
+    #[test]
+    fn audio_segment_failure_rolls_back_the_meeting_and_source() {
+        let directory = TestDirectory::new();
+        let meetings = MeetingService::initialize(&directory.0).expect("service should initialize");
+        let workflow = meetings.transcript_imports();
+        workflow
+            .database
+            .connect()
+            .expect("database should connect")
+            .execute_batch(
+                "CREATE TRIGGER synthetic_audio_segment_failure
+                 BEFORE INSERT ON transcript_segments
+                 BEGIN SELECT RAISE(ABORT, 'synthetic audio failure'); END;",
+            )
+            .expect("failure trigger should install");
+
+        assert_eq!(
+            workflow.create_meeting_from_audio_transcript(
+                create_meeting("Synthetic audio rollback"),
+                audio("synthetic.wav", "Synthetic audio rollback transcript"),
+            ),
+            Err(TranscriptWorkflowError::Transcript(
+                TranscriptError::PersistenceFailed
+            ))
         );
         assert!(meetings.list().expect("meetings should list").is_empty());
     }

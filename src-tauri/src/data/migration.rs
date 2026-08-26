@@ -516,6 +516,309 @@ const MIGRATIONS: &[Migration] = &[
         ) WITHOUT ROWID;
     "#,
     },
+    Migration {
+        version: 6,
+        sql: r#"
+        ALTER TABLE transcript_segments RENAME TO transcript_segments_v5;
+        ALTER TABLE transcript_sources RENAME TO transcript_sources_v5;
+
+        CREATE TABLE transcript_sources (
+            id TEXT PRIMARY KEY NOT NULL CHECK(length(id) = 36),
+            meeting_id TEXT NOT NULL,
+            source_type TEXT NOT NULL CHECK(source_type IN (
+                'pasted_text', 'imported_txt', 'imported_srt', 'imported_vtt',
+                'imported_audio', 'live_asr', 'platform_export'
+            )),
+            display_name TEXT NOT NULL CHECK(
+                length(trim(display_name)) > 0
+                AND length(CAST(display_name AS BLOB)) <= 255
+            ),
+            original_filename TEXT CHECK(
+                original_filename IS NULL OR (
+                    length(original_filename) > 0
+                    AND length(CAST(original_filename AS BLOB)) <= 255
+                )
+            ),
+            content_sha256 TEXT NOT NULL CHECK(
+                length(content_sha256) = 64
+                AND content_sha256 = lower(content_sha256)
+                AND content_sha256 NOT GLOB '*[^0-9a-f]*'
+            ),
+            language TEXT CHECK(
+                language IS NULL OR length(trim(language)) BETWEEN 1 AND 35
+            ),
+            base_started_at TEXT,
+            parser_name TEXT NOT NULL CHECK(
+                length(trim(parser_name)) > 0
+                AND length(CAST(parser_name AS BLOB)) <= 64
+            ),
+            parser_version TEXT NOT NULL CHECK(
+                length(trim(parser_version)) > 0
+                AND length(CAST(parser_version AS BLOB)) <= 64
+            ),
+            imported_at TEXT NOT NULL,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            UNIQUE(id, meeting_id),
+            FOREIGN KEY(meeting_id) REFERENCES meetings(id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE transcript_segments (
+            id TEXT PRIMARY KEY NOT NULL CHECK(length(id) = 36),
+            meeting_id TEXT NOT NULL,
+            source_id TEXT NOT NULL,
+            ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 0 AND 19999),
+            speaker_label TEXT CHECK(
+                speaker_label IS NULL OR (
+                    length(trim(speaker_label)) > 0
+                    AND length(CAST(speaker_label AS BLOB)) <= 255
+                )
+            ),
+            speaker_name TEXT CHECK(
+                speaker_name IS NULL OR (
+                    length(trim(speaker_name)) > 0
+                    AND length(CAST(speaker_name AS BLOB)) <= 255
+                )
+            ),
+            start_offset_ms INTEGER CHECK(start_offset_ms IS NULL OR start_offset_ms >= 0),
+            end_offset_ms INTEGER CHECK(
+                end_offset_ms IS NULL OR (
+                    start_offset_ms IS NOT NULL
+                    AND end_offset_ms >= start_offset_ms
+                )
+            ),
+            original_text TEXT NOT NULL CHECK(
+                length(trim(original_text)) > 0
+                AND length(CAST(original_text AS BLOB)) <= 65536
+            ),
+            translated_text TEXT CHECK(
+                translated_text IS NULL OR (
+                    length(trim(translated_text)) > 0
+                    AND length(CAST(translated_text AS BLOB)) <= 65536
+                )
+            ),
+            language TEXT CHECK(
+                language IS NULL OR length(trim(language)) BETWEEN 1 AND 35
+            ),
+            confidence REAL CHECK(confidence IS NULL OR confidence BETWEEN 0.0 AND 1.0),
+            is_final INTEGER NOT NULL CHECK(is_final IN (0, 1)),
+            revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1),
+            created_at TEXT NOT NULL,
+            corrected_at TEXT,
+            UNIQUE(source_id, ordinal),
+            FOREIGN KEY(meeting_id) REFERENCES meetings(id) ON DELETE CASCADE,
+            FOREIGN KEY(source_id, meeting_id)
+                REFERENCES transcript_sources(id, meeting_id) ON DELETE CASCADE
+        );
+
+        INSERT INTO transcript_sources(
+            id, meeting_id, source_type, display_name, original_filename,
+            content_sha256, language, base_started_at, parser_name, parser_version,
+            imported_at, created_at, updated_at
+        )
+        SELECT
+            id, meeting_id, source_type, display_name, original_filename,
+            content_sha256, language, base_started_at, parser_name, parser_version,
+            imported_at, created_at, updated_at
+        FROM transcript_sources_v5;
+
+        INSERT INTO transcript_segments(
+            id, meeting_id, source_id, ordinal, speaker_label, speaker_name,
+            start_offset_ms, end_offset_ms, original_text, translated_text,
+            language, confidence, is_final, revision, created_at, corrected_at
+        )
+        SELECT
+            id, meeting_id, source_id, ordinal, speaker_label, speaker_name,
+            start_offset_ms, end_offset_ms, original_text, translated_text,
+            language, confidence, is_final, revision, created_at, corrected_at
+        FROM transcript_segments_v5;
+
+        DROP TABLE transcript_segments_v5;
+        DROP TABLE transcript_sources_v5;
+
+        CREATE INDEX idx_transcript_sources_meeting
+            ON transcript_sources(meeting_id, imported_at, id);
+        CREATE INDEX idx_transcript_sources_meeting_type
+            ON transcript_sources(meeting_id, source_type, imported_at, id);
+        CREATE UNIQUE INDEX idx_transcript_sources_meeting_sha256
+            ON transcript_sources(meeting_id, content_sha256);
+        CREATE INDEX idx_transcript_segments_meeting
+            ON transcript_segments(meeting_id, source_id, ordinal);
+
+        ALTER TABLE evidence_items RENAME TO evidence_items_v5;
+        ALTER TABLE summary_sources RENAME TO summary_sources_v5;
+
+        CREATE TABLE summary_sources (
+            id TEXT PRIMARY KEY NOT NULL CHECK(length(id) = 36),
+            summary_id TEXT NOT NULL,
+            meeting_id TEXT NOT NULL,
+            source_id_snapshot TEXT NOT NULL CHECK(length(source_id_snapshot) = 36),
+            segment_id_snapshot TEXT NOT NULL CHECK(length(segment_id_snapshot) = 36),
+            segment_revision INTEGER NOT NULL CHECK(segment_revision >= 1),
+            source_ordinal INTEGER NOT NULL CHECK(source_ordinal BETWEEN 0 AND 19999),
+            segment_ordinal INTEGER NOT NULL CHECK(segment_ordinal BETWEEN 0 AND 19999),
+            global_ordinal INTEGER NOT NULL CHECK(global_ordinal BETWEEN 0 AND 19999),
+            source_type_snapshot TEXT NOT NULL CHECK(source_type_snapshot IN (
+                'pasted_text', 'imported_txt', 'imported_srt', 'imported_vtt',
+                'imported_audio', 'live_asr', 'platform_export'
+            )),
+            source_display_name_snapshot TEXT CHECK(
+                source_display_name_snapshot IS NULL OR (
+                    length(trim(source_display_name_snapshot)) > 0
+                    AND length(CAST(source_display_name_snapshot AS BLOB)) <= 255
+                )
+            ),
+            source_language_snapshot TEXT CHECK(
+                source_language_snapshot IS NULL OR length(trim(source_language_snapshot)) BETWEEN 1 AND 35
+            ),
+            source_base_started_at_snapshot TEXT,
+            speaker_label_snapshot TEXT CHECK(
+                speaker_label_snapshot IS NULL OR (
+                    length(trim(speaker_label_snapshot)) > 0
+                    AND length(CAST(speaker_label_snapshot AS BLOB)) <= 255
+                )
+            ),
+            speaker_name_snapshot TEXT CHECK(
+                speaker_name_snapshot IS NULL OR (
+                    length(trim(speaker_name_snapshot)) > 0
+                    AND length(CAST(speaker_name_snapshot AS BLOB)) <= 255
+                )
+            ),
+            start_offset_ms_snapshot INTEGER CHECK(
+                start_offset_ms_snapshot IS NULL OR start_offset_ms_snapshot >= 0
+            ),
+            end_offset_ms_snapshot INTEGER CHECK(
+                end_offset_ms_snapshot IS NULL OR (
+                    start_offset_ms_snapshot IS NOT NULL
+                    AND end_offset_ms_snapshot >= start_offset_ms_snapshot
+                )
+            ),
+            original_text_snapshot TEXT CHECK(
+                original_text_snapshot IS NULL OR (
+                    length(trim(original_text_snapshot)) > 0
+                    AND length(CAST(original_text_snapshot AS BLOB)) <= 65536
+                )
+            ),
+            language_snapshot TEXT CHECK(
+                language_snapshot IS NULL OR length(trim(language_snapshot)) BETWEEN 1 AND 35
+            ),
+            confidence_snapshot REAL CHECK(
+                confidence_snapshot IS NULL OR confidence_snapshot BETWEEN 0.0 AND 1.0
+            ),
+            is_final_snapshot INTEGER NOT NULL CHECK(is_final_snapshot = 1),
+            snapshot_at TEXT NOT NULL,
+            source_deleted INTEGER NOT NULL DEFAULT 0 CHECK(source_deleted IN (0, 1)),
+            redacted_at TEXT,
+            UNIQUE(id, summary_id, meeting_id),
+            UNIQUE(
+                id, summary_id, meeting_id, source_id_snapshot,
+                segment_id_snapshot, segment_revision, segment_ordinal, global_ordinal
+            ),
+            UNIQUE(summary_id, segment_id_snapshot, segment_revision),
+            UNIQUE(summary_id, global_ordinal),
+            CHECK(
+                (source_deleted = 0 AND source_display_name_snapshot IS NOT NULL
+                    AND original_text_snapshot IS NOT NULL AND redacted_at IS NULL)
+                OR (source_deleted = 1 AND original_text_snapshot IS NULL AND redacted_at IS NOT NULL)
+            ),
+            FOREIGN KEY(summary_id, meeting_id)
+                REFERENCES summaries(id, meeting_id) ON DELETE CASCADE
+        );
+
+        CREATE TABLE evidence_items (
+            id TEXT PRIMARY KEY NOT NULL CHECK(length(id) = 36),
+            summary_id TEXT NOT NULL,
+            meeting_id TEXT NOT NULL,
+            summary_source_id TEXT NOT NULL,
+            kind TEXT NOT NULL CHECK(kind = 'transcript'),
+            source_id_snapshot TEXT NOT NULL CHECK(length(source_id_snapshot) = 36),
+            transcript_segment_id_snapshot TEXT NOT NULL CHECK(
+                length(transcript_segment_id_snapshot) = 36
+            ),
+            segment_revision INTEGER NOT NULL CHECK(segment_revision >= 1),
+            label TEXT NOT NULL CHECK(
+                length(trim(label)) > 0 AND length(CAST(label AS BLOB)) <= 255
+            ),
+            speaker_snapshot TEXT CHECK(
+                speaker_snapshot IS NULL OR (
+                    length(trim(speaker_snapshot)) > 0
+                    AND length(CAST(speaker_snapshot AS BLOB)) <= 255
+                )
+            ),
+            start_offset_ms INTEGER CHECK(start_offset_ms IS NULL OR start_offset_ms >= 0),
+            end_offset_ms INTEGER CHECK(
+                end_offset_ms IS NULL OR (
+                    start_offset_ms IS NOT NULL AND end_offset_ms >= start_offset_ms
+                )
+            ),
+            ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 0 AND 19999),
+            global_ordinal INTEGER NOT NULL CHECK(global_ordinal BETWEEN 0 AND 19999),
+            excerpt TEXT NOT NULL CHECK(
+                length(trim(excerpt)) > 0
+                AND length(CAST(excerpt AS BLOB)) <= 1024
+            ),
+            source_deleted INTEGER NOT NULL DEFAULT 0 CHECK(source_deleted IN (0, 1)),
+            created_at TEXT NOT NULL,
+            UNIQUE(summary_id, summary_source_id),
+            CHECK(id = summary_source_id),
+            FOREIGN KEY(
+                summary_source_id, summary_id, meeting_id, source_id_snapshot,
+                transcript_segment_id_snapshot, segment_revision, ordinal, global_ordinal
+            ) REFERENCES summary_sources(
+                id, summary_id, meeting_id, source_id_snapshot,
+                segment_id_snapshot, segment_revision, segment_ordinal, global_ordinal
+            ) ON DELETE CASCADE,
+            FOREIGN KEY(summary_id, meeting_id)
+                REFERENCES summaries(id, meeting_id) ON DELETE CASCADE
+        );
+
+        INSERT INTO summary_sources(
+            id, summary_id, meeting_id, source_id_snapshot, segment_id_snapshot,
+            segment_revision, source_ordinal, segment_ordinal, global_ordinal,
+            source_type_snapshot, source_display_name_snapshot,
+            source_language_snapshot, source_base_started_at_snapshot,
+            speaker_label_snapshot, speaker_name_snapshot,
+            start_offset_ms_snapshot, end_offset_ms_snapshot,
+            original_text_snapshot, language_snapshot, confidence_snapshot,
+            is_final_snapshot, snapshot_at, source_deleted, redacted_at
+        )
+        SELECT
+            id, summary_id, meeting_id, source_id_snapshot, segment_id_snapshot,
+            segment_revision, source_ordinal, segment_ordinal, global_ordinal,
+            source_type_snapshot, source_display_name_snapshot,
+            source_language_snapshot, source_base_started_at_snapshot,
+            speaker_label_snapshot, speaker_name_snapshot,
+            start_offset_ms_snapshot, end_offset_ms_snapshot,
+            original_text_snapshot, language_snapshot, confidence_snapshot,
+            is_final_snapshot, snapshot_at, source_deleted, redacted_at
+        FROM summary_sources_v5;
+
+        INSERT INTO evidence_items(
+            id, summary_id, meeting_id, summary_source_id, kind,
+            source_id_snapshot, transcript_segment_id_snapshot,
+            segment_revision, label, speaker_snapshot, start_offset_ms,
+            end_offset_ms, ordinal, global_ordinal, excerpt, source_deleted, created_at
+        )
+        SELECT
+            id, summary_id, meeting_id, summary_source_id, kind,
+            source_id_snapshot, transcript_segment_id_snapshot,
+            segment_revision, label, speaker_snapshot, start_offset_ms,
+            end_offset_ms, ordinal, global_ordinal, excerpt, source_deleted, created_at
+        FROM evidence_items_v5;
+
+        DROP TABLE evidence_items_v5;
+        DROP TABLE summary_sources_v5;
+
+        CREATE INDEX idx_summary_sources_live_source
+            ON summary_sources(meeting_id, source_id_snapshot, summary_id);
+        CREATE INDEX idx_summary_sources_live_segment
+            ON summary_sources(meeting_id, segment_id_snapshot, segment_revision, summary_id);
+        CREATE INDEX idx_evidence_items_summary_order
+            ON evidence_items(summary_id, global_ordinal, id);
+        CREATE INDEX idx_evidence_items_source
+            ON evidence_items(meeting_id, source_id_snapshot, summary_id);
+    "#,
+    },
 ];
 
 pub(crate) fn run(connection: &mut Connection) -> DataResult<()> {
@@ -535,6 +838,11 @@ pub(crate) fn run_through_v3(connection: &mut Connection) -> DataResult<()> {
 #[cfg(test)]
 pub(crate) fn run_through_v4(connection: &mut Connection) -> DataResult<()> {
     apply(connection, &MIGRATIONS[..4])
+}
+
+#[cfg(test)]
+pub(crate) fn run_through_v5(connection: &mut Connection) -> DataResult<()> {
+    apply(connection, &MIGRATIONS[..5])
 }
 
 fn apply(connection: &mut Connection, migrations: &[Migration]) -> DataResult<()> {
@@ -684,7 +992,7 @@ mod tests {
                 row.get(0)
             })
             .expect("migration count should be readable");
-        assert_eq!(count, 5);
+        assert_eq!(count, 6);
     }
 
     #[test]
@@ -694,6 +1002,23 @@ mod tests {
         connection
             .execute(
                 "UPDATE schema_migrations SET checksum = 'changed' WHERE version = 5",
+                [],
+            )
+            .expect("test should alter the checksum");
+
+        assert_eq!(
+            apply(&mut connection, MIGRATIONS),
+            Err(DataError::MigrationConflict)
+        );
+    }
+
+    #[test]
+    fn rejects_a_changed_schema_v6_migration_checksum() {
+        let mut connection = Connection::open_in_memory().expect("in-memory database should open");
+        apply(&mut connection, MIGRATIONS).expect("migration should succeed");
+        connection
+            .execute(
+                "UPDATE schema_migrations SET checksum = 'changed' WHERE version = 6",
                 [],
             )
             .expect("test should alter the checksum");
@@ -743,7 +1068,7 @@ mod tests {
                 |row| row.get(0),
             )
             .expect("v4 checksum should read");
-        apply(&mut connection, MIGRATIONS).expect("schema v5 should apply");
+        apply(&mut connection, &MIGRATIONS[..5]).expect("schema v5 should apply");
 
         let migration_state: (i64, i64, String) = connection
             .query_row(
@@ -796,6 +1121,211 @@ mod tests {
             })
             .expect("foreign keys should check");
         assert_eq!(integrity, "ok");
+        assert_eq!(foreign_key_violations, 0);
+    }
+
+    #[test]
+    fn schema_v6_preserves_v5_transcripts_summary_evidence_and_consent() {
+        let mut connection = Connection::open_in_memory().expect("in-memory database should open");
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
+            .expect("foreign keys should enable");
+        run_through_v5(&mut connection).expect("schema v5 should apply");
+        seed_schema_v4_summary(&connection);
+        connection
+            .execute_batch(
+                r#"
+                INSERT INTO transcript_sources(
+                    id, meeting_id, source_type, display_name, original_filename,
+                    content_sha256, language, parser_name, parser_version,
+                    imported_at, created_at, updated_at
+                ) VALUES (
+                    '75000000-0000-4000-8000-000000000001',
+                    '71000000-0000-4000-8000-000000000001',
+                    'imported_vtt', 'Synthetic live v5 source', 'synthetic.vtt',
+                    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                    'en-AU', 'vtt', '1', '2026-08-01T00:00:00.000Z',
+                    '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z'
+                );
+                INSERT INTO transcript_segments(
+                    id, meeting_id, source_id, ordinal, speaker_label, speaker_name,
+                    start_offset_ms, end_offset_ms, original_text, language,
+                    confidence, is_final, revision, created_at
+                ) VALUES (
+                    '76000000-0000-4000-8000-000000000001',
+                    '71000000-0000-4000-8000-000000000001',
+                    '75000000-0000-4000-8000-000000000001', 0,
+                    'Speaker 1', 'Synthetic speaker', 100, 900,
+                    'Synthetic live v5 transcript', 'en-AU', 0.75, 1, 2,
+                    '2026-08-01T00:00:00.000Z'
+                );
+                INSERT INTO provider_consent_preferences(
+                    provider, policy_version, policy_fingerprint, consented_at, updated_at
+                ) VALUES (
+                    'deepseek', 'deepseek-transcript-external-v1',
+                    'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+                    '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z'
+                );
+                "#,
+            )
+            .expect("populated schema-v5 fixture should insert");
+
+        apply(&mut connection, MIGRATIONS).expect("schema v6 should apply");
+
+        let migration_state: (i64, i64) = connection
+            .query_row(
+                "SELECT COUNT(*), MAX(version) FROM schema_migrations",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("migration state should read");
+        assert_eq!(migration_state, (6, 6));
+        let retained_transcript: (String, String, String, Option<String>, f64, i64) = connection
+            .query_row(
+                "SELECT transcript_sources.source_type, transcript_sources.original_filename,
+                        transcript_segments.original_text, transcript_segments.speaker_name,
+                        transcript_segments.confidence, transcript_segments.revision
+                 FROM transcript_sources
+                 JOIN transcript_segments ON transcript_segments.source_id = transcript_sources.id
+                 WHERE transcript_sources.id = '75000000-0000-4000-8000-000000000001'",
+                [],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )
+            .expect("legacy transcript should remain readable");
+        assert_eq!(retained_transcript.0, "imported_vtt");
+        assert_eq!(retained_transcript.1, "synthetic.vtt");
+        assert_eq!(retained_transcript.2, "Synthetic live v5 transcript");
+        assert_eq!(retained_transcript.3.as_deref(), Some("Synthetic speaker"));
+        assert_eq!(retained_transcript.4, 0.75);
+        assert_eq!(retained_transcript.5, 2);
+
+        let retained_snapshot: (String, String, String) = connection
+            .query_row(
+                "SELECT summary_sources.source_type_snapshot,
+                        summary_sources.original_text_snapshot, evidence_items.excerpt
+                 FROM summary_sources
+                 JOIN evidence_items ON evidence_items.summary_source_id = summary_sources.id
+                 WHERE summary_sources.id = '74000000-0000-4000-8000-000000000001'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("summary snapshot and evidence should remain readable");
+        assert_eq!(retained_snapshot.0, "pasted_text");
+        assert_eq!(retained_snapshot.1, "Synthetic immutable transcript");
+        assert_eq!(retained_snapshot.2, "Synthetic immutable transcript");
+        let consent_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM provider_consent_preferences",
+                [],
+                |row| row.get(0),
+            )
+            .expect("consent should remain readable");
+        assert_eq!(consent_count, 1);
+
+        connection
+            .execute(
+                "UPDATE transcript_sources SET source_type = 'imported_audio'
+                 WHERE id = '75000000-0000-4000-8000-000000000001'",
+                [],
+            )
+            .expect("v6 transcript constraint should accept imported audio");
+        connection
+            .execute(
+                "UPDATE summary_sources SET source_type_snapshot = 'imported_audio'
+                 WHERE id = '74000000-0000-4000-8000-000000000001'",
+                [],
+            )
+            .expect("v6 snapshot constraint should accept imported audio");
+        assert!(
+            connection
+                .execute(
+                    "UPDATE transcript_sources SET source_type = 'unknown'
+                     WHERE id = '75000000-0000-4000-8000-000000000001'",
+                    [],
+                )
+                .is_err()
+        );
+        assert!(
+            connection
+                .execute(
+                    "UPDATE summary_sources SET source_type_snapshot = 'unknown'
+                     WHERE id = '74000000-0000-4000-8000-000000000001'",
+                    [],
+                )
+                .is_err()
+        );
+
+        let integrity: String = connection
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .expect("integrity should check");
+        let foreign_key_violations: i64 = connection
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })
+            .expect("foreign keys should check");
+        assert_eq!(integrity, "ok");
+        assert_eq!(foreign_key_violations, 0);
+    }
+
+    #[test]
+    fn failed_schema_v6_rolls_back_without_touching_schema_v5_data() {
+        let mut connection = Connection::open_in_memory().expect("in-memory database should open");
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
+            .expect("foreign keys should enable");
+        run_through_v5(&mut connection).expect("schema v5 should apply");
+        seed_schema_v4_summary(&connection);
+        let failing_v6 = [Migration {
+            version: 6,
+            sql: "ALTER TABLE evidence_items RENAME TO evidence_items_v5; INVALID SQL;",
+        }];
+
+        assert_eq!(
+            apply(&mut connection, &failing_v6),
+            Err(DataError::Database)
+        );
+        let v6_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM schema_migrations WHERE version = 6",
+                [],
+                |row| row.get(0),
+            )
+            .expect("migration state should read");
+        let evidence_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM evidence_items
+                 WHERE id = '74000000-0000-4000-8000-000000000001'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("v5 evidence should remain readable");
+        let renamed_table_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master
+                 WHERE type = 'table' AND name = 'evidence_items_v5'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("rolled-back schema should inspect");
+        assert_eq!(v6_count, 0);
+        assert_eq!(evidence_count, 1);
+        assert_eq!(renamed_table_count, 0);
+
+        apply(&mut connection, MIGRATIONS).expect("real schema v6 should still apply");
+        let foreign_key_violations: i64 = connection
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })
+            .expect("foreign keys should check");
         assert_eq!(foreign_key_violations, 0);
     }
 
@@ -967,7 +1497,7 @@ mod tests {
         assert_eq!(v5_count, 0);
         assert_eq!(summary_count, 1);
 
-        apply(&mut connection, MIGRATIONS).expect("real schema v5 should still apply");
+        apply(&mut connection, &MIGRATIONS[..5]).expect("real schema v5 should still apply");
         let integrity: String = connection
             .query_row("PRAGMA integrity_check", [], |row| row.get(0))
             .expect("integrity should check");
@@ -1201,7 +1731,7 @@ mod tests {
                 row.get(0)
             })
             .expect("migration records should be readable");
-        assert_eq!(migration_count, 5);
+        assert_eq!(migration_count, 6);
         let integrity: String = connection
             .query_row("PRAGMA integrity_check", [], |row| row.get(0))
             .expect("integrity check should run");
@@ -1278,7 +1808,7 @@ mod tests {
             })
             .expect("foreign keys should check");
         assert_eq!(transcript_count, 1);
-        assert_eq!(migration_count, 5);
+        assert_eq!(migration_count, 6);
         assert_eq!(summary_table_count, 3);
         assert_eq!(integrity, "ok");
         assert_eq!(foreign_key_violations, 0);

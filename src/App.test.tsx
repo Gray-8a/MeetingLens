@@ -20,7 +20,6 @@ import { DocumentApiError } from "./api/document";
 import { MeetingApiError } from "./api/meeting";
 import { SecretApiError } from "./api/secret";
 import { SummaryApiError } from "./api/summary";
-import type { TranscriptApi } from "./api/transcript";
 import type { AppServices } from "./app/services";
 import { formatLocalDate } from "./lib/presentation";
 import i18n, { changeUiLocale, UI_LOCALE_STORAGE_KEY } from "./i18n";
@@ -45,6 +44,7 @@ import {
 } from "./test/fakeMeetingApi";
 import { FakeSecretApi } from "./test/fakeSecretApi";
 import { FakeSummaryApi, syntheticDeepSeekStatus } from "./test/fakeSummaryApi";
+import { FakeAudioTranscriptionApi } from "./test/fakeAudioTranscriptionApi";
 import { FakeTranscriptApi } from "./test/fakeTranscriptApi";
 import {
   documentIds,
@@ -159,9 +159,10 @@ function appServices(
   api: FakeMeetingApi,
   transcriptionProvider: TranscriptionProvider = new ManualTranscriptionProvider(),
   documentApi: FakeDocumentApi = new FakeDocumentApi(),
-  transcriptApi: TranscriptApi = new FakeTranscriptApi(api),
+  transcriptApi: FakeTranscriptApi = new FakeTranscriptApi(api),
 ): AppServices {
   return {
+    audioTranscriptionApi: new FakeAudioTranscriptionApi(api, transcriptApi),
     documentApi,
     meetingApi: api,
     secretApi: new FakeSecretApi(),

@@ -101,12 +101,12 @@
 ## Personal Edition 产品基线与近期顺序
 
 - MeetingLens 当前采用 Personal Edition / 自用版基线：Windows-first、local-first、transcript-first，优先让单个用户日常完成“粘贴或导入转录 → DeepSeek 生成纪要 → 查看和修改 → Markdown 复制或保存”。
-- PR #1–#24 已完成工程/安全基础、Personal Edition 重定基线、粘贴与 TXT/SRT/VTT 转录工作区、schema v4 Summary Run Core，以及 schema v5 Rust-only DeepSeek Provider、SecretStore 消费、严格 JSON/evidence、取消/超时/稳定错误和最小外发 Consent。一次性确认仅在内存中保留 10 分钟并单次消费；remembered Consent 只使用 `provider_consent_preferences` 当前偏好表，不恢复独立 `feat/consent-data-core` 或通用 `consent_events`。
-- 当前 `feat/summary-mode-minutes` 功能分支把正式生成、结果、编辑、evidence、Markdown 复制/原生 Save As 和整份重新生成接成日常可用闭环；它保持 schema v5，不修改 v1–v5 migration、固定 DeepSeek 协议或现有五区 `overview/decisions/actionItems/risks/openQuestions` 内容契约。该功能完成并经用户决定合并后，唯一下一阶段才是 `feat/audio-file-transcription`，随后为 `feat/document-parsing-orchestration` → 可选 `feat/window-context`。
-- production Summary run 固定使用 DeepSeek；确定性 Mock 只允许测试/debug 隔离，历史 Mock run 只读但仍可查看、复制和保存。没有 Key、没有有效确认、空范围、响应不合法或 evidence 越界时必须 fail closed；queued run 重启后不得自动发送，真实付费 API smoke 未执行时不得声称已完成真实账户联网验收。
+- PR #1–#25 已完成工程/安全基础、Personal Edition 重定基线、粘贴与 TXT/SRT/VTT 转录工作区、schema v4 Summary Run Core、schema v5 Rust-only DeepSeek Provider/SecretStore/最小外发 Consent，以及正式生成、结果、编辑、evidence、Markdown 复制/原生 Save As 和整份重新生成的日常可用闭环。一次性确认仅在内存中保留 10 分钟并单次消费；remembered Consent 只使用 `provider_consent_preferences` 当前偏好表，不恢复独立 `feat/consent-data-core` 或通用 `consent_events`。
+- 当前 `feat/audio-file-transcription` 功能分支追加 schema v6 `imported_audio`，通过 Rust 原生选择/私有 staging、本地 faster-whisper CPU int8 一次性受控 Worker、显式模型 provisioning、进度/取消/清理写入既有 transcript 模型；支持 WAV/MP3/M4A/含音轨 MP4，不修改既有 DeepSeek 或五区 `overview/decisions/actionItems/risks/openQuestions` 契约。该功能完成并经用户决定合并后，唯一下一阶段才是 `feat/document-parsing-orchestration` → 可选 `feat/window-context`。
+- production Summary run 固定使用 DeepSeek；确定性 Mock 只允许测试/debug 隔离，历史 Mock run 只读但仍可查看、复制和保存。没有 Key、没有有效确认、空范围、响应不合法或 evidence 越界时必须 fail closed；queued run 重启后不得自动发送。PR #25 基线上已有一次用户明确授权的极短合成 live smoke 通过，但不得把它视为未来服务保证或自动重复付费请求。
 - 纪要编辑只允许修改现有五区正文和行动项 owner/due date，Rust 保留 evidence、状态、顺序及其他 Provider 元数据；保存使用派生 `contentVersion` 做并发保护，在原 revision 内更新 `content_json` 并置 `is_user_edited=1`。同一 revision 不另存 Provider 原稿或编辑历史；整份重新生成只允许 latest terminal DeepSeek revision 创建下一 revision，并保留旧 revision。章节/段落级重生成、复杂 stale UI、完整编辑时间线、冲突合并、DOCX/PDF 导出均冻结。
 - Markdown 必须由 Rust 的同一确定性 renderer 生成并供预览、显式剪贴板写入和 Rust 原生 Save As 使用；React 不接收或提交文件路径、不读取剪贴板、不把结果渲染为不可信 HTML。用户保存到外部位置的 `.md` 和剪贴板副本不受 MeetingLens 删除协调管理。
-- `feat/audio-file-transcription` 只做用户主动导入录音文件、本地 faster-whisper CPU int8 一次性受控 Worker、写入既有 transcript 模型并回到现有工作区；不做 WASAPI、实时音频、实时字幕或实时 diarization。
+- `feat/audio-file-transcription` 只做用户主动导入 WAV/MP3/M4A/含音轨 MP4、本地 faster-whisper CPU int8 一次性受控 Worker、写入既有 transcript 模型并回到现有工作区；原录音只在受控 staging 临时处理，不进入 React/SQLite/日志，失败/取消/重启必须清理。它不做 WASAPI、实时音频、实时字幕、实时 ASR、视频帧或实时 diarization。
 - Docling Worker Foundation 已完成并保留。简化版 `feat/document-parsing-orchestration` 可以在一个功能 PR 内接入解析、document chunks/evidence 和 Summary pipeline；失败自动重试一次，再失败提示手动重导，不建立通用重型调度平台。
 - `feat/window-context` 只有在用户确认实际经常需要时才启动；必须由用户选择具体窗口，身份变化时暂停/重新确认，默认不保存屏幕关键帧，不监控全部桌面。
 

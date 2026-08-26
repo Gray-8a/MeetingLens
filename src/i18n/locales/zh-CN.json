@@ -155,6 +155,32 @@
     "duplicate": "已经添加",
     "duplicateBody": "相同转录已经添加到此会议。"
   },
+  "audioTranscription": {
+    "title": "在本地转写录音文件",
+    "description": "选择一个录音文件，由本地 faster-whisper Worker 转换为可检查的转录片段。",
+    "localOnly": "处理只在本机进行。MeetingLens 不上传录音，也不会启动实时音频采集。",
+    "runtime": "本地 CPU · int8 · {{model}} 模型",
+    "limits": "支持 WAV、MP3、M4A 或含音轨的 MP4 · 最大 {{size}}、{{duration}}",
+    "button": "选择录音并转写",
+    "transcribing": "正在本地转写…",
+    "progressLabel": "本地录音转写进度",
+    "cancelling": "正在取消…",
+    "cancelled": "转写已取消",
+    "cancelledBody": "没有提交转录来源。准备好后可以重新选择文件。",
+    "phase": {
+      "selected": "已选择录音",
+      "validating_input": "正在验证录音",
+      "copying": "正在复制到私有暂存区",
+      "probing": "正在检查音频流",
+      "model_loading": "正在加载本地模型",
+      "transcribing": "正在使用 CPU 转写",
+      "validating_output": "正在验证转录片段",
+      "committing": "正在保存转录",
+      "completed": "转写完成",
+      "failed": "转写失败",
+      "cancelled": "转写已取消"
+    }
+  },
   "transcriptWorkspace": {
     "eyebrow": "检查转录",
     "title": "检查转录内容",
@@ -176,6 +202,7 @@
       "imported_txt": "TXT 转录",
       "imported_srt": "SRT 字幕",
       "imported_vtt": "VTT 字幕",
+      "imported_audio": "录音文件转写",
       "live_asr": "实时听录",
       "platform_export": "平台转录"
     },
@@ -678,6 +705,31 @@
       "meeting_not_found": "未找到此会议。",
       "meeting_invalid_state": "当前会议状态下无法执行此操作。",
       "internal_error": "MeetingLens 无法完成此操作。"
+    },
+    "audio": {
+      "audio_picker_unavailable": "无法打开录音文件选择器。",
+      "audio_invalid_input": "录音转写信息无效。",
+      "audio_unsupported_type": "请选择 WAV、MP3、M4A 或包含音轨的 MP4 文件。",
+      "audio_type_mismatch": "录音内容与文件名类型不一致。",
+      "audio_empty": "录音文件为空。",
+      "audio_too_large": "录音文件超过允许的大小。",
+      "audio_too_long": "录音时长超过允许的限制。",
+      "audio_stream_missing": "此文件中没有受支持的音频流。",
+      "audio_model_missing": "尚未安装本地转写模型。",
+      "audio_model_incompatible": "已安装的转写模型与当前 MeetingLens 版本不兼容。",
+      "audio_worker_unavailable": "此设备无法使用本地录音转写。",
+      "audio_worker_start_failed": "无法启动本地转写 Worker。",
+      "audio_worker_crashed": "本地转写 Worker 意外停止。",
+      "audio_protocol_error": "本地转写 Worker 返回了无效响应。",
+      "audio_output_too_large": "生成的转录超过允许的限制。",
+      "audio_integrity_failed": "无法安全验证录音或生成的转录。",
+      "audio_timeout": "本地录音转写超时。",
+      "audio_cancelled": "录音转写已取消。",
+      "audio_transcription_busy": "已有另一个录音转写任务正在运行。",
+      "audio_persistence_failed": "无法保存生成的转录。",
+      "meeting_not_found": "未找到此会议。",
+      "meeting_invalid_state": "当前会议状态下无法执行此操作。",
+      "internal_error": "MeetingLens 无法完成录音转写。"
     },
     "document": {
       "document_invalid_type": "不支持此文件类型。",
