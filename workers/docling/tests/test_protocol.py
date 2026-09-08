@@ -17,7 +17,7 @@ from meetinglens_docling_worker.protocol import (
 
 def _base(operation: str) -> dict[str, object]:
     return {
-        "protocolVersion": "1",
+        "protocolVersion": "2",
         "requestId": str(uuid.uuid4()),
         "operation": operation,
     }
@@ -54,7 +54,7 @@ class ProtocolTests(unittest.TestCase):
 
     def test_rejects_unknown_protocol_version(self) -> None:
         payload = _base("health")
-        payload["protocolVersion"] = "2"
+        payload["protocolVersion"] = "1"
         self._assert_protocol_error(payload)
 
     def test_rejects_unknown_operation(self) -> None:

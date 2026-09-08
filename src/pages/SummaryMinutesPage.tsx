@@ -6,6 +6,11 @@ import { summaryMinutesPath } from "../app/paths";
 import { useServices } from "../app/services";
 import type { MeetingResponse } from "../api/meeting";
 import {
+  DocumentApiError,
+  type DocumentErrorCode,
+  type DocumentResponse,
+} from "../api/document";
+import {
   toSummaryError,
   type DeepSeekProviderStatusResponse,
   type SummaryErrorCode,
@@ -20,7 +25,7 @@ import { DeepSeekConsentDialog } from "../components/DeepSeekConsentDialog";
 import { SummaryResultView } from "../components/SummaryResultView";
 import { UnsavedChangesDialog } from "../components/UnsavedChangesDialog";
 import { ErrorNotice, LoadingState } from "../components/UiState";
-import { summaryErrorMessage } from "../i18n/errors";
+import { documentErrorMessage, summaryErrorMessage } from "../i18n/errors";
 import {
   formatFileSize,
   formatLocalDate,
@@ -56,15 +61,19 @@ export function SummaryMinutesPage({
   onMeetingStatus: (status: string | null) => void;
 }) {
   const { t } = useTranslation();
-  const { meetingApi, summaryApi, transcriptApi } = useServices();
+  const { documentApi, meetingApi, summaryApi, transcriptApi } = useServices();
   const { navigate } = useNavigation();
   const [meeting, setMeeting] = useState<MeetingResponse | null>(null);
   const [sources, setSources] = useState<TranscriptSourceResponse[]>([]);
+  const [documents, setDocuments] = useState<DocumentResponse[]>([]);
+  const [documentLoadError, setDocumentLoadError] =
+    useState<DocumentErrorCode | null>(null);
   const [policy, setPolicy] = useState<SummaryPolicyResponse | null>(null);
   const [providerStatus, setProviderStatus] =
     useState<DeepSeekProviderStatusResponse | null>(null);
   const [runs, setRuns] = useState<SummaryRunResponse[]>([]);
   const [selectedSourceIds, setSelectedSourceIds] = useState<string[]>([]);
+  const [selectedDocumentIds, setSelectedDocumentIds] = useState<string[]>([]);
   const [template, setTemplate] = useState<SummaryTemplate>("detailed");
   const [outputLanguage, setOutputLanguage] =
     useState<SummaryOutputLanguage>("zh");
@@ -213,6 +222,7 @@ export function SummaryMinutesPage({
     setLoading(true);
     setError(null);
     setProviderStatusError(null);
+    setDocumentLoadError(null);
     setDeepLinkError(null);
     setFatalMeetingError(null);
     onDatabaseStatus("checking");
@@ -224,14 +234,28 @@ export function SummaryMinutesPage({
           error: toSummaryError(reason).code,
         }),
       );
-      const [loadedMeeting, sourcePage, loadedPolicy, runPage, providerResult] =
-        await Promise.all([
-          meetingApi.get(meetingId),
-          transcriptApi.listSources(meetingId),
-          summaryApi.getPolicy(),
-          summaryApi.listRuns({ meetingId, limit: RUN_PAGE_SIZE }),
-          providerResultPromise,
-        ]);
+      const documentResultPromise = documentApi.list(meetingId).then(
+        (page) => ({ page, error: null as DocumentErrorCode | null }),
+        (reason: unknown) => ({
+          page: { documents: [] },
+          error: toDocumentLoadError(reason),
+        }),
+      );
+      const [
+        loadedMeeting,
+        sourcePage,
+        documentResult,
+        loadedPolicy,
+        runPage,
+        providerResult,
+      ] = await Promise.all([
+        meetingApi.get(meetingId),
+        transcriptApi.listSources(meetingId),
+        documentResultPromise,
+        summaryApi.getPolicy(),
+        summaryApi.listRuns({ meetingId, limit: RUN_PAGE_SIZE }),
+        providerResultPromise,
+      ]);
       if (!stillCurrent()) return;
       let loadedRuns = runPage.items;
       let injectedId: string | null = null;
@@ -250,6 +274,8 @@ export function SummaryMinutesPage({
       if (!stillCurrent()) return;
       setMeeting(loadedMeeting);
       setSources(sourcePage.sources);
+      setDocuments(documentResult.page.documents);
+      setDocumentLoadError(documentResult.error);
       setPolicy(loadedPolicy);
       setProviderStatus(providerResult.status);
       setProviderStatusError(providerResult.error);
@@ -260,6 +286,7 @@ export function SummaryMinutesPage({
           .filter((source) => source.segmentCount > 0)
           .map((source) => source.id),
       );
+      setSelectedDocumentIds([]);
       setNextCursor(runPage.nextCursor);
       setHasMore(runPage.hasMore);
       setTotalCount(runPage.totalCount);
@@ -282,6 +309,7 @@ export function SummaryMinutesPage({
     }
   }, [
     capturePage,
+    documentApi,
     isPageCurrent,
     meetingApi,
     meetingId,
@@ -334,6 +362,52 @@ export function SummaryMinutesPage({
         .join(","),
     [runs],
   );
+  const parsingDocumentIdsKey = useMemo(
+    () =>
+      documents
+        .filter((document) => document.status === "parsing")
+        .map((document) => document.id)
+        .sort()
+        .join(","),
+    [documents],
+  );
+
+  useEffect(() => {
+    if (parsingDocumentIdsKey.length === 0) return;
+    const pageToken = capturePage();
+    let active = true;
+    const poll = async () => {
+      try {
+        const page = await documentApi.list(meetingId);
+        if (!active || !isPageCurrent(pageToken)) return;
+        setDocuments(page.documents);
+        setDocumentLoadError(null);
+        const parsedIds = new Set(
+          page.documents
+            .filter((document) => document.status === "parsed")
+            .map((document) => document.id),
+        );
+        setSelectedDocumentIds((current) =>
+          current.filter((documentId) => parsedIds.has(documentId)),
+        );
+      } catch (reason: unknown) {
+        if (!active || !isPageCurrent(pageToken)) return;
+        setDocumentLoadError(toDocumentLoadError(reason));
+        setSelectedDocumentIds([]);
+      }
+    };
+    const timer = window.setInterval(() => void poll(), POLL_INTERVAL_MS);
+    return () => {
+      active = false;
+      window.clearInterval(timer);
+    };
+  }, [
+    capturePage,
+    documentApi,
+    isPageCurrent,
+    meetingId,
+    parsingDocumentIdsKey,
+  ]);
 
   useEffect(() => {
     if (activeRunIdsKey.length === 0) return;
@@ -497,6 +571,7 @@ export function SummaryMinutesPage({
       created = await summaryApi.createRun({
         meetingId,
         sourceIds: selectedSourceIds,
+        documentIds: selectedDocumentIds,
         template,
         outputLanguage,
       });
@@ -753,6 +828,9 @@ export function SummaryMinutesPage({
   }
 
   const validSources = sources.filter((source) => source.segmentCount > 0);
+  const parsedDocuments = documents.filter(
+    (document) => document.status === "parsed",
+  );
 
   return (
     <div
@@ -866,6 +944,79 @@ export function SummaryMinutesPage({
                 </label>
               ))
             )}
+          </fieldset>
+          <fieldset disabled={actionBusy || resultDirty}>
+            <legend>{t("summaryMinutes.generate.documents")}</legend>
+            <p className="field-help">
+              {t("summaryMinutes.generate.documentsHelp")}
+            </p>
+            {documentLoadError ? (
+              <ErrorNotice
+                code={documentLoadError}
+                message={documentErrorMessage(documentLoadError)}
+              />
+            ) : documents.length === 0 ? (
+              <p>{t("summaryMinutes.generate.noDocuments")}</p>
+            ) : (
+              documents.map((document) => {
+                const selected = selectedDocumentIds.includes(document.id);
+                const selectionLimitReached =
+                  !selected &&
+                  selectedDocumentIds.length >= (policy?.maxDocuments ?? 0);
+                return (
+                  <label className="summary-source-option" key={document.id}>
+                    <input
+                      checked={selected}
+                      disabled={
+                        document.status !== "parsed" || selectionLimitReached
+                      }
+                      onChange={(event) => {
+                        const checked = event.currentTarget.checked;
+                        setSelectedDocumentIds((current) =>
+                          checked
+                            ? [...current, document.id]
+                            : current.filter((id) => id !== document.id),
+                        );
+                      }}
+                      type="checkbox"
+                    />
+                    <span>
+                      <strong>{document.originalFilename}</strong>
+                      <small>
+                        {document.status === "parsed"
+                          ? document.pageCount === null
+                            ? t("summaryMinutes.generate.documentReady")
+                            : t("summaryMinutes.generate.documentPages", {
+                                count: document.pageCount,
+                                formattedCount: formatNumber(
+                                  document.pageCount,
+                                ),
+                              })
+                          : t(
+                              `summaryMinutes.generate.documentStatus.${document.status}`,
+                            )}
+                      </small>
+                      {selected ? (
+                        <small>
+                          {t("summaryMinutes.generate.documentSelectionOrder", {
+                            number:
+                              selectedDocumentIds.indexOf(document.id) + 1,
+                          })}
+                        </small>
+                      ) : null}
+                    </span>
+                  </label>
+                );
+              })
+            )}
+            {parsedDocuments.length > 0 &&
+            selectedDocumentIds.length >= (policy?.maxDocuments ?? 0) ? (
+              <p className="field-help">
+                {t("summaryMinutes.generate.documentLimit", {
+                  maximum: formatNumber(policy?.maxDocuments ?? 0),
+                })}
+              </p>
+            ) : null}
           </fieldset>
           <label>
             {t("summaryMinutes.generate.template")}
@@ -1011,7 +1162,7 @@ export function SummaryMinutesPage({
                   <span>{t(`summaryMinutes.status.${run.status}`)}</span>
                   <small>
                     {formatLocalDate(run.createdAt)} ·{" "}
-                    {formatFileSize(run.inputBytes)}
+                    {formatFileSize(run.inputBytes + run.documentInputBytes)}
                   </small>
                   <small>
                     {t("summaryMinutes.history.details", {
@@ -1025,6 +1176,14 @@ export function SummaryMinutesPage({
                       ),
                     })}
                   </small>
+                  {run.documentCount > 0 ? (
+                    <small>
+                      {t("summaryMinutes.history.documents", {
+                        count: run.documentCount,
+                        formattedCount: formatNumber(run.documentCount),
+                      })}
+                    </small>
+                  ) : null}
                 </button>
               </li>
             ))}
@@ -1072,4 +1231,8 @@ function compareRuns(
 
 function uniqueRuns(runs: SummaryRunResponse[]): SummaryRunResponse[] {
   return [...new Map(runs.map((run) => [run.id, run])).values()];
+}
+
+function toDocumentLoadError(reason: unknown): DocumentErrorCode {
+  return reason instanceof DocumentApiError ? reason.code : "internal_error";
 }

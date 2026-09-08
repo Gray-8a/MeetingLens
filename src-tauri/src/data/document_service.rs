@@ -11,13 +11,16 @@ use super::database::Database;
 use super::document_detection::{detect_media_type, validate_source_name};
 use super::document_error::{DocumentError, DocumentResult};
 use super::document_model::{
-    Document, DocumentImportOutcome, DocumentImportPhase, DocumentImportPolicy,
+    DOCUMENT_CHUNK_MAX_BYTES, DOCUMENT_CHUNK_MAX_COUNT, DOCUMENT_CHUNK_SCHEMA_VERSION,
+    DOCUMENT_CHUNKS_MAX_TOTAL_BYTES, Document, DocumentChunk, DocumentChunkInput,
+    DocumentChunkKind, DocumentImportOutcome, DocumentImportPhase, DocumentImportPolicy,
     DocumentImportProgress, DocumentStatus, ReconcileReport,
 };
-use super::document_repository::{self, NewImport};
+use super::document_repository::{self, NewDocumentChunk, NewImport};
 use super::error::{DataError, DataResult};
 use super::model::MeetingStatus;
 use super::repository;
+use super::summary_repository;
 
 const COPY_BUFFER_BYTES: usize = 64 * 1024;
 const COPY_PROGRESS_INTERVAL_BYTES: u64 = 1024 * 1024;
@@ -383,6 +386,138 @@ impl DocumentService {
         )
     }
 
+    pub fn begin_parse(&self, document_id: &str) -> DocumentResult<Document> {
+        validate_uuid(document_id)?;
+        let _guard = self.database.mutation_guard().map_err(map_data_error)?;
+        let mut connection = self.database.connect().map_err(map_data_error)?;
+        let document = document_repository::get(&connection, document_id)?;
+        let meeting = repository::get_including_deleted(&connection, &document.meeting_id)
+            .map_err(map_data_error)?;
+        if !matches!(
+            meeting.status,
+            MeetingStatus::Draft | MeetingStatus::Recording | MeetingStatus::Ready
+        ) || document.status != DocumentStatus::Staged
+        {
+            return Err(DocumentError::InvalidState);
+        }
+        let path = self
+            .database
+            .paths()
+            .resolve_relative(&document.storage_relative_path)
+            .map_err(map_data_error)?;
+        verify_committed_document(&document, &path)?;
+
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| DocumentError::Internal)?;
+        document_repository::begin_parse(&transaction, document_id)?;
+        let parsing = document_repository::get(&transaction, document_id)?;
+        transaction.commit().map_err(|_| DocumentError::Internal)?;
+        Ok(parsing)
+    }
+
+    pub fn commit_parse(
+        &self,
+        document_id: &str,
+        parser_version: &str,
+        page_count: Option<u64>,
+        chunks: Vec<DocumentChunkInput>,
+    ) -> DocumentResult<Document> {
+        validate_uuid(document_id)?;
+        validate_parser_output(parser_version, page_count, &chunks)?;
+        let chunk_ids = (0..chunks.len())
+            .map(|_| Uuid::new_v4().to_string())
+            .collect::<Vec<_>>();
+        let new_chunks = chunks
+            .iter()
+            .enumerate()
+            .map(|(ordinal, input)| {
+                Ok(NewDocumentChunk {
+                    id: &chunk_ids[ordinal],
+                    ordinal: u64::try_from(ordinal).map_err(|_| DocumentError::IntegrityFailed)?,
+                    input,
+                })
+            })
+            .collect::<DocumentResult<Vec<_>>>()?;
+
+        let _guard = self.database.mutation_guard().map_err(map_data_error)?;
+        let mut connection = self.database.connect().map_err(map_data_error)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| DocumentError::Internal)?;
+        let document = document_repository::get(&transaction, document_id)?;
+        let meeting = repository::get_including_deleted(&transaction, &document.meeting_id)
+            .map_err(map_data_error)?;
+        if !matches!(
+            meeting.status,
+            MeetingStatus::Draft | MeetingStatus::Recording | MeetingStatus::Ready
+        ) || document.status != DocumentStatus::Parsing
+        {
+            return Err(DocumentError::InvalidState);
+        }
+        document_repository::commit_parse(
+            &transaction,
+            &document,
+            parser_version,
+            page_count,
+            &new_chunks,
+        )?;
+        let parsed = document_repository::get(&transaction, document_id)?;
+        transaction.commit().map_err(|_| DocumentError::Internal)?;
+        Ok(parsed)
+    }
+
+    pub fn fail_parse(&self, document_id: &str, error: DocumentError) -> DocumentResult<Document> {
+        validate_uuid(document_id)?;
+        let _guard = self.database.mutation_guard().map_err(map_data_error)?;
+        let mut connection = self.database.connect().map_err(map_data_error)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| DocumentError::Internal)?;
+        document_repository::mark_parse_failed(&transaction, document_id, &error)?;
+        let failed = document_repository::get(&transaction, document_id)?;
+        transaction.commit().map_err(|_| DocumentError::Internal)?;
+        Ok(failed)
+    }
+
+    pub fn cancel_parse(&self, document_id: &str) -> DocumentResult<Document> {
+        validate_uuid(document_id)?;
+        let _guard = self.database.mutation_guard().map_err(map_data_error)?;
+        let mut connection = self.database.connect().map_err(map_data_error)?;
+        let transaction = connection
+            .transaction_with_behavior(TransactionBehavior::Immediate)
+            .map_err(|_| DocumentError::Internal)?;
+        document_repository::cancel_parse(&transaction, document_id)?;
+        let staged = document_repository::get(&transaction, document_id)?;
+        transaction.commit().map_err(|_| DocumentError::Internal)?;
+        Ok(staged)
+    }
+
+    pub fn chunks(&self, document_id: &str) -> DocumentResult<Vec<DocumentChunk>> {
+        validate_uuid(document_id)?;
+        let connection = self.database.connect().map_err(map_data_error)?;
+        let document = document_repository::get(&connection, document_id)?;
+        if document.status != DocumentStatus::Parsed {
+            return Err(DocumentError::InvalidState);
+        }
+        let chunks = document_repository::list_chunks(&connection, document_id)?;
+        if chunks.is_empty() {
+            return Err(DocumentError::IntegrityFailed);
+        }
+        Ok(chunks)
+    }
+
+    pub fn chunk(&self, document_id: &str, chunk_id: &str) -> DocumentResult<DocumentChunk> {
+        validate_uuid(document_id)?;
+        validate_uuid(chunk_id)?;
+        let connection = self.database.connect().map_err(map_data_error)?;
+        let document = document_repository::get(&connection, document_id)?;
+        if document.status != DocumentStatus::Parsed {
+            return Err(DocumentError::InvalidState);
+        }
+        document_repository::get_chunk(&connection, document_id, chunk_id)
+    }
+
     pub fn delete(&self, document_id: &str) -> DocumentResult<()> {
         validate_uuid(document_id)?;
         let _guard = self.database.mutation_guard().map_err(map_data_error)?;
@@ -567,7 +702,11 @@ impl DocumentService {
             // Explicit user retries are allowed; recovery retries are bounded below.
         } else if !matches!(
             current.status,
-            DocumentStatus::Staged | DocumentStatus::ImportFailed | DocumentStatus::DeleteFailed
+            DocumentStatus::Staged
+                | DocumentStatus::Parsed
+                | DocumentStatus::ParseFailed
+                | DocumentStatus::ImportFailed
+                | DocumentStatus::DeleteFailed
         ) {
             return Err(DocumentError::InvalidState);
         }
@@ -576,6 +715,21 @@ impl DocumentService {
         let transaction = connection
             .transaction_with_behavior(TransactionBehavior::Immediate)
             .map_err(|_| DocumentError::Internal)?;
+        if summary_repository::document_has_active_summary(
+            &transaction,
+            &current.meeting_id,
+            &current.id,
+        )
+        .map_err(|_| DocumentError::Internal)?
+        {
+            return Err(DocumentError::InvalidState);
+        }
+        summary_repository::redact_terminal_document(
+            &transaction,
+            &current.meeting_id,
+            &current.id,
+        )
+        .map_err(|_| DocumentError::Internal)?;
         document_repository::begin_delete(&transaction, &current, &job_id)?;
         transaction.commit().map_err(|_| DocumentError::Internal)?;
         self.execute_document_delete(document_id)
@@ -712,10 +866,39 @@ impl DocumentService {
                         }
                     }
                 }
-                DocumentStatus::ImportFailed
-                | DocumentStatus::ParseFailed
-                | DocumentStatus::Parsed
-                | DocumentStatus::Parsing => {}
+                DocumentStatus::Parsing => {
+                    let mut connection = self.database.connect().map_err(map_data_error)?;
+                    let transaction = connection
+                        .transaction_with_behavior(TransactionBehavior::Immediate)
+                        .map_err(|_| DocumentError::Internal)?;
+                    document_repository::mark_parse_interrupted(&transaction, &document.id)?;
+                    transaction.commit().map_err(|_| DocumentError::Internal)?;
+                    report.parses_failed_closed += 1;
+                }
+                DocumentStatus::Parsed => {
+                    let path = self
+                        .database
+                        .paths()
+                        .resolve_relative(&document.storage_relative_path)
+                        .map_err(map_data_error)?;
+                    let connection = self.database.connect().map_err(map_data_error)?;
+                    let valid = verify_committed_document(&document, &path).is_ok()
+                        && document_repository::has_chunks(&connection, &document.id)?;
+                    drop(connection);
+                    if !valid {
+                        let mut connection = self.database.connect().map_err(map_data_error)?;
+                        let transaction = connection
+                            .transaction_with_behavior(TransactionBehavior::Immediate)
+                            .map_err(|_| DocumentError::Internal)?;
+                        document_repository::mark_parsed_integrity_failed(
+                            &transaction,
+                            &document.id,
+                        )?;
+                        transaction.commit().map_err(|_| DocumentError::Internal)?;
+                        report.parsed_integrity_failures += 1;
+                    }
+                }
+                DocumentStatus::ImportFailed | DocumentStatus::ParseFailed => {}
             }
         }
         self.exhaust_inconsistent_document_jobs()?;
@@ -1031,6 +1214,79 @@ pub(crate) fn execute_meeting_delete(
     repository::mark_delete_failed(&transaction, meeting_id, "meeting_delete_failed")?;
     transaction.commit().map_err(DataError::from)?;
     Err(DataError::MeetingDeleteFailed)
+}
+
+fn validate_parser_output(
+    parser_version: &str,
+    page_count: Option<u64>,
+    chunks: &[DocumentChunkInput],
+) -> DocumentResult<()> {
+    if parser_version.trim().is_empty()
+        || parser_version.as_bytes().len() > 64
+        || !parser_version
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'.' | b'_' | b'+' | b'-'))
+        || chunks.is_empty()
+        || chunks.len() > DOCUMENT_CHUNK_MAX_COUNT
+        || page_count.is_some_and(|count| !(1..=300).contains(&count))
+    {
+        return Err(DocumentError::IntegrityFailed);
+    }
+
+    let mut total_bytes = 0usize;
+    for chunk in chunks {
+        let text_bytes = chunk.text.as_bytes();
+        total_bytes = total_bytes
+            .checked_add(text_bytes.len())
+            .ok_or(DocumentError::IntegrityFailed)?;
+        if chunk.text.trim().is_empty()
+            || text_bytes.len() > DOCUMENT_CHUNK_MAX_BYTES
+            || total_bytes > DOCUMENT_CHUNKS_MAX_TOTAL_BYTES
+            || chunk.chunk_schema_version != DOCUMENT_CHUNK_SCHEMA_VERSION
+            || sha256_bytes(text_bytes) != chunk.content_sha256
+        {
+            return Err(DocumentError::IntegrityFailed);
+        }
+
+        match (chunk.page_start, chunk.page_end, page_count) {
+            (None, None, _) => {}
+            (Some(start), Some(end), Some(total))
+                if start >= 1 && start <= end && end <= total && total <= 300 => {}
+            _ => return Err(DocumentError::IntegrityFailed),
+        }
+
+        let section_path = serde_json::from_str::<Vec<String>>(&chunk.section_path_json)
+            .map_err(|_| DocumentError::IntegrityFailed)?;
+        if chunk.section_path_json.as_bytes().len() > 4096
+            || section_path.len() > 16
+            || section_path.iter().any(|part| {
+                part.trim().is_empty() || part.as_bytes().len() > 255 || part.contains('\0')
+            })
+            || serde_json::to_string(&section_path).map_err(|_| DocumentError::IntegrityFailed)?
+                != chunk.section_path_json
+        {
+            return Err(DocumentError::IntegrityFailed);
+        }
+
+        match (chunk.kind, chunk.table_ordinal) {
+            (DocumentChunkKind::Table, Some(ordinal))
+                if ordinal
+                    < u64::try_from(DOCUMENT_CHUNK_MAX_COUNT)
+                        .map_err(|_| DocumentError::Internal)? => {}
+            (DocumentChunkKind::Heading, None)
+            | (DocumentChunkKind::ListItem, None)
+            | (DocumentChunkKind::Paragraph, None) => {}
+            _ => return Err(DocumentError::IntegrityFailed),
+        }
+    }
+    Ok(())
+}
+
+fn sha256_bytes(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn validate_source_file(path: &Path) -> DocumentResult<std::fs::Metadata> {
@@ -2255,5 +2511,310 @@ mod tests {
             assert_eq!(status, "failed");
             assert_eq!(attempts, 3);
         }
+    }
+
+    fn synthetic_chunk(
+        kind: DocumentChunkKind,
+        text: &str,
+        page_start: Option<u64>,
+        page_end: Option<u64>,
+        section_path_json: &str,
+        table_ordinal: Option<u64>,
+    ) -> DocumentChunkInput {
+        DocumentChunkInput {
+            kind,
+            text: text.to_string(),
+            content_sha256: sha256_bytes(text.as_bytes()),
+            page_start,
+            page_end,
+            section_path_json: section_path_json.to_string(),
+            table_ordinal,
+            chunk_schema_version: DOCUMENT_CHUNK_SCHEMA_VERSION,
+        }
+    }
+
+    #[test]
+    fn parse_state_machine_commits_bounded_chunks_and_delete_cascades() {
+        let workspace = TestWorkspace::new();
+        let meetings =
+            MeetingService::initialize(&workspace.app_data).expect("service should initialize");
+        let meeting_id = create_meeting(&meetings, "Synthetic parsing");
+        let documents = meetings.documents();
+        let document = documents
+            .import_document(
+                &meeting_id,
+                workspace.source("parse.txt", b"synthetic parser source"),
+            )
+            .expect("document should import");
+
+        let parsing = documents
+            .begin_parse(&document.id)
+            .expect("staged document should begin parsing");
+        assert_eq!(parsing.status, DocumentStatus::Parsing);
+        let parsed = documents
+            .commit_parse(
+                &document.id,
+                "2.117.0",
+                Some(2),
+                vec![
+                    synthetic_chunk(
+                        DocumentChunkKind::Heading,
+                        "Synthetic heading",
+                        Some(1),
+                        Some(1),
+                        "[]",
+                        None,
+                    ),
+                    synthetic_chunk(
+                        DocumentChunkKind::Table,
+                        "Synthetic table part one",
+                        Some(2),
+                        Some(2),
+                        "[\"Synthetic heading\"]",
+                        Some(0),
+                    ),
+                    synthetic_chunk(
+                        DocumentChunkKind::Table,
+                        "Synthetic table part two",
+                        Some(2),
+                        Some(2),
+                        "[\"Synthetic heading\"]",
+                        Some(0),
+                    ),
+                ],
+            )
+            .expect("validated parser output should commit atomically");
+        assert_eq!(parsed.status, DocumentStatus::Parsed);
+        assert_eq!(parsed.parser_version_optional.as_deref(), Some("2.117.0"));
+        assert_eq!(parsed.page_count_optional, Some(2));
+        let chunks = documents
+            .chunks(&document.id)
+            .expect("parsed chunks should list");
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0].ordinal, 0);
+        assert_eq!(chunks[1].table_ordinal, Some(0));
+        assert_eq!(chunks[2].table_ordinal, Some(0));
+        assert_eq!(
+            documents.chunk(&document.id, &chunks[1].id),
+            Ok(chunks[1].clone())
+        );
+        assert_eq!(
+            documents.begin_parse(&document.id),
+            Err(DocumentError::InvalidState)
+        );
+
+        documents
+            .delete(&document.id)
+            .expect("parsed document should delete");
+        assert_eq!(documents.get(&document.id), Err(DocumentError::NotFound));
+        let chunk_count: i64 = documents
+            .database
+            .connect()
+            .expect("database should connect")
+            .query_row(
+                "SELECT COUNT(*) FROM document_chunks WHERE document_id = ?1",
+                [&document.id],
+                |row| row.get(0),
+            )
+            .expect("chunk count should read");
+        assert_eq!(chunk_count, 0);
+    }
+
+    #[test]
+    fn invalid_parse_output_rolls_back_then_failure_and_cancel_use_strict_cas() {
+        let workspace = TestWorkspace::new();
+        let meetings =
+            MeetingService::initialize(&workspace.app_data).expect("service should initialize");
+        let meeting_id = create_meeting(&meetings, "Synthetic parse failure");
+        let documents = meetings.documents();
+        let first = documents
+            .import_document(
+                &meeting_id,
+                workspace.source("invalid.txt", b"synthetic invalid parser source"),
+            )
+            .expect("first document should import");
+        documents
+            .begin_parse(&first.id)
+            .expect("first parse should begin");
+        let mut invalid = synthetic_chunk(
+            DocumentChunkKind::Paragraph,
+            "Synthetic invalid chunk",
+            None,
+            None,
+            "[]",
+            None,
+        );
+        invalid.content_sha256 = "0".repeat(64);
+        assert_eq!(
+            documents.commit_parse(&first.id, "2.117.0", None, vec![invalid]),
+            Err(DocumentError::IntegrityFailed)
+        );
+        assert_eq!(
+            documents
+                .get(&first.id)
+                .expect("first document should remain")
+                .status,
+            DocumentStatus::Parsing
+        );
+        let failed = documents
+            .fail_parse(&first.id, DocumentError::IntegrityFailed)
+            .expect("running parse should fail closed");
+        assert_eq!(failed.status, DocumentStatus::ParseFailed);
+        assert_eq!(
+            failed.failure_code.as_deref(),
+            Some("document_integrity_failed")
+        );
+        assert_eq!(
+            documents.cancel_parse(&first.id),
+            Err(DocumentError::InvalidState)
+        );
+
+        let second = documents
+            .import_document(
+                &meeting_id,
+                workspace.source("cancel.txt", b"synthetic cancelled parser source"),
+            )
+            .expect("second document should import");
+        documents
+            .begin_parse(&second.id)
+            .expect("second parse should begin");
+        let staged = documents
+            .cancel_parse(&second.id)
+            .expect("running parse should cancel to staged");
+        assert_eq!(staged.status, DocumentStatus::Staged);
+        assert!(staged.failure_code.is_none());
+        assert_eq!(
+            documents.chunks(&second.id),
+            Err(DocumentError::InvalidState)
+        );
+    }
+
+    #[test]
+    fn parser_commit_database_failure_is_atomic_and_startup_fails_running_parse_closed() {
+        let workspace = TestWorkspace::new();
+        let (document_id, database_path) = {
+            let meetings =
+                MeetingService::initialize(&workspace.app_data).expect("service should initialize");
+            let meeting_id = create_meeting(&meetings, "Synthetic atomic parse");
+            let documents = meetings.documents();
+            let document = documents
+                .import_document(
+                    &meeting_id,
+                    workspace.source("atomic.txt", b"synthetic atomic parser source"),
+                )
+                .expect("document should import");
+            documents
+                .begin_parse(&document.id)
+                .expect("parse should begin");
+            let connection = documents
+                .database
+                .connect()
+                .expect("database should connect");
+            connection
+                .execute_batch(
+                    "
+                    CREATE TRIGGER synthetic_chunk_commit_failure
+                    BEFORE INSERT ON document_chunks
+                    BEGIN
+                        SELECT RAISE(ABORT, 'synthetic chunk failure');
+                    END;
+                    ",
+                )
+                .expect("failure trigger should install");
+            assert_eq!(
+                documents.commit_parse(
+                    &document.id,
+                    "2.117.0",
+                    None,
+                    vec![synthetic_chunk(
+                        DocumentChunkKind::Paragraph,
+                        "Synthetic atomic chunk",
+                        None,
+                        None,
+                        "[]",
+                        None,
+                    )],
+                ),
+                Err(DocumentError::IntegrityFailed)
+            );
+            let still_parsing = documents
+                .get(&document.id)
+                .expect("document should remain after rollback");
+            assert_eq!(still_parsing.status, DocumentStatus::Parsing);
+            assert!(
+                document_repository::list_chunks(&connection, &document.id)
+                    .expect("rolled-back chunks should list")
+                    .is_empty()
+            );
+            connection
+                .execute_batch("DROP TRIGGER synthetic_chunk_commit_failure;")
+                .expect("failure trigger should remove");
+            (
+                document.id,
+                meetings.storage_paths().database().to_path_buf(),
+            )
+        };
+
+        let reopened =
+            MeetingService::initialize(&workspace.app_data).expect("startup should reconcile");
+        let interrupted = reopened
+            .documents()
+            .get(&document_id)
+            .expect("interrupted document should remain");
+        assert_eq!(interrupted.status, DocumentStatus::ParseFailed);
+        assert_eq!(
+            interrupted.failure_code.as_deref(),
+            Some("document_parse_interrupted")
+        );
+        let connection =
+            rusqlite::Connection::open(database_path).expect("reconciled database should connect");
+        let chunk_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM document_chunks WHERE document_id = ?1",
+                [&document_id],
+                |row| row.get(0),
+            )
+            .expect("chunk count should read");
+        assert_eq!(chunk_count, 0);
+    }
+
+    #[test]
+    fn reconciliation_fails_parsed_documents_without_live_chunks_closed() {
+        let workspace = TestWorkspace::new();
+        let meetings =
+            MeetingService::initialize(&workspace.app_data).expect("service should initialize");
+        let meeting_id = create_meeting(&meetings, "Synthetic parsed integrity");
+        let documents = meetings.documents();
+        let document = documents
+            .import_document(
+                &meeting_id,
+                workspace.source("missing-chunks.txt", b"synthetic parsed source"),
+            )
+            .expect("document should import");
+        let connection = documents
+            .database
+            .connect()
+            .expect("database should connect");
+        connection
+            .execute(
+                "UPDATE documents SET status = 'parsed', parser_version_optional = '2.117.0' \
+                 WHERE id = ?1",
+                [&document.id],
+            )
+            .expect("test should create inconsistent parsed state");
+        drop(connection);
+
+        let report = documents
+            .reconcile()
+            .expect("reconciliation should fail parsed document closed");
+        assert_eq!(report.parsed_integrity_failures, 1);
+        let failed = documents
+            .get(&document.id)
+            .expect("failed parsed document should remain");
+        assert_eq!(failed.status, DocumentStatus::ParseFailed);
+        assert_eq!(
+            failed.failure_code.as_deref(),
+            Some("document_integrity_failed")
+        );
     }
 }

@@ -72,7 +72,7 @@ fn native_transcript_data_lifecycle_smoke() {
             .title,
         "Synthetic transcript smoke upgrade"
     );
-    assert_schema_and_integrity(&meetings, 6);
+    assert_schema_and_integrity(&meetings, 7);
 
     let transcripts = meetings.transcripts();
     let (pasted, pasted_count) = imported(
@@ -275,7 +275,7 @@ fn native_transcript_data_lifecycle_smoke() {
         std::fs::read(&txt_source_path).expect("original TXT source should remain"),
         txt_content
     );
-    assert_schema_and_integrity(&reopened, 6);
+    assert_schema_and_integrity(&reopened, 7);
 
     drop(transcripts);
     drop(reopened);

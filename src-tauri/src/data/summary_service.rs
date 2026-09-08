@@ -8,6 +8,9 @@ use rusqlite::{Transaction, TransactionBehavior};
 use uuid::Uuid;
 
 use super::database::Database;
+use super::document_error::DocumentError;
+use super::document_model::DocumentStatus;
+use super::document_repository;
 use super::error::DataError;
 use super::model::{Meeting, MeetingStatus};
 use super::provider_consent_model::ProviderConsentPolicy;
@@ -18,10 +21,11 @@ use super::summary_markdown::{self, RenderedSummaryMarkdown};
 use super::summary_model::{
     CreateSummaryRevision, CreateSummaryRun, SUMMARY_EVIDENCE_DEFAULT_LIMIT,
     SUMMARY_EVIDENCE_EXCERPT_MAX_BYTES, SUMMARY_EVIDENCE_MAX_LIMIT, SUMMARY_LIST_DEFAULT_LIMIT,
-    SUMMARY_LIST_MAX_LIMIT, SUMMARY_MAX_INPUT_BYTES, SUMMARY_MAX_SEGMENTS,
-    SUMMARY_RESULT_MAX_BYTES, SummaryActionItem, SummaryClaim, SummaryDecision, SummaryEvidence,
-    SummaryEvidencePage, SummaryPolicy, SummaryRun, SummaryRunPage, SummarySnapshotSegment,
-    SummaryStatus, UpdateSummaryContent, summary_content_version, validate_content_version,
+    SUMMARY_LIST_MAX_LIMIT, SUMMARY_MAX_DOCUMENT_CHUNKS, SUMMARY_MAX_DOCUMENTS,
+    SUMMARY_MAX_INPUT_BYTES, SUMMARY_MAX_SEGMENTS, SUMMARY_RESULT_MAX_BYTES, SummaryActionItem,
+    SummaryClaim, SummaryDecision, SummaryEvidence, SummaryEvidencePage, SummaryPolicy, SummaryRun,
+    SummaryRunPage, SummarySnapshotDocumentChunk, SummarySnapshotSegment, SummaryStatus,
+    UpdateSummaryContent, summary_content_version, validate_content_version,
 };
 #[cfg(any(test, debug_assertions))]
 use super::summary_provider::DeterministicMockSummaryProvider;
@@ -149,6 +153,7 @@ impl SummaryService {
     ) -> SummaryResult<SummaryRun> {
         validate_uuid(&input.meeting_id)?;
         validate_source_ids(&input.source_ids)?;
+        validate_document_ids(&input.document_ids)?;
         let _guard = self.database.mutation_guard().map_err(map_data_error)?;
         let mut connection = self.database.connect().map_err(map_data_error)?;
         let transaction = connection
@@ -164,6 +169,7 @@ impl SummaryService {
             None,
             1,
             &input.source_ids,
+            &input.document_ids,
             input.template,
             input.output_language,
             provider,
@@ -195,7 +201,7 @@ impl SummaryService {
         if !base.status.is_terminal() {
             return Err(SummaryError::InvalidState);
         }
-        ensure_run_provider(&base, provider)?;
+        ensure_revision_provider(&base, provider)?;
         if base.stale_reason.as_deref() == Some("source_deleted") {
             return Err(SummaryError::InvalidState);
         }
@@ -203,6 +209,7 @@ impl SummaryService {
             return Err(SummaryError::RevisionConflict);
         }
         let source_ids = summary_repository::source_ids_for_summary(&transaction, &base.id)?;
+        let document_ids = summary_repository::document_ids_for_summary(&transaction, &base.id)?;
         let revision = summary_repository::next_revision(&transaction, &base.series_id)?;
         if base.revision.checked_add(1) != Some(revision) {
             return Err(SummaryError::RevisionConflict);
@@ -216,6 +223,7 @@ impl SummaryService {
             Some(&base.id),
             revision,
             &source_ids,
+            &document_ids,
             base.template,
             base.output_language,
             provider,
@@ -234,11 +242,13 @@ impl SummaryService {
         previous_summary_id: Option<&str>,
         revision: u64,
         source_ids: &[String],
+        document_ids: &[String],
         template: super::summary_model::SummaryTemplate,
         output_language: super::summary_model::SummaryOutputLanguage,
         provider: &dyn SummaryProvider,
     ) -> SummaryResult<SummaryRun> {
         validate_source_ids(source_ids)?;
+        validate_document_ids(document_ids)?;
         let mut sources = Vec::with_capacity(source_ids.len());
         let mut total_segments = 0usize;
         let mut total_bytes = 0usize;
@@ -271,6 +281,53 @@ impl SummaryService {
             return Err(SummaryError::InputInsufficient);
         }
 
+        let mut documents = Vec::with_capacity(document_ids.len());
+        let mut total_document_chunks = 0usize;
+        let mut document_input_bytes = 0usize;
+        for document_id in document_ids {
+            let document =
+                document_repository::get(transaction, document_id).map_err(map_document_error)?;
+            if document.meeting_id != meeting.id || document.status != DocumentStatus::Parsed {
+                return Err(SummaryError::SourceNotFound);
+            }
+            let chunks = document_repository::list_chunks(transaction, document_id)
+                .map_err(map_document_error)?;
+            if chunks.is_empty()
+                || document.sha256.is_none()
+                || document.parser_version_optional.is_none()
+            {
+                return Err(SummaryError::SnapshotMissing);
+            }
+            total_document_chunks = total_document_chunks
+                .checked_add(chunks.len())
+                .ok_or(SummaryError::SegmentLimitExceeded)?;
+            document_input_bytes =
+                chunks
+                    .iter()
+                    .try_fold(document_input_bytes, |total, chunk| {
+                        total
+                            .checked_add(chunk.text.len())
+                            .ok_or(SummaryError::InputTooLarge)
+                    })?;
+            if total_document_chunks > SUMMARY_MAX_DOCUMENT_CHUNKS
+                || total_segments
+                    .checked_add(total_document_chunks)
+                    .is_none_or(|count| count > SUMMARY_MAX_SEGMENTS)
+            {
+                return Err(SummaryError::SegmentLimitExceeded);
+            }
+            let combined_bytes = total_bytes
+                .checked_add(document_input_bytes)
+                .ok_or(SummaryError::InputTooLarge)?;
+            if combined_bytes > SUMMARY_MAX_INPUT_BYTES {
+                return Err(SummaryError::InputTooLarge);
+            }
+            if combined_bytes > provider.max_input_bytes() {
+                return Err(SummaryError::ProviderInputTooLarge);
+            }
+            documents.push((document, chunks));
+        }
+
         summary_repository::insert_summary(
             transaction,
             NewSummary {
@@ -290,6 +347,9 @@ impl SummaryService {
                 source_count: sources.len(),
                 input_segment_count: total_segments,
                 input_bytes: total_bytes,
+                document_count: documents.len(),
+                input_document_chunk_count: total_document_chunks,
+                document_input_bytes,
             },
         )?;
         let created = summary_repository::get_summary(transaction, &meeting.id, id)?;
@@ -332,6 +392,53 @@ impl SummaryService {
             }
         }
         if usize::try_from(global_ordinal).ok() != Some(total_segments) {
+            return Err(SummaryError::PersistenceFailed);
+        }
+        for (document_ordinal, (document, chunks)) in documents.iter().enumerate() {
+            let document_sha256 = document
+                .sha256
+                .as_deref()
+                .ok_or(SummaryError::SnapshotMissing)?;
+            let parser_version = document
+                .parser_version_optional
+                .as_deref()
+                .ok_or(SummaryError::SnapshotMissing)?;
+            for chunk in chunks {
+                let section_path = chunk.section_path_json.as_str();
+                let section_path = serde_json::from_str::<Vec<String>>(section_path)
+                    .map_err(|_| SummaryError::PersistenceFailed)?;
+                let snapshot = SummarySnapshotDocumentChunk {
+                    evidence_id: Uuid::new_v4().to_string(),
+                    summary_id: id.to_string(),
+                    meeting_id: meeting.id.clone(),
+                    document_id: document.id.clone(),
+                    chunk_id: chunk.id.clone(),
+                    document_ordinal: u64::try_from(document_ordinal)
+                        .map_err(|_| SummaryError::SegmentLimitExceeded)?,
+                    chunk_ordinal: chunk.ordinal,
+                    global_ordinal,
+                    chunk_kind: chunk.kind.as_str().to_string(),
+                    document_display_name: document.original_filename.clone(),
+                    document_sha256: document_sha256.to_string(),
+                    chunk_sha256: chunk.content_sha256.clone(),
+                    page_start: chunk.page_start,
+                    page_end: chunk.page_end,
+                    section_path,
+                    table_ordinal: chunk.table_ordinal,
+                    parser_version: parser_version.to_string(),
+                    chunk_schema_version: u32::try_from(chunk.chunk_schema_version)
+                        .map_err(|_| SummaryError::PersistenceFailed)?,
+                    text: chunk.text.clone(),
+                    snapshot_at: created.snapshot_created_at.clone(),
+                };
+                summary_repository::insert_document_snapshot(transaction, &snapshot)?;
+                global_ordinal = global_ordinal
+                    .checked_add(1)
+                    .ok_or(SummaryError::SegmentLimitExceeded)?;
+            }
+        }
+        if usize::try_from(global_ordinal).ok() != total_segments.checked_add(total_document_chunks)
+        {
             return Err(SummaryError::PersistenceFailed);
         }
         summary_repository::get_summary(transaction, &meeting.id, id)
@@ -425,6 +532,8 @@ impl SummaryService {
                 return Err(SummaryError::InvalidState);
             }
             let segments = summary_repository::load_snapshot(&transaction, meeting_id, summary_id)?;
+            let document_chunks =
+                summary_repository::load_document_snapshot(&transaction, meeting_id, summary_id)?;
             let consent_authorization = if let Some((consents, policy)) = authorization {
                 let authorization = consents
                     .validate_and_consume_authorization(&transaction, summary_id, policy)
@@ -440,6 +549,7 @@ impl SummaryService {
                 template: run.template,
                 output_language: run.output_language,
                 segments,
+                document_chunks,
             };
             transaction.commit().map_err(SummaryError::from)?;
             if let Some(authorization) = consent_authorization {
@@ -1106,17 +1216,29 @@ fn validate_provider_output(
         return Err(SummaryError::ProviderOutputInvalid);
     }
 
-    let allowlist: HashMap<&str, &SummarySnapshotSegment> = request
+    let transcript_allowlist: HashMap<&str, &SummarySnapshotSegment> = request
         .segments
         .iter()
         .map(|segment| (segment.evidence_id.as_str(), segment))
         .collect();
+    let document_allowlist: HashMap<&str, &SummarySnapshotDocumentChunk> = request
+        .document_chunks
+        .iter()
+        .map(|chunk| (chunk.evidence_id.as_str(), chunk))
+        .collect();
+    let mut allowlist = transcript_allowlist.keys().copied().collect::<HashSet<_>>();
+    for evidence_id in document_allowlist.keys() {
+        if !allowlist.insert(*evidence_id) {
+            return Err(SummaryError::EvidenceInvalid);
+        }
+    }
+    let transcript_ids = transcript_allowlist.keys().copied().collect::<HashSet<_>>();
     validate_claim(&output.content.overview, &allowlist)?;
     for decision in &output.content.decisions {
-        validate_decision(decision, &allowlist)?;
+        validate_decision(decision, &allowlist, &transcript_ids)?;
     }
     for item in &output.content.action_items {
-        validate_action_item(item, &allowlist)?;
+        validate_action_item(item, &allowlist, &transcript_ids)?;
     }
     for claim in output
         .content
@@ -1130,7 +1252,41 @@ fn validate_provider_output(
     let evidence_ids = summary_repository::referenced_evidence_ids(&output.content);
     let mut evidence = Vec::with_capacity(evidence_ids.len());
     for evidence_id in evidence_ids {
-        let snapshot = allowlist
+        if let Some(snapshot) = transcript_allowlist.get(evidence_id.as_str()).copied() {
+            evidence.push(SummaryEvidence {
+                id: evidence_id,
+                summary_id: request.run_id.clone(),
+                meeting_id: request.meeting_id.clone(),
+                kind: "transcript".to_string(),
+                source_id: snapshot.source_id.clone(),
+                transcript_segment_id: Some(snapshot.segment_id.clone()),
+                segment_revision: Some(snapshot.segment_revision),
+                document_chunk_id: None,
+                parser_version: None,
+                label: format!("Transcript segment {}", snapshot.global_ordinal + 1),
+                speaker_snapshot: snapshot
+                    .speaker_name
+                    .clone()
+                    .or_else(|| snapshot.speaker_label.clone()),
+                start_offset_ms: snapshot.start_offset_ms,
+                end_offset_ms: snapshot.end_offset_ms,
+                page_start: None,
+                page_end: None,
+                section_path: Vec::new(),
+                table_ordinal: None,
+                ordinal: snapshot.segment_ordinal,
+                global_ordinal: snapshot.global_ordinal,
+                excerpt: truncate_utf8(
+                    snapshot.original_text.trim(),
+                    SUMMARY_EVIDENCE_EXCERPT_MAX_BYTES,
+                )
+                .to_string(),
+                source_deleted: false,
+                created_at: snapshot.snapshot_at.clone(),
+            });
+            continue;
+        }
+        let snapshot = document_allowlist
             .get(evidence_id.as_str())
             .copied()
             .ok_or(SummaryError::EvidenceInvalid)?;
@@ -1138,24 +1294,28 @@ fn validate_provider_output(
             id: evidence_id,
             summary_id: request.run_id.clone(),
             meeting_id: request.meeting_id.clone(),
-            kind: "transcript".to_string(),
-            source_id: snapshot.source_id.clone(),
-            transcript_segment_id: snapshot.segment_id.clone(),
-            segment_revision: snapshot.segment_revision,
-            label: format!("Transcript segment {}", snapshot.global_ordinal + 1),
-            speaker_snapshot: snapshot
-                .speaker_name
-                .clone()
-                .or_else(|| snapshot.speaker_label.clone()),
-            start_offset_ms: snapshot.start_offset_ms,
-            end_offset_ms: snapshot.end_offset_ms,
-            ordinal: snapshot.segment_ordinal,
+            kind: "document".to_string(),
+            source_id: snapshot.document_id.clone(),
+            transcript_segment_id: None,
+            segment_revision: None,
+            document_chunk_id: Some(snapshot.chunk_id.clone()),
+            parser_version: Some(snapshot.parser_version.clone()),
+            label: format!(
+                "Reference document {}, chunk {}",
+                snapshot.document_ordinal + 1,
+                snapshot.chunk_ordinal + 1
+            ),
+            speaker_snapshot: None,
+            start_offset_ms: None,
+            end_offset_ms: None,
+            page_start: snapshot.page_start,
+            page_end: snapshot.page_end,
+            section_path: snapshot.section_path.clone(),
+            table_ordinal: snapshot.table_ordinal,
+            ordinal: snapshot.chunk_ordinal,
             global_ordinal: snapshot.global_ordinal,
-            excerpt: truncate_utf8(
-                snapshot.original_text.trim(),
-                SUMMARY_EVIDENCE_EXCERPT_MAX_BYTES,
-            )
-            .to_string(),
+            excerpt: truncate_utf8(snapshot.text.trim(), SUMMARY_EVIDENCE_EXCERPT_MAX_BYTES)
+                .to_string(),
             source_deleted: false,
             created_at: snapshot.snapshot_at.clone(),
         });
@@ -1163,25 +1323,25 @@ fn validate_provider_output(
     Ok(evidence)
 }
 
-fn validate_claim(
-    claim: &SummaryClaim,
-    allowlist: &HashMap<&str, &SummarySnapshotSegment>,
-) -> SummaryResult<()> {
+fn validate_claim(claim: &SummaryClaim, allowlist: &HashSet<&str>) -> SummaryResult<()> {
     validate_result_text(&claim.text, MAX_RESULT_TEXT_BYTES)?;
     validate_evidence_ids(&claim.evidence_ids, allowlist)
 }
 
 fn validate_decision(
     decision: &SummaryDecision,
-    allowlist: &HashMap<&str, &SummarySnapshotSegment>,
+    allowlist: &HashSet<&str>,
+    transcript_ids: &HashSet<&str>,
 ) -> SummaryResult<()> {
     validate_result_text(&decision.text, MAX_RESULT_TEXT_BYTES)?;
-    validate_evidence_ids(&decision.evidence_ids, allowlist)
+    validate_evidence_ids(&decision.evidence_ids, allowlist)?;
+    require_transcript_evidence(&decision.evidence_ids, transcript_ids)
 }
 
 fn validate_action_item(
     item: &SummaryActionItem,
-    allowlist: &HashMap<&str, &SummarySnapshotSegment>,
+    allowlist: &HashSet<&str>,
+    transcript_ids: &HashSet<&str>,
 ) -> SummaryResult<()> {
     validate_result_text(&item.text, MAX_RESULT_TEXT_BYTES)?;
     if let Some(owner) = &item.owner {
@@ -1190,13 +1350,11 @@ fn validate_action_item(
     if let Some(due_date) = &item.due_date {
         validate_result_text(due_date, MAX_RESULT_METADATA_BYTES)?;
     }
-    validate_evidence_ids(&item.evidence_ids, allowlist)
+    validate_evidence_ids(&item.evidence_ids, allowlist)?;
+    require_transcript_evidence(&item.evidence_ids, transcript_ids)
 }
 
-fn validate_evidence_ids(
-    evidence_ids: &[String],
-    allowlist: &HashMap<&str, &SummarySnapshotSegment>,
-) -> SummaryResult<()> {
+fn validate_evidence_ids(evidence_ids: &[String], allowlist: &HashSet<&str>) -> SummaryResult<()> {
     if evidence_ids.is_empty() || evidence_ids.len() > SUMMARY_MAX_SEGMENTS {
         return Err(SummaryError::EvidenceInvalid);
     }
@@ -1205,7 +1363,7 @@ fn validate_evidence_ids(
         if !seen.insert(evidence_id.as_str()) {
             return Err(SummaryError::EvidenceInvalid);
         }
-        if !allowlist.contains_key(evidence_id.as_str()) {
+        if !allowlist.contains(evidence_id.as_str()) {
             return Err(SummaryError::EvidenceInvalid);
         }
     }
@@ -1249,6 +1407,17 @@ fn ensure_run_provider(run: &SummaryRun, provider: &dyn SummaryProvider) -> Summ
     }
 }
 
+fn ensure_revision_provider(run: &SummaryRun, provider: &dyn SummaryProvider) -> SummaryResult<()> {
+    if run.provider == provider.provider_name()
+        && run.provider_mode == provider.provider_mode()
+        && run.model == provider.model_name()
+    {
+        Ok(())
+    } else {
+        Err(SummaryError::InvalidState)
+    }
+}
+
 fn eligible_meeting(connection: &rusqlite::Connection, meeting_id: &str) -> SummaryResult<Meeting> {
     let meeting =
         repository::get_including_deleted(connection, meeting_id).map_err(map_data_error)?;
@@ -1272,6 +1441,34 @@ fn validate_source_ids(source_ids: &[String]) -> SummaryResult<()> {
     for source_id in source_ids {
         validate_uuid(source_id)?;
         if !seen.insert(source_id.as_str()) {
+            return Err(SummaryError::InvalidInput);
+        }
+    }
+    Ok(())
+}
+
+fn require_transcript_evidence(
+    evidence_ids: &[String],
+    transcript_ids: &HashSet<&str>,
+) -> SummaryResult<()> {
+    if evidence_ids
+        .iter()
+        .any(|evidence_id| transcript_ids.contains(evidence_id.as_str()))
+    {
+        Ok(())
+    } else {
+        Err(SummaryError::EvidenceInvalid)
+    }
+}
+
+fn validate_document_ids(document_ids: &[String]) -> SummaryResult<()> {
+    if document_ids.len() > SUMMARY_MAX_DOCUMENTS {
+        return Err(SummaryError::InvalidInput);
+    }
+    let mut seen = HashSet::with_capacity(document_ids.len());
+    for document_id in document_ids {
+        validate_uuid(document_id)?;
+        if !seen.insert(document_id.as_str()) {
             return Err(SummaryError::InvalidInput);
         }
     }
@@ -1341,12 +1538,26 @@ fn map_transcript_error(error: TranscriptError) -> SummaryError {
     }
 }
 
+fn map_document_error(error: DocumentError) -> SummaryError {
+    match error {
+        DocumentError::NotFound => SummaryError::SourceNotFound,
+        DocumentError::InvalidState => SummaryError::InvalidState,
+        DocumentError::TooLarge | DocumentError::QuotaExceeded => SummaryError::InputTooLarge,
+        DocumentError::Internal | DocumentError::StorageUnavailable => {
+            SummaryError::PersistenceFailed
+        }
+        _ => SummaryError::InvalidInput,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::PathBuf;
     use std::sync::Barrier;
     use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
     use std::time::Duration;
+
+    use sha2::{Digest, Sha256};
 
     use super::*;
     use crate::data::service::MeetingService;
@@ -1359,7 +1570,8 @@ mod tests {
         SummaryProviderFuture,
     };
     use crate::data::{
-        CreateMeeting, TranscriptImportInput, TranscriptImportOutcome, UpdateTranscriptSegment,
+        CreateMeeting, DocumentChunkInput, DocumentChunkKind, TranscriptImportInput,
+        TranscriptImportOutcome, UpdateTranscriptSegment,
     };
 
     struct TestDirectory(PathBuf);
@@ -1419,10 +1631,16 @@ mod tests {
             .create_run(CreateSummaryRun {
                 meeting_id: meeting_id.to_string(),
                 source_ids: vec![source_id.to_string()],
+                document_ids: Vec::new(),
                 template: SummaryTemplate::Detailed,
                 output_language: SummaryOutputLanguage::En,
             })
             .expect("summary run should create")
+    }
+
+    fn sha256_hex(value: &str) -> String {
+        let digest = Sha256::digest(value.as_bytes());
+        digest.iter().map(|byte| format!("{byte:02x}")).collect()
     }
 
     fn editable_content(content: &SummaryContent) -> EditableSummaryContent {
@@ -1482,6 +1700,54 @@ mod tests {
         }
     }
 
+    struct VersionedExternalProvider(&'static str);
+
+    impl SummaryProvider for VersionedExternalProvider {
+        fn provider_name(&self) -> &'static str {
+            DEEPSEEK_SUMMARY_PROVIDER
+        }
+
+        fn provider_mode(&self) -> &'static str {
+            DEEPSEEK_SUMMARY_PROVIDER_MODE
+        }
+
+        fn model_name(&self) -> &'static str {
+            "deepseek-v4-pro"
+        }
+
+        fn prompt_version(&self) -> &'static str {
+            self.0
+        }
+
+        fn generate<'a>(
+            &'a self,
+            request: &'a SummaryProviderRequest,
+        ) -> SummaryProviderFuture<'a> {
+            Box::pin(async move {
+                let evidence_id = request
+                    .segments
+                    .first()
+                    .ok_or(SummaryError::SnapshotMissing)?
+                    .evidence_id
+                    .clone();
+                Ok(SummaryProviderOutput {
+                    run_id: request.run_id.clone(),
+                    content: SummaryContent {
+                        schema_version: 1,
+                        overview: SummaryClaim {
+                            text: "Synthetic versioned provider overview".to_string(),
+                            evidence_ids: vec![evidence_id],
+                        },
+                        decisions: Vec::new(),
+                        action_items: Vec::new(),
+                        risks: Vec::new(),
+                        open_questions: Vec::new(),
+                    },
+                })
+            })
+        }
+    }
+
     #[test]
     fn historical_mock_is_read_only_and_cannot_switch_provider_in_a_series() {
         let directory = TestDirectory::new();
@@ -1513,6 +1779,55 @@ mod tests {
                 &ExternalMetadataProvider,
             ),
             Err(SummaryError::InvalidState)
+        );
+    }
+
+    #[test]
+    fn external_revision_uses_the_current_prompt_version_without_rewriting_history() {
+        let directory = TestDirectory::new();
+        let meetings = MeetingService::initialize(&directory.0).expect("service should initialize");
+        let (meeting_id, source_id, _) = create_meeting_and_source(&meetings);
+        let summaries = meetings.summaries();
+        let queued = summaries
+            .create_run_with_provider(
+                CreateSummaryRun {
+                    meeting_id: meeting_id.clone(),
+                    source_ids: vec![source_id],
+                    document_ids: Vec::new(),
+                    template: SummaryTemplate::Detailed,
+                    output_language: SummaryOutputLanguage::En,
+                },
+                &VersionedExternalProvider("summary-deepseek-v1"),
+            )
+            .expect("historical external run should create");
+        let completed = summaries
+            .execute_with_provider(
+                &meeting_id,
+                &queued.id,
+                Arc::new(VersionedExternalProvider("summary-deepseek-v1")),
+            )
+            .expect("historical external run should complete");
+
+        let revision = summaries
+            .create_revision_with_provider(
+                CreateSummaryRevision {
+                    meeting_id: meeting_id.clone(),
+                    summary_id: completed.id.clone(),
+                },
+                &VersionedExternalProvider("summary-deepseek-v2"),
+            )
+            .expect("current prompt should create a child revision");
+        assert_eq!(revision.prompt_version, "summary-deepseek-v2");
+        assert_eq!(
+            revision.previous_summary_id.as_deref(),
+            Some(completed.id.as_str())
+        );
+        assert_eq!(
+            summaries
+                .get(&meeting_id, &completed.id)
+                .expect("historical revision should remain")
+                .prompt_version,
+            "summary-deepseek-v1"
         );
     }
 
@@ -1711,6 +2026,205 @@ mod tests {
             .expect("summary should remain");
         assert!(stale.is_stale);
         assert_eq!(stale.stale_reason.as_deref(), Some("source_deleted"));
+    }
+
+    #[test]
+    fn parsed_document_is_frozen_as_optional_reference_and_redacted_after_terminal_delete() {
+        let directory = TestDirectory::new();
+        let meetings = MeetingService::initialize(&directory.0).expect("service should initialize");
+        let (meeting_id, source_id, _) = create_meeting_and_source(&meetings);
+        let source_path = std::env::temp_dir().join(format!(
+            "meetinglens-summary-reference-{}.txt",
+            Uuid::new_v4()
+        ));
+        std::fs::write(&source_path, b"Synthetic reference background")
+            .expect("synthetic document should write");
+        let document = meetings
+            .documents()
+            .import_document(&meeting_id, &source_path)
+            .expect("synthetic document should import");
+        std::fs::remove_file(&source_path).expect("synthetic source should clean up");
+        meetings
+            .documents()
+            .begin_parse(&document.id)
+            .expect("document parse should begin");
+        let chunk_text = "Synthetic reference background";
+        let parsed = meetings
+            .documents()
+            .commit_parse(
+                &document.id,
+                "2.117.0",
+                Some(1),
+                vec![DocumentChunkInput {
+                    kind: DocumentChunkKind::Paragraph,
+                    text: chunk_text.to_string(),
+                    content_sha256: sha256_hex(chunk_text),
+                    page_start: Some(1),
+                    page_end: Some(1),
+                    section_path_json: "[\"Background\"]".to_string(),
+                    table_ordinal: None,
+                    chunk_schema_version: 1,
+                }],
+            )
+            .expect("bounded chunks should commit");
+        assert_eq!(parsed.status, DocumentStatus::Parsed);
+
+        let summaries = meetings.summaries();
+        let run = summaries
+            .create_run(CreateSummaryRun {
+                meeting_id: meeting_id.clone(),
+                source_ids: vec![source_id.clone()],
+                document_ids: vec![document.id.clone()],
+                template: SummaryTemplate::Detailed,
+                output_language: SummaryOutputLanguage::En,
+            })
+            .expect("mixed transcript and document run should freeze");
+        assert_eq!(run.document_count, 1);
+        assert_eq!(run.input_document_chunk_count, 1);
+        assert_eq!(run.document_input_bytes, chunk_text.len() as u64);
+        assert_eq!(
+            meetings.documents().delete(&document.id),
+            Err(DocumentError::InvalidState),
+            "an active summary must keep its frozen input source available"
+        );
+
+        let completed = summaries
+            .execute(&meeting_id, &run.id)
+            .expect("deterministic mixed-input summary should complete");
+        let evidence = summaries
+            .list_evidence(&meeting_id, &completed.id, None, None)
+            .expect("mixed evidence should list");
+        let document_evidence = evidence
+            .items
+            .iter()
+            .find(|item| item.kind == "document")
+            .expect("document evidence should be persisted");
+        assert_eq!(document_evidence.page_start, Some(1));
+        assert_eq!(document_evidence.section_path, vec!["Background"]);
+        assert!(document_evidence.label.starts_with("Reference document "));
+        assert!(
+            !document_evidence
+                .label
+                .contains("meetinglens-summary-reference")
+        );
+
+        let invalid_run = summaries
+            .create_run_with_provider(
+                CreateSummaryRun {
+                    meeting_id: meeting_id.clone(),
+                    source_ids: vec![source_id],
+                    document_ids: vec![document.id.clone()],
+                    template: SummaryTemplate::Detailed,
+                    output_language: SummaryOutputLanguage::En,
+                },
+                &DocumentOnlyDecisionProvider,
+            )
+            .expect("mixed validation run should freeze");
+        assert_eq!(
+            summaries.execute_with_provider(
+                &meeting_id,
+                &invalid_run.id,
+                Arc::new(DocumentOnlyDecisionProvider),
+            ),
+            Err(SummaryError::EvidenceInvalid),
+            "a document alone cannot prove a meeting decision"
+        );
+
+        meetings
+            .documents()
+            .delete(&document.id)
+            .expect("terminal document should delete");
+        let retained = summaries
+            .list_evidence(&meeting_id, &completed.id, None, None)
+            .expect("minimal evidence should remain after source deletion");
+        let retained_document = retained
+            .items
+            .iter()
+            .find(|item| item.kind == "document")
+            .expect("document evidence locator should remain");
+        assert!(retained_document.source_deleted);
+        assert_eq!(retained_document.page_start, Some(1));
+        assert_eq!(retained_document.section_path, vec!["Background"]);
+        assert_eq!(retained_document.excerpt, chunk_text);
+
+        let connection = summaries
+            .database
+            .connect()
+            .expect("database should connect");
+        let redacted_snapshot_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM summary_document_sources
+                 WHERE summary_id = ?1 AND source_deleted = 1
+                   AND document_display_name_snapshot IS NULL
+                   AND section_path_json_snapshot IS NULL AND text_snapshot IS NULL",
+                [&completed.id],
+                |row| row.get(0),
+            )
+            .expect("redacted document snapshot should count");
+        assert_eq!(redacted_snapshot_count, 1);
+        let stale = summaries
+            .get(&meeting_id, &completed.id)
+            .expect("summary should remain after document deletion");
+        assert!(stale.is_stale);
+        assert_eq!(stale.stale_reason.as_deref(), Some("source_deleted"));
+    }
+
+    struct DocumentOnlyDecisionProvider;
+
+    impl SummaryProvider for DocumentOnlyDecisionProvider {
+        fn provider_name(&self) -> &'static str {
+            MOCK_SUMMARY_PROVIDER
+        }
+
+        fn provider_mode(&self) -> &'static str {
+            crate::data::summary_provider::MOCK_SUMMARY_PROVIDER_MODE
+        }
+
+        fn model_name(&self) -> &'static str {
+            MOCK_SUMMARY_MODEL
+        }
+
+        fn prompt_version(&self) -> &'static str {
+            MOCK_SUMMARY_PROMPT_VERSION
+        }
+
+        fn generate<'a>(
+            &'a self,
+            request: &'a SummaryProviderRequest,
+        ) -> SummaryProviderFuture<'a> {
+            Box::pin(async move {
+                let transcript_evidence = request
+                    .segments
+                    .first()
+                    .ok_or(SummaryError::SnapshotMissing)?
+                    .evidence_id
+                    .clone();
+                let document_evidence = request
+                    .document_chunks
+                    .first()
+                    .ok_or(SummaryError::SnapshotMissing)?
+                    .evidence_id
+                    .clone();
+                Ok(SummaryProviderOutput {
+                    run_id: request.run_id.clone(),
+                    content: SummaryContent {
+                        schema_version: 1,
+                        overview: SummaryClaim {
+                            text: "Synthetic mixed-input overview".to_string(),
+                            evidence_ids: vec![transcript_evidence],
+                        },
+                        decisions: vec![SummaryDecision {
+                            text: "Synthetic document-only decision".to_string(),
+                            status: SummaryDecisionStatus::Confirmed,
+                            evidence_ids: vec![document_evidence],
+                        }],
+                        action_items: Vec::new(),
+                        risks: Vec::new(),
+                        open_questions: Vec::new(),
+                    },
+                })
+            })
+        }
     }
 
     struct UnknownEvidenceProvider;
@@ -1958,6 +2472,7 @@ mod tests {
             summaries.create_run(CreateSummaryRun {
                 meeting_id: meeting_id.clone(),
                 source_ids: Vec::new(),
+                document_ids: Vec::new(),
                 template: SummaryTemplate::Detailed,
                 output_language: SummaryOutputLanguage::En,
             }),
@@ -1967,6 +2482,7 @@ mod tests {
             summaries.create_run(CreateSummaryRun {
                 meeting_id: meeting_id.clone(),
                 source_ids: vec![source_id.clone(), source_id.clone()],
+                document_ids: Vec::new(),
                 template: SummaryTemplate::Detailed,
                 output_language: SummaryOutputLanguage::En,
             }),
@@ -1978,6 +2494,7 @@ mod tests {
             summaries.create_run(CreateSummaryRun {
                 meeting_id: meeting_id.clone(),
                 source_ids: vec![other_source_id.clone()],
+                document_ids: Vec::new(),
                 template: SummaryTemplate::Detailed,
                 output_language: SummaryOutputLanguage::En,
             }),
@@ -1998,6 +2515,7 @@ mod tests {
             summaries.create_run(CreateSummaryRun {
                 meeting_id: other_meeting_id,
                 source_ids: vec![other_source_id],
+                document_ids: Vec::new(),
                 template: SummaryTemplate::Detailed,
                 output_language: SummaryOutputLanguage::En,
             }),
@@ -2019,6 +2537,7 @@ mod tests {
             summaries.create_run(CreateSummaryRun {
                 meeting_id: meeting_id.clone(),
                 source_ids: vec![source_id.clone()],
+                document_ids: Vec::new(),
                 template: SummaryTemplate::Detailed,
                 output_language: SummaryOutputLanguage::En,
             }),
@@ -2040,6 +2559,7 @@ mod tests {
             summaries.create_run(CreateSummaryRun {
                 meeting_id,
                 source_ids: vec![source_id],
+                document_ids: Vec::new(),
                 template: SummaryTemplate::Detailed,
                 output_language: SummaryOutputLanguage::En,
             }),
@@ -2058,6 +2578,7 @@ mod tests {
             .create_run(CreateSummaryRun {
                 meeting_id: meeting_id.clone(),
                 source_ids: vec![source_id.clone()],
+                document_ids: Vec::new(),
                 template: SummaryTemplate::Concise,
                 output_language: SummaryOutputLanguage::En,
             })
@@ -2066,6 +2587,7 @@ mod tests {
             .create_run(CreateSummaryRun {
                 meeting_id: meeting_id.clone(),
                 source_ids: vec![source_id],
+                document_ids: Vec::new(),
                 template: SummaryTemplate::ActionsDecisions,
                 output_language: SummaryOutputLanguage::En,
             })
@@ -2159,6 +2681,7 @@ mod tests {
             byte_summaries.create_run(CreateSummaryRun {
                 meeting_id: byte_meeting_id.clone(),
                 source_ids: vec![byte_source_id],
+                document_ids: Vec::new(),
                 template: SummaryTemplate::Detailed,
                 output_language: SummaryOutputLanguage::En,
             }),
@@ -2233,6 +2756,7 @@ mod tests {
             segment_summaries.create_run(CreateSummaryRun {
                 meeting_id: segment_meeting_id.clone(),
                 source_ids: vec![first_source_id, second_source],
+                document_ids: Vec::new(),
                 template: SummaryTemplate::Detailed,
                 output_language: SummaryOutputLanguage::En,
             }),
@@ -2402,6 +2926,10 @@ mod tests {
         fn cancel(&self, _run_id: &str) -> SummaryResult<()> {
             self.cancelled.store(true, Ordering::SeqCst);
             Ok(())
+        }
+
+        fn is_cancelled(&self, _run_id: &str) -> bool {
+            self.cancelled.load(Ordering::SeqCst)
         }
     }
 
@@ -2677,6 +3205,7 @@ mod tests {
                 .create_run(CreateSummaryRun {
                     meeting_id: meeting_id.clone(),
                     source_ids: vec![source_id],
+                    document_ids: Vec::new(),
                     template: SummaryTemplate::Concise,
                     output_language: SummaryOutputLanguage::En,
                 })

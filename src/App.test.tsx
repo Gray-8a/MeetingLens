@@ -48,8 +48,10 @@ import { FakeAudioTranscriptionApi } from "./test/fakeAudioTranscriptionApi";
 import { FakeTranscriptApi } from "./test/fakeTranscriptApi";
 import {
   documentIds,
+  documentParseJobId,
   FakeDocumentApi,
   syntheticDocument,
+  syntheticDocumentParseProgress,
 } from "./test/fakeDocumentApi";
 
 const recordingMeeting = syntheticMeeting({
@@ -1137,6 +1139,258 @@ describe("MeetingLens desktop UI", () => {
     expect(document.body).not.toHaveTextContent("C:\\");
   });
 
+  it("parses one staged document locally with coarse retry progress and a verified ready state", async () => {
+    const user = userEvent.setup();
+    const documents = new FakeDocumentApi([
+      syntheticDocument({ meetingId: meetingIds.draft }),
+    ]);
+    documents.parseProgressEvents = [
+      syntheticDocumentParseProgress({ phase: "parsing", attempt: 1 }),
+      syntheticDocumentParseProgress({ phase: "retrying", attempt: 2 }),
+      syntheticDocumentParseProgress({
+        phase: "committing",
+        attempt: 2,
+      }),
+    ];
+    renderAt(
+      `/meetings/${meetingIds.draft}`,
+      new FakeMeetingApi([syntheticMeeting()]),
+      undefined,
+      documents,
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: "Parse locally" }),
+    );
+
+    await waitFor(() =>
+      expect(documents.parseCalls).toEqual([documentIds.staged]),
+    );
+    expect(
+      await screen.findByText(/Parsed locally · 1 page/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Parsed")).toBeInTheDocument();
+    expect(document.body).not.toHaveTextContent("storageRelativePath");
+    expect(document.body).not.toHaveTextContent("manifest.json");
+  });
+
+  it("prevents parallel parsing and cancels the active local job without deleting the source", async () => {
+    const user = userEvent.setup();
+    const first = syntheticDocument({ meetingId: meetingIds.draft });
+    const second = syntheticDocument({
+      id: documentIds.failed,
+      meetingId: meetingIds.draft,
+      originalFilename: "synthetic-second.txt",
+    });
+    const documents = new FakeDocumentApi([first, second]);
+    const pending = deferred<typeof first>();
+    documents.parsePromise = pending.promise;
+    documents.parseProgressEvents = [syntheticDocumentParseProgress()];
+    renderAt(
+      `/meetings/${meetingIds.draft}`,
+      new FakeMeetingApi([syntheticMeeting()]),
+      undefined,
+      documents,
+    );
+
+    const parseButtons = await screen.findAllByRole("button", {
+      name: "Parse locally",
+    });
+    await user.click(parseButtons[0]!);
+    await waitFor(() => expect(documents.parseCalls).toHaveLength(1));
+    expect(parseButtons[1]).toBeDisabled();
+    expect(await screen.findByText(/attempt 1 of 2/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Cancel parsing" }));
+    await waitFor(() =>
+      expect(documents.cancelParseCalls).toEqual([documentParseJobId]),
+    );
+    expect(documents.requestDeleteCalls).toHaveLength(0);
+    await act(async () =>
+      pending.reject(new DocumentApiError("parser_cancelled", false)),
+    );
+    const restoredParseButtons = await screen.findAllByRole("button", {
+      name: "Parse locally",
+    });
+    expect(restoredParseButtons).toHaveLength(2);
+    for (const button of restoredParseButtons) expect(button).toBeEnabled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("rebinds an active parse after navigation so the job can still be cancelled", async () => {
+    const user = userEvent.setup();
+    const document = syntheticDocument({ meetingId: meetingIds.draft });
+    const documents = new FakeDocumentApi([document]);
+    const pending = deferred<typeof document>();
+    documents.parsePromise = pending.promise;
+    documents.parseProgressEvents = [syntheticDocumentParseProgress()];
+    renderAt(
+      `/meetings/${meetingIds.draft}`,
+      new FakeMeetingApi([syntheticMeeting()]),
+      undefined,
+      documents,
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: "Parse locally" }),
+    );
+    await waitFor(() => expect(documents.parseCalls).toHaveLength(1));
+    await user.click(screen.getByRole("link", { name: "Home" }));
+    await screen.findByText("What would you like to do?");
+
+    await act(async () => {
+      window.history.pushState(null, "", `#/meetings/${meetingIds.draft}`);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+
+    await user.click(
+      await screen.findByRole("button", { name: "Cancel parsing" }),
+    );
+    await waitFor(() =>
+      expect(documents.cancelParseCalls).toEqual([documentParseJobId]),
+    );
+    await act(async () =>
+      pending.reject(new DocumentApiError("parser_cancelled", false)),
+    );
+    expect(
+      await screen.findByRole("button", { name: "Parse locally" }),
+    ).toBeEnabled();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("keeps document metadata and deletion available when parser policy lookup fails", async () => {
+    const user = userEvent.setup();
+    const documents = new FakeDocumentApi([
+      syntheticDocument({ meetingId: meetingIds.draft }),
+    ]);
+    documents.parserPolicyError = new DocumentApiError(
+      "parser_unavailable",
+      true,
+    );
+    renderAt(
+      `/meetings/${meetingIds.draft}`,
+      new FakeMeetingApi([syntheticMeeting()]),
+      undefined,
+      documents,
+    );
+
+    expect(await screen.findByText("synthetic-notes.txt")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent("parser_unavailable");
+    await user.click(
+      screen.getByRole("button", { name: "Delete synthetic-notes.txt" }),
+    );
+    await user.click(screen.getByRole("button", { name: "Confirm" }));
+    await waitFor(() =>
+      expect(documents.requestDeleteCalls).toEqual([documentIds.staged]),
+    );
+  });
+
+  it("converges a parsing row to ready even when parser policy polling fails", async () => {
+    const parsing = syntheticDocument({
+      meetingId: meetingIds.draft,
+      status: "parsing",
+    });
+    const documents = new FakeDocumentApi([parsing]);
+    documents.parserPolicyError = new DocumentApiError(
+      "parser_unavailable",
+      true,
+    );
+    renderAt(
+      `/meetings/${meetingIds.draft}`,
+      new FakeMeetingApi([syntheticMeeting()]),
+      undefined,
+      documents,
+    );
+
+    expect(await screen.findByText("Parsing")).toBeInTheDocument();
+    documents.documents = [
+      syntheticDocument({
+        ...parsing,
+        status: "parsed",
+        parserVersion: "2.117.0",
+        pageCount: 1,
+      }),
+    ];
+
+    expect(
+      await screen.findByText(/Parsed locally · 1 page/, undefined, {
+        timeout: 2_500,
+      }),
+    ).toBeInTheDocument();
+  });
+
+  it("disables cancellation once verified chunks enter the commit boundary", async () => {
+    const user = userEvent.setup();
+    const document = syntheticDocument({ meetingId: meetingIds.draft });
+    const documents = new FakeDocumentApi([document]);
+    const pending = deferred<typeof document>();
+    documents.parsePromise = pending.promise;
+    documents.parseProgressEvents = [syntheticDocumentParseProgress()];
+    documents.cancelParseResult = syntheticDocumentParseProgress({
+      phase: "committing",
+      status: "running",
+    });
+    renderAt(
+      `/meetings/${meetingIds.draft}`,
+      new FakeMeetingApi([syntheticMeeting()]),
+      undefined,
+      documents,
+    );
+
+    await user.click(
+      await screen.findByRole("button", { name: "Parse locally" }),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Cancel parsing" }),
+    );
+
+    const cancel = screen.getByRole("button", { name: "Cancel parsing" });
+    await waitFor(() => expect(cancel).toBeDisabled());
+    expect(
+      screen.getByText(/Cancellation is no longer available/),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Parsing")).toBeInTheDocument();
+
+    await act(async () =>
+      pending.resolve(
+        syntheticDocument({
+          ...document,
+          status: "parsed",
+          parserVersion: "2.117.0",
+          pageCount: 1,
+        }),
+      ),
+    );
+    expect(
+      await screen.findByText(/Parsed locally · 1 page/),
+    ).toBeInTheDocument();
+  });
+
+  it("shows a safe re-import path after the automatic parse retry is exhausted", async () => {
+    const documents = new FakeDocumentApi([
+      syntheticDocument({
+        meetingId: meetingIds.draft,
+        status: "parse_failed",
+        failureCode: "parser_failed",
+      }),
+    ]);
+    renderAt(
+      `/meetings/${meetingIds.draft}`,
+      new FakeMeetingApi([syntheticMeeting()]),
+      undefined,
+      documents,
+    );
+
+    await screen.findByText(/automatic retry was exhausted/i);
+    expect(
+      screen.queryByRole("button", { name: "Retry local parsing" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.getByText(/delete this local copy and import/i),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/parser_failed/)).toBeInTheDocument();
+  });
+
   it("shows a stable document list error", async () => {
     const documents = new FakeDocumentApi();
     documents.listError = new DocumentApiError(
@@ -1560,7 +1814,7 @@ describe("MeetingLens desktop UI", () => {
       screen.getByText(/generate structured meeting minutes/),
     ).toBeInTheDocument();
     expect(
-      screen.getByText(/Docling is not connected to this UI yet/),
+      screen.getByText(/local CPU-only Docling Worker/),
     ).toBeInTheDocument();
     expect(
       screen.getByText(/Rust-only DeepSeek provider consumes it only/),

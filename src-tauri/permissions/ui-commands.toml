@@ -18,7 +18,7 @@ permissions = ["allow-check-sidecar-health"]
 
 [[set]]
 identifier = "document-management-commands"
-description = "Allows the local main window to select, import, list, inspect, and delete meeting documents through the Rust trust boundary."
+description = "Allows the local main window to select, import, locally parse, list, inspect, and delete meeting documents through the Rust trust boundary."
 permissions = [
   "allow-select-and-import-documents",
   "allow-list-documents",
@@ -26,6 +26,10 @@ permissions = [
   "allow-request-delete-document",
   "allow-retry-delete-document",
   "allow-get-document-import-policy",
+  "allow-get-document-parser-policy",
+  "allow-parse-document",
+  "allow-get-document-parse-status",
+  "allow-cancel-document-parse",
 ]
 
 [[set]]

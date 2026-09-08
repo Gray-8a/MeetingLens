@@ -12,13 +12,21 @@ use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
-const PROTOCOL_VERSION: &str = "1";
+const PROTOCOL_VERSION: &str = "2";
 const WORKER_MODULE: &str = "meetinglens_docling_worker";
+const CHUNK_SCHEMA_VERSION: u32 = 1;
 const MAX_PROTOCOL_MESSAGE_BYTES: usize = 1024 * 1024;
 const MAX_STDERR_CAPTURE_BYTES: usize = 64 * 1024;
 const MAX_JOB_MEMORY_BYTES: u64 = 4 * 1024 * 1024 * 1024;
 const HARD_TIMEOUT: Duration = Duration::from_secs(150);
 const MAX_ARTIFACT_TOTAL_BYTES: u64 = 128 * 1024 * 1024;
+const MAX_CHUNKS_JSONL_BYTES: u64 = 32 * 1024 * 1024;
+const MAX_CHUNKS: usize = 20_000;
+const MAX_CHUNK_TEXT_BYTES: usize = 65_536;
+const MAX_TOTAL_CHUNK_TEXT_BYTES: usize = 10 * 1024 * 1024;
+const MAX_SECTION_DEPTH: usize = 16;
+const MAX_SECTION_ITEM_BYTES: usize = 255;
+const MAX_SECTION_PATH_JSON_BYTES: usize = 4096;
 
 #[derive(Clone)]
 pub struct DoclingWorkerConfig {
@@ -68,12 +76,21 @@ impl DoclingWorkerConfig {
         }
         if !self.python_executable.is_file()
             || !self.working_directory.is_dir()
-            || !self.models_root.is_dir()
             || !self.parser_staging_root.is_dir()
+            || path_is_reparse_point(&self.python_executable)
+            || path_is_reparse_point(&self.working_directory)
+            || path_is_reparse_point(&self.parser_staging_root)
             || self.hard_timeout > HARD_TIMEOUT
             || self.hard_timeout.is_zero()
             || self.job_memory_limit_bytes > MAX_JOB_MEMORY_BYTES
             || self.job_memory_limit_bytes == 0
+        {
+            return Err(DoclingWorkerError::new(
+                DoclingWorkerErrorCode::ParserEnvironmentMissing,
+            ));
+        }
+        if self.models_root.exists()
+            && (!self.models_root.is_dir() || path_is_reparse_point(&self.models_root))
         {
             return Err(DoclingWorkerError::new(
                 DoclingWorkerErrorCode::ParserEnvironmentMissing,
@@ -94,6 +111,21 @@ impl DoclingWorkerConfig {
         self.test_arguments = Some(arguments);
         self
     }
+}
+
+#[cfg(windows)]
+fn path_is_reparse_point(path: &Path) -> bool {
+    use std::os::windows::fs::MetadataExt;
+    std::fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_attributes() & 0x400 != 0)
+        .unwrap_or(true)
+}
+
+#[cfg(not(windows))]
+fn path_is_reparse_point(path: &Path) -> bool {
+    std::fs::symlink_metadata(path)
+        .map(|metadata| metadata.file_type().is_symlink())
+        .unwrap_or(true)
 }
 
 impl fmt::Debug for DoclingWorkerConfig {
@@ -118,7 +150,7 @@ impl CancellationToken {
         self.0.store(true, Ordering::Release);
     }
 
-    fn is_cancelled(&self) -> bool {
+    pub(crate) fn is_cancelled(&self) -> bool {
         self.0.load(Ordering::Acquire)
     }
 }
@@ -368,6 +400,7 @@ pub struct DoclingArtifact {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct DoclingManifest {
     pub schema_version: u32,
+    pub chunk_schema_version: u32,
     pub protocol_version: String,
     pub request_id: String,
     pub document_id: String,
@@ -383,11 +416,73 @@ pub struct DoclingManifest {
     pub artifacts: Vec<DoclingArtifact>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum DoclingChunkKind {
+    Heading,
+    Paragraph,
+    ListItem,
+    Table,
+}
+
+#[derive(Clone, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DoclingChunkLocator {
+    pub page_start: Option<u32>,
+    pub page_end: Option<u32>,
+    pub section_path: Vec<String>,
+    pub table_ordinal: Option<u32>,
+}
+
+impl fmt::Debug for DoclingChunkLocator {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DoclingChunkLocator")
+            .field("page_start", &self.page_start)
+            .field("page_end", &self.page_end)
+            .field("section_count", &self.section_path.len())
+            .field("table_ordinal", &self.table_ordinal)
+            .finish()
+    }
+}
+
+#[derive(Clone, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct DoclingChunk {
+    pub schema_version: u32,
+    pub ordinal: u32,
+    pub kind: DoclingChunkKind,
+    pub text: String,
+    pub content_sha256: String,
+    pub locator: DoclingChunkLocator,
+}
+
+impl fmt::Debug for DoclingChunk {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DoclingChunk")
+            .field("schema_version", &self.schema_version)
+            .field("ordinal", &self.ordinal)
+            .field("kind", &self.kind)
+            .field("text", &"[REDACTED]")
+            .field("content_sha256", &"[SHA256]")
+            .field("locator", &self.locator)
+            .finish()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DoclingWorkerResult {
     pub manifest: DoclingManifest,
     pub manifest_artifact: DoclingArtifact,
+    pub chunks: Vec<DoclingChunk>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct DoclingWorkerWireResult {
+    manifest: DoclingManifest,
+    manifest_artifact: DoclingArtifact,
 }
 
 #[derive(Debug, Deserialize)]
@@ -489,18 +584,26 @@ impl DoclingWorkerClient {
         cancellation: &CancellationToken,
     ) -> Result<DoclingWorkerResult, DoclingWorkerError> {
         validate_client_request(request, &self.config)?;
-        let result = match self.execute(&request.request_id, request, cancellation) {
-            Ok(result) => result,
+        let result: DoclingWorkerWireResult =
+            match self.execute(&request.request_id, request, cancellation) {
+                Ok(result) => result,
+                Err(error) => {
+                    cleanup_failed_output(&request.output_root);
+                    return Err(error);
+                }
+            };
+        let chunks = match validate_worker_result(request, &result) {
+            Ok(chunks) => chunks,
             Err(error) => {
                 cleanup_failed_output(&request.output_root);
                 return Err(error);
             }
         };
-        if let Err(error) = validate_worker_result(request, &result) {
-            cleanup_failed_output(&request.output_root);
-            return Err(error);
-        }
-        Ok(result)
+        Ok(DoclingWorkerResult {
+            manifest: result.manifest,
+            manifest_artifact: result.manifest_artifact,
+            chunks,
+        })
     }
 
     fn execute<T: for<'de> Deserialize<'de>>(
@@ -986,9 +1089,10 @@ fn canonical_regular_file(path: &Path) -> Result<PathBuf, DoclingWorkerError> {
 
 fn validate_worker_result(
     request: &DoclingWorkerRequest,
-    result: &DoclingWorkerResult,
-) -> Result<(), DoclingWorkerError> {
+    result: &DoclingWorkerWireResult,
+) -> Result<Vec<DoclingChunk>, DoclingWorkerError> {
     if result.manifest.schema_version != 1
+        || result.manifest.chunk_schema_version != CHUNK_SCHEMA_VERSION
         || result.manifest.protocol_version != PROTOCOL_VERSION
         || result.manifest.request_id != request.request_id
         || result.manifest.document_id != request.document_id
@@ -997,7 +1101,10 @@ fn validate_worker_result(
         || result.manifest.input_sha256 != request.expected_sha256
         || result.manifest.detected_media_type != request.detected_media_type
         || result.manifest.status != "success"
-        || result.manifest.page_count.is_some_and(|pages| pages > 300)
+        || result
+            .manifest
+            .page_count
+            .is_some_and(|pages| pages == 0 || pages > 300)
         || result.manifest.warnings.iter().any(|warning| {
             warning.contains(&request.input_path.to_string_lossy().to_string())
                 || warning.contains(&request.output_root.to_string_lossy().to_string())
@@ -1015,14 +1122,22 @@ fn validate_worker_result(
         .iter()
         .map(|artifact| artifact.kind.as_str())
         .collect();
-    if kinds != ["document_json", "manifest", "markdown", "text"] {
+    if kinds
+        != [
+            "chunks_jsonl",
+            "document_json",
+            "manifest",
+            "markdown",
+            "text",
+        ]
+    {
         return Err(DoclingWorkerError::new(
             DoclingWorkerErrorCode::ParserIntegrityFailed,
         ));
     }
+
     let mut total = 0_u64;
     for artifact in &artifacts {
-        validate_artifact(&request.output_root, artifact)?;
         total = total
             .checked_add(artifact.size_bytes)
             .ok_or_else(|| DoclingWorkerError::new(DoclingWorkerErrorCode::ParserOutputTooLarge))?;
@@ -1032,10 +1147,92 @@ fn validate_worker_result(
             DoclingWorkerErrorCode::ParserOutputTooLarge,
         ));
     }
-    Ok(())
+
+    let mut chunks = None;
+    for artifact in &artifacts {
+        let expected_path = match artifact.kind.as_str() {
+            "chunks_jsonl" => "chunks.jsonl",
+            "document_json" => "document.json",
+            "manifest" => "manifest.json",
+            "markdown" => "content.md",
+            "text" => "content.txt",
+            _ => {
+                return Err(DoclingWorkerError::new(
+                    DoclingWorkerErrorCode::ParserIntegrityFailed,
+                ));
+            }
+        };
+        if artifact.relative_path != expected_path {
+            return Err(DoclingWorkerError::new(
+                DoclingWorkerErrorCode::ParserIntegrityFailed,
+            ));
+        }
+        if artifact.kind == "chunks_jsonl" {
+            let bytes =
+                read_validated_artifact(&request.output_root, artifact, MAX_CHUNKS_JSONL_BYTES)?;
+            chunks = Some(validate_chunks_jsonl(&bytes, result.manifest.page_count)?);
+        } else {
+            validate_artifact(&request.output_root, artifact)?;
+        }
+    }
+    chunks.ok_or_else(|| DoclingWorkerError::new(DoclingWorkerErrorCode::ParserIntegrityFailed))
 }
 
 fn validate_artifact(root: &Path, artifact: &DoclingArtifact) -> Result<(), DoclingWorkerError> {
+    let path = resolve_artifact(root, artifact)?;
+    let metadata = path
+        .metadata()
+        .map_err(|_| DoclingWorkerError::new(DoclingWorkerErrorCode::ParserIntegrityFailed))?;
+    if !metadata.is_file()
+        || metadata.len() != artifact.size_bytes
+        || hash_file(&path)? != artifact.sha256
+    {
+        return Err(DoclingWorkerError::new(
+            DoclingWorkerErrorCode::ParserIntegrityFailed,
+        ));
+    }
+    Ok(())
+}
+
+fn read_validated_artifact(
+    root: &Path,
+    artifact: &DoclingArtifact,
+    max_bytes: u64,
+) -> Result<Vec<u8>, DoclingWorkerError> {
+    if artifact.size_bytes > max_bytes {
+        return Err(DoclingWorkerError::new(
+            DoclingWorkerErrorCode::ParserOutputTooLarge,
+        ));
+    }
+    let path = resolve_artifact(root, artifact)?;
+    let file = File::open(path)
+        .map_err(|_| DoclingWorkerError::new(DoclingWorkerErrorCode::ParserIntegrityFailed))?;
+    let metadata = file
+        .metadata()
+        .map_err(|_| DoclingWorkerError::new(DoclingWorkerErrorCode::ParserIntegrityFailed))?;
+    if !metadata.is_file() || metadata.len() != artifact.size_bytes {
+        return Err(DoclingWorkerError::new(
+            DoclingWorkerErrorCode::ParserIntegrityFailed,
+        ));
+    }
+    let capacity = usize::try_from(artifact.size_bytes)
+        .map_err(|_| DoclingWorkerError::new(DoclingWorkerErrorCode::ParserOutputTooLarge))?;
+    let mut bytes = Vec::with_capacity(capacity);
+    file.take(max_bytes.saturating_add(1))
+        .read_to_end(&mut bytes)
+        .map_err(|_| DoclingWorkerError::new(DoclingWorkerErrorCode::ParserIntegrityFailed))?;
+    if bytes.len() != capacity || sha256_bytes(&bytes) != artifact.sha256 {
+        return Err(DoclingWorkerError::new(
+            DoclingWorkerErrorCode::ParserIntegrityFailed,
+        ));
+    }
+    Ok(bytes)
+}
+
+fn resolve_artifact(
+    root: &Path,
+    artifact: &DoclingArtifact,
+) -> Result<PathBuf, DoclingWorkerError> {
     let relative = Path::new(&artifact.relative_path);
     if relative.as_os_str().is_empty()
         || relative.is_absolute()
@@ -1062,19 +1259,156 @@ fn validate_artifact(root: &Path, artifact: &DoclingArtifact) -> Result<(), Docl
         .join(relative)
         .canonicalize()
         .map_err(|_| DoclingWorkerError::new(DoclingWorkerErrorCode::ParserIntegrityFailed))?;
-    let metadata = path
-        .metadata()
-        .map_err(|_| DoclingWorkerError::new(DoclingWorkerErrorCode::ParserIntegrityFailed))?;
-    if !path.starts_with(canonical_root)
-        || !metadata.is_file()
-        || metadata.len() != artifact.size_bytes
-        || hash_file(&path)? != artifact.sha256
-    {
+    if !path.starts_with(canonical_root) {
         return Err(DoclingWorkerError::new(
             DoclingWorkerErrorCode::ParserIntegrityFailed,
         ));
     }
-    Ok(())
+    Ok(path)
+}
+
+fn validate_chunks_jsonl(
+    bytes: &[u8],
+    page_count: Option<u32>,
+) -> Result<Vec<DoclingChunk>, DoclingWorkerError> {
+    if bytes.is_empty() {
+        return Err(DoclingWorkerError::new(
+            DoclingWorkerErrorCode::ParserIntegrityFailed,
+        ));
+    }
+    if bytes.len() > usize::try_from(MAX_CHUNKS_JSONL_BYTES).unwrap_or(usize::MAX) {
+        return Err(DoclingWorkerError::new(
+            DoclingWorkerErrorCode::ParserOutputTooLarge,
+        ));
+    }
+    if !bytes.ends_with(b"\n") || bytes.contains(&b'\r') {
+        return Err(DoclingWorkerError::new(
+            DoclingWorkerErrorCode::ParserIntegrityFailed,
+        ));
+    }
+
+    let mut chunks = Vec::new();
+    let mut total_text_bytes = 0_usize;
+    let mut next_table_ordinal = 0_u32;
+    let mut current_table_ordinal = None;
+    for line in bytes[..bytes.len() - 1].split(|byte| *byte == b'\n') {
+        if line.is_empty() {
+            return Err(DoclingWorkerError::new(
+                DoclingWorkerErrorCode::ParserIntegrityFailed,
+            ));
+        }
+        if chunks.len() >= MAX_CHUNKS {
+            return Err(DoclingWorkerError::new(
+                DoclingWorkerErrorCode::ParserOutputTooLarge,
+            ));
+        }
+        let chunk: DoclingChunk = serde_json::from_slice(line)
+            .map_err(|_| DoclingWorkerError::new(DoclingWorkerErrorCode::ParserIntegrityFailed))?;
+        let expected_ordinal = u32::try_from(chunks.len())
+            .map_err(|_| DoclingWorkerError::new(DoclingWorkerErrorCode::ParserOutputTooLarge))?;
+        if chunk.schema_version != CHUNK_SCHEMA_VERSION
+            || chunk.ordinal != expected_ordinal
+            || !valid_chunk_text(&chunk.text, MAX_CHUNK_TEXT_BYTES)
+            || !valid_sha256(&chunk.content_sha256)
+            || sha256_bytes(chunk.text.as_bytes()) != chunk.content_sha256
+            || !valid_chunk_locator(&chunk, page_count)
+        {
+            return Err(DoclingWorkerError::new(
+                DoclingWorkerErrorCode::ParserIntegrityFailed,
+            ));
+        }
+
+        match (chunk.kind, chunk.locator.table_ordinal) {
+            (DoclingChunkKind::Table, Some(value)) => {
+                if current_table_ordinal != Some(value) {
+                    if value != next_table_ordinal {
+                        return Err(DoclingWorkerError::new(
+                            DoclingWorkerErrorCode::ParserIntegrityFailed,
+                        ));
+                    }
+                    current_table_ordinal = Some(value);
+                    next_table_ordinal = next_table_ordinal.checked_add(1).ok_or_else(|| {
+                        DoclingWorkerError::new(DoclingWorkerErrorCode::ParserOutputTooLarge)
+                    })?;
+                }
+            }
+            (DoclingChunkKind::Table, None) | (_, Some(_)) => {
+                return Err(DoclingWorkerError::new(
+                    DoclingWorkerErrorCode::ParserIntegrityFailed,
+                ));
+            }
+            (_, None) => current_table_ordinal = None,
+        }
+
+        total_text_bytes = total_text_bytes
+            .checked_add(chunk.text.len())
+            .ok_or_else(|| DoclingWorkerError::new(DoclingWorkerErrorCode::ParserOutputTooLarge))?;
+        if total_text_bytes > MAX_TOTAL_CHUNK_TEXT_BYTES {
+            return Err(DoclingWorkerError::new(
+                DoclingWorkerErrorCode::ParserOutputTooLarge,
+            ));
+        }
+        chunks.push(chunk);
+    }
+    if chunks.is_empty() {
+        return Err(DoclingWorkerError::new(
+            DoclingWorkerErrorCode::ParserIntegrityFailed,
+        ));
+    }
+    Ok(chunks)
+}
+
+fn valid_chunk_locator(chunk: &DoclingChunk, page_count: Option<u32>) -> bool {
+    let pages_valid = match (chunk.locator.page_start, chunk.locator.page_end) {
+        (None, None) => true,
+        (Some(start), Some(end)) => {
+            start >= 1
+                && end >= start
+                && page_count.is_some_and(|count| start <= count && end <= count)
+        }
+        _ => false,
+    };
+    pages_valid
+        && chunk.locator.section_path.len() <= MAX_SECTION_DEPTH
+        && chunk
+            .locator
+            .section_path
+            .iter()
+            .all(|section| valid_bounded_text(section, MAX_SECTION_ITEM_BYTES, false))
+        && serde_json::to_vec(&chunk.locator.section_path)
+            .is_ok_and(|encoded| encoded.len() <= MAX_SECTION_PATH_JSON_BYTES)
+        && chunk
+            .locator
+            .table_ordinal
+            .is_none_or(|ordinal| ordinal < MAX_CHUNKS as u32)
+}
+
+fn valid_chunk_text(value: &str, max_bytes: usize) -> bool {
+    valid_bounded_text(value, max_bytes, true)
+}
+
+fn valid_bounded_text(value: &str, max_bytes: usize, allow_layout: bool) -> bool {
+    !value.trim().is_empty()
+        && value.len() <= max_bytes
+        && !value.chars().any(|character| {
+            let code = u32::from(character);
+            (code <= 0x1f && (!allow_layout || (character != '\n' && character != '\t')))
+                || (0x7f..=0x9f).contains(&code)
+        })
+}
+
+fn valid_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_hexdigit() && !byte.is_ascii_uppercase())
+}
+
+fn sha256_bytes(bytes: &[u8]) -> String {
+    Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect()
 }
 
 fn hash_file(path: &Path) -> Result<String, DoclingWorkerError> {
@@ -1103,10 +1437,12 @@ fn cleanup_failed_output(root: &Path) {
         "document.json",
         "content.md",
         "content.txt",
+        "chunks.jsonl",
         "manifest.json",
         ".document.json.tmp",
         ".content.md.tmp",
         ".content.txt.tmp",
+        ".chunks.jsonl.tmp",
         ".manifest.json.tmp",
     ] {
         let _ = std::fs::remove_file(root.join(name));
@@ -1231,6 +1567,8 @@ mod tests {
         ) -> Result<ProcessOutput, DoclingWorkerError> {
             std::fs::write(self.output_root.join("document.json"), b"partial")
                 .expect("partial artifact should write");
+            std::fs::write(self.output_root.join("chunks.jsonl"), b"partial")
+                .expect("partial chunk artifact should write");
             std::fs::write(self.output_root.join("unknown.keep"), b"keep")
                 .expect("unknown artifact should write");
             Err(DoclingWorkerError::new(
@@ -1247,6 +1585,20 @@ mod tests {
                 .code,
             DoclingWorkerErrorCode::ParserEnvironmentMissing
         );
+    }
+
+    #[test]
+    fn config_allows_an_absolute_missing_model_root_for_model_free_formats() {
+        let workspace = TestWorkspace::new();
+        let missing_models = workspace.root.join("models-not-provisioned");
+        assert!(!missing_models.exists());
+        DoclingWorkerConfig::new(
+            &workspace.python,
+            &workspace.working_directory,
+            missing_models,
+            &workspace.staging_root,
+        )
+        .expect("model-free formats must reach the worker without provisioned models");
     }
 
     #[test]
@@ -1270,7 +1622,7 @@ mod tests {
     fn request_serialization_uses_protocol_field_names() {
         let workspace = TestWorkspace::new();
         let value = serde_json::to_value(workspace.request()).expect("request should serialize");
-        assert_eq!(value["protocolVersion"], "1");
+        assert_eq!(value["protocolVersion"], "2");
         assert_eq!(value["operation"], "parse");
         assert!(value.get("inputPath").is_some());
         assert!(value.get("parserOptions").is_some());
@@ -1306,7 +1658,7 @@ mod tests {
     #[test]
     fn rejects_wrong_protocol_version() {
         assert_protocol_error(json!({
-            "protocolVersion": "2",
+            "protocolVersion": "1",
             "requestId": Uuid::new_v4().to_string(),
             "ok": true,
             "result": health_result()
@@ -1317,7 +1669,7 @@ mod tests {
     fn rejects_wrong_response_request_id() {
         let expected = Uuid::new_v4().to_string();
         let output = response_bytes(json!({
-            "protocolVersion": "1",
+            "protocolVersion": "2",
             "requestId": Uuid::new_v4().to_string(),
             "ok": true,
             "result": health_result()
@@ -1350,7 +1702,7 @@ mod tests {
     fn maps_stable_remote_error() {
         let request_id = Uuid::new_v4().to_string();
         let output = response_bytes(json!({
-            "protocolVersion": "1",
+            "protocolVersion": "2",
             "requestId": request_id,
             "ok": false,
             "error": {
@@ -1368,7 +1720,7 @@ mod tests {
     fn rejects_remote_error_message_mismatch() {
         let request_id = Uuid::new_v4().to_string();
         let output = response_bytes(json!({
-            "protocolVersion": "1",
+            "protocolVersion": "2",
             "requestId": request_id,
             "ok": false,
             "error": {
@@ -1452,7 +1804,104 @@ mod tests {
             .expect_err("worker crash should fail");
         assert_eq!(error.code, DoclingWorkerErrorCode::ParserWorkerCrashed);
         assert!(!request.output_root.join("document.json").exists());
+        assert!(!request.output_root.join("chunks.jsonl").exists());
         assert!(request.output_root.join("unknown.keep").exists());
+    }
+
+    #[test]
+    fn chunks_jsonl_accepts_only_contiguous_hash_bound_records() {
+        let first = valid_chunk_value(0, "Synthetic first.");
+        let second = valid_chunk_value(1, "Synthetic second.");
+        let mut bytes = serde_json::to_vec(&first).expect("chunk should serialize");
+        bytes.push(b'\n');
+        bytes.extend(serde_json::to_vec(&second).expect("chunk should serialize"));
+        bytes.push(b'\n');
+
+        let chunks = validate_chunks_jsonl(&bytes, None).expect("chunks should validate");
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].ordinal, 0);
+        assert_eq!(chunks[1].ordinal, 1);
+    }
+
+    #[test]
+    fn chunks_jsonl_rejects_unknown_fields_and_ordinal_gaps() {
+        let mut unknown = valid_chunk_value(0, "Synthetic.");
+        unknown["privatePath"] = json!("C:\\private\\document.txt");
+        assert_chunk_integrity_error(chunk_bytes(unknown), None);
+
+        assert_chunk_integrity_error(chunk_bytes(valid_chunk_value(1, "Synthetic.")), None);
+    }
+
+    #[test]
+    fn chunks_jsonl_rejects_hash_locator_and_kind_mismatches() {
+        let mut wrong_hash = valid_chunk_value(0, "Synthetic.");
+        wrong_hash["contentSha256"] = json!("0".repeat(64));
+        assert_chunk_integrity_error(chunk_bytes(wrong_hash), None);
+
+        let mut incomplete_page = valid_chunk_value(0, "Synthetic.");
+        incomplete_page["locator"]["pageStart"] = json!(1);
+        assert_chunk_integrity_error(chunk_bytes(incomplete_page), Some(1));
+
+        let mut page_out_of_range = valid_chunk_value(0, "Synthetic.");
+        page_out_of_range["locator"]["pageStart"] = json!(2);
+        page_out_of_range["locator"]["pageEnd"] = json!(2);
+        assert_chunk_integrity_error(chunk_bytes(page_out_of_range), Some(1));
+
+        let mut paragraph_with_table = valid_chunk_value(0, "Synthetic.");
+        paragraph_with_table["locator"]["tableOrdinal"] = json!(0);
+        assert_chunk_integrity_error(chunk_bytes(paragraph_with_table), None);
+
+        let mut first_table = valid_chunk_value(0, "First table.");
+        first_table["kind"] = json!("table");
+        first_table["locator"]["tableOrdinal"] = json!(0);
+        let paragraph = valid_chunk_value(1, "Between tables.");
+        let mut repeated_table = valid_chunk_value(2, "Repeated table.");
+        repeated_table["kind"] = json!("table");
+        repeated_table["locator"]["tableOrdinal"] = json!(0);
+        let mut non_contiguous = chunk_bytes(first_table);
+        non_contiguous.extend(chunk_bytes(paragraph));
+        non_contiguous.extend(chunk_bytes(repeated_table));
+        assert_chunk_integrity_error(non_contiguous, None);
+    }
+
+    #[test]
+    fn chunks_jsonl_rejects_oversized_text() {
+        let value = valid_chunk_value(0, &"x".repeat(MAX_CHUNK_TEXT_BYTES + 1));
+        assert_chunk_integrity_error(chunk_bytes(value), None);
+    }
+
+    #[test]
+    fn chunks_jsonl_enforces_canonical_section_path_utf8_limit() {
+        let mut accepted = valid_chunk_value(0, "Synthetic.");
+        let mut path = vec!["甲".repeat(85); 15];
+        path.push("乙".repeat(74));
+        assert_eq!(
+            serde_json::to_vec(&path).expect("path should encode").len(),
+            4096
+        );
+        accepted["locator"]["sectionPath"] = json!(path);
+        validate_chunks_jsonl(&chunk_bytes(accepted), None)
+            .expect("4096 canonical UTF-8 bytes should pass");
+
+        let mut rejected = valid_chunk_value(0, "Synthetic.");
+        path[15].push('z');
+        assert_eq!(
+            serde_json::to_vec(&path).expect("path should encode").len(),
+            4097
+        );
+        rejected["locator"]["sectionPath"] = json!(path);
+        assert_chunk_integrity_error(chunk_bytes(rejected), None);
+    }
+
+    #[test]
+    fn chunk_debug_redacts_text_hash_and_section_names() {
+        let bytes = chunk_bytes(valid_chunk_value(0, "Private synthetic content."));
+        let mut chunks = validate_chunks_jsonl(&bytes, None).expect("chunk should validate");
+        chunks[0].locator.section_path = vec!["Private synthetic heading".to_owned()];
+        let rendered = format!("{:?}", chunks[0]);
+        assert!(!rendered.contains("Private synthetic content."));
+        assert!(!rendered.contains("Private synthetic heading"));
+        assert!(!rendered.contains(&chunks[0].content_sha256));
     }
 
     #[test]
@@ -1585,7 +2034,11 @@ mod tests {
             .parse(&request, &CancellationToken::default())
             .expect("real text parse should succeed");
         assert_eq!(result.manifest.status, "success");
-        assert_eq!(result.manifest.artifacts.len(), 3);
+        assert_eq!(result.manifest.artifacts.len(), 4);
+        assert_eq!(result.manifest.chunk_schema_version, 1);
+        assert_eq!(result.chunks.len(), 1);
+        assert_eq!(result.chunks[0].kind, DoclingChunkKind::Paragraph);
+        assert_eq!(result.chunks[0].text, "Synthetic Rust client content.");
         assert_eq!(result.manifest_artifact.relative_path, "manifest.json");
         assert_eq!(
             std::fs::read_to_string(request.output_root.join("content.txt"))
@@ -1661,7 +2114,7 @@ mod tests {
         let script = concat!(
             "import json,sys; r=json.loads(sys.stdin.readline());\n",
             "try:\n x=bytearray(512*1024*1024)\nexcept MemoryError:\n",
-            " print(json.dumps({'protocolVersion':'1','requestId':r.get('requestId','')",
+            " print(json.dumps({'protocolVersion':'2','requestId':r.get('requestId','')",
             ",'ok':False,'error':{'code':'parser_resource_limit','message':",
             "'The document exceeded a parser resource limit.','retryable':False}}))\n",
             "else:\n sys.exit(17)"
@@ -1720,20 +2173,48 @@ mod tests {
 
     fn health_response(request_id: &str) -> Vec<u8> {
         response_bytes(json!({
-            "protocolVersion": "1",
+            "protocolVersion": "2",
             "requestId": request_id,
             "ok": true,
             "result": health_result()
         }))
     }
 
+    fn valid_chunk_value(ordinal: u32, text: &str) -> serde_json::Value {
+        json!({
+            "schemaVersion": 1,
+            "ordinal": ordinal,
+            "kind": "paragraph",
+            "text": text,
+            "contentSha256": sha256_bytes(text.as_bytes()),
+            "locator": {
+                "pageStart": null,
+                "pageEnd": null,
+                "sectionPath": [],
+                "tableOrdinal": null
+            }
+        })
+    }
+
+    fn chunk_bytes(value: serde_json::Value) -> Vec<u8> {
+        let mut bytes = serde_json::to_vec(&value).expect("chunk should serialize");
+        bytes.push(b'\n');
+        bytes
+    }
+
+    fn assert_chunk_integrity_error(bytes: Vec<u8>, page_count: Option<u32>) {
+        let error = validate_chunks_jsonl(&bytes, page_count)
+            .expect_err("invalid chunks should fail closed");
+        assert_eq!(error.code, DoclingWorkerErrorCode::ParserIntegrityFailed);
+    }
+
     fn health_result() -> serde_json::Value {
         json!({
             "status": "ok",
             "service": "meetinglens-docling-worker",
-            "workerVersion": "0.1.0",
+            "workerVersion": "0.2.0",
             "parserVersion": "2.117.0",
-            "protocolVersion": "1",
+            "protocolVersion": "2",
             "pythonVersion": "3.12.8",
             "transport": "stdio",
             "networkListener": false,

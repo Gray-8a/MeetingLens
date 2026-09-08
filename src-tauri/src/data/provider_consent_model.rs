@@ -19,7 +19,7 @@ pub(crate) struct ProviderConsentPolicy<'a> {
 }
 
 impl ProviderConsentPolicy<'static> {
-    pub(crate) const fn deepseek_transcript() -> Self {
+    pub(crate) const fn deepseek_summary_input() -> Self {
         Self {
             provider: DEEPSEEK_CONSENT_PROVIDER,
             endpoint_host: DEEPSEEK_CONSENT_ENDPOINT_HOST,
@@ -27,6 +27,11 @@ impl ProviderConsentPolicy<'static> {
             policy_version: DEEPSEEK_CONSENT_POLICY_VERSION,
             data_categories: &DEEPSEEK_CONSENT_DATA_CATEGORIES,
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn deepseek_transcript() -> Self {
+        Self::deepseek_summary_input()
     }
 }
 

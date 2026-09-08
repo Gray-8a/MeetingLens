@@ -15,9 +15,11 @@ import type {
   SummaryPolicyResponse,
   SaveSummaryMarkdownResponse,
   SummaryContent,
+  DocumentSummaryEvidenceResponse,
   SummaryEvidenceResponse,
   SummaryRunReferenceRequest,
   SummaryRunResponse,
+  TranscriptSummaryEvidenceResponse,
   UpdateSummaryContentRequest,
 } from "../api/summary";
 
@@ -70,13 +72,16 @@ export function syntheticSummaryRun(
     provider: "deepseek",
     providerMode: "external",
     model: "deepseek-v4-pro",
-    promptVersion: "summary-deepseek-v1",
+    promptVersion: "summary-deepseek-v2",
     content: syntheticSummaryContent(),
     contentVersion: syntheticContentVersion,
     errorCode: null,
     sourceCount: 1,
     inputSegmentCount: 2,
     inputBytes: 128,
+    documentCount: 0,
+    inputDocumentChunkCount: 0,
+    documentInputBytes: 0,
     isStale: false,
     staleReason: null,
     staleAt: null,
@@ -92,8 +97,8 @@ export function syntheticSummaryRun(
 }
 
 export function syntheticSummaryEvidence(
-  overrides: Partial<SummaryEvidenceResponse> = {},
-): SummaryEvidenceResponse {
+  overrides: Partial<TranscriptSummaryEvidenceResponse> = {},
+): TranscriptSummaryEvidenceResponse {
   return {
     id: "77777777-7777-4777-8777-777777777777",
     summaryId: "66666666-6666-4666-8666-666666666666",
@@ -115,6 +120,31 @@ export function syntheticSummaryEvidence(
   };
 }
 
+export function syntheticDocumentSummaryEvidence(
+  overrides: Partial<DocumentSummaryEvidenceResponse> = {},
+): DocumentSummaryEvidenceResponse {
+  return {
+    id: "78787878-7878-4787-8787-787878787878",
+    summaryId: "66666666-6666-4666-8666-666666666666",
+    meetingId: "11111111-1111-4111-8111-111111111111",
+    kind: "document",
+    documentId: "55555555-5555-4555-8555-555555555556",
+    documentChunkId: "88888888-8888-4888-8888-888888888889",
+    label: "Synthetic reference document, chunk 1",
+    parserVersion: "2.117.0",
+    pageStart: 1,
+    pageEnd: 1,
+    sectionPath: ["Synthetic section"],
+    tableOrdinal: null,
+    ordinal: 0,
+    globalOrdinal: 2,
+    excerpt: "Synthetic document evidence",
+    sourceDeleted: false,
+    createdAt: syntheticTimestamp,
+    ...overrides,
+  };
+}
+
 export const syntheticDeepSeekStatus = (
   overrides: Partial<DeepSeekProviderStatusResponse> = {},
 ): DeepSeekProviderStatusResponse => ({
@@ -124,7 +154,7 @@ export const syntheticDeepSeekStatus = (
   model: "deepseek-v4-pro",
   consentRemembered: false,
   consentedAt: null,
-  policyVersion: "deepseek-transcript-external-v1",
+  policyVersion: "deepseek-summary-input-external-v2",
   executionAvailable: false,
   ...overrides,
 });
@@ -138,19 +168,24 @@ export const syntheticExternalDisclosure = (
   sourceCount: 1,
   segmentCount: 2,
   inputBytes: 128,
+  documentCount: 0,
+  documentChunkCount: 0,
+  documentInputBytes: 0,
   template: "detailed",
   outputLanguage: "en",
   dataCategories: [
     "transcript_text",
     "speaker_labels_and_names",
     "time_offsets",
+    "document_text",
+    "document_structure_locations",
     "evidence_ids",
     "summary_template",
     "output_language",
   ],
   rememberedConsentValid: false,
   requiresConfirmation: true,
-  policyVersion: "deepseek-transcript-external-v1",
+  policyVersion: "deepseek-summary-input-external-v2",
   ...overrides,
 });
 
@@ -186,8 +221,8 @@ export class FakeSummaryApi implements SummaryApi {
     const index = this.evidenceItems.findIndex(
       (candidate) => candidate.id === item.id,
     );
-    if (index >= 0) this.evidenceItems[index] = { ...item };
-    else this.evidenceItems.push({ ...item });
+    if (index >= 0) this.evidenceItems[index] = cloneEvidence(item);
+    else this.evidenceItems.push(cloneEvidence(item));
   }
 
   async getPolicy(): Promise<SummaryPolicyResponse> {
@@ -198,6 +233,8 @@ export class FakeSummaryApi implements SummaryApi {
       triggerKind: "manual",
       provider: "deepseek",
       maxSegments: 20_000,
+      maxDocuments: 20,
+      maxDocumentChunks: 20_000,
       maxInputBytes: 1024 * 1024,
       maxEvidenceExcerptBytes: 1_024,
       listDefaultLimit: 50,
@@ -249,7 +286,11 @@ export class FakeSummaryApi implements SummaryApi {
   async createRun(
     request: CreateSummaryRunRequest,
   ): Promise<SummaryRunResponse> {
-    this.createCalls.push({ ...request, sourceIds: [...request.sourceIds] });
+    this.createCalls.push({
+      ...request,
+      sourceIds: [...request.sourceIds],
+      documentIds: [...request.documentIds],
+    });
     this.sequence += 1;
     const id = `66666666-6666-4666-8666-${String(this.sequence).padStart(12, "0")}`;
     const run = syntheticSummaryRun({
@@ -265,6 +306,9 @@ export class FakeSummaryApi implements SummaryApi {
       finishedAt: null,
       sourceCount: request.sourceIds.length,
       inputSegmentCount: Math.max(request.sourceIds.length, 1),
+      documentCount: request.documentIds.length,
+      inputDocumentChunkCount: request.documentIds.length,
+      documentInputBytes: request.documentIds.length * 64,
     });
     this.replaceRun(run);
     return cloneRun(run);
@@ -388,7 +432,7 @@ export class FakeSummaryApi implements SummaryApi {
     const items = remaining.slice(0, request.limit ?? 50);
     const hasMore = remaining.length > items.length;
     return {
-      items: items.map((item) => ({ ...item })),
+      items: items.map(cloneEvidence),
       nextCursor: hasMore
         ? (items[items.length - 1]?.globalOrdinal ?? null)
         : null,
@@ -407,7 +451,7 @@ export class FakeSummaryApi implements SummaryApi {
         candidate.meetingId === request.meetingId,
     );
     if (!item) throw new Error("Summary evidence fake is not configured.");
-    return { ...item };
+    return cloneEvidence(item);
   }
 
   async updateContent(
@@ -538,4 +582,10 @@ function cloneRun(run: SummaryRunResponse): SummaryRunResponse {
         }
       : null,
   };
+}
+
+function cloneEvidence(item: SummaryEvidenceResponse): SummaryEvidenceResponse {
+  return item.kind === "document"
+    ? { ...item, sectionPath: [...item.sectionPath] }
+    : { ...item };
 }

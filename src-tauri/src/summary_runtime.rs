@@ -23,6 +23,9 @@ pub(crate) struct SummaryExternalDisclosure {
     pub(crate) source_count: u64,
     pub(crate) segment_count: u64,
     pub(crate) input_bytes: u64,
+    pub(crate) document_count: u64,
+    pub(crate) document_chunk_count: u64,
+    pub(crate) document_input_bytes: u64,
     pub(crate) template: crate::data::SummaryTemplate,
     pub(crate) output_language: crate::data::SummaryOutputLanguage,
     pub(crate) remembered_consent_valid: bool,
@@ -100,7 +103,7 @@ impl SummaryRuntimeService {
                     summary_id,
                     Arc::clone(&self.provider),
                     &self.consents,
-                    &ProviderConsentPolicy::deepseek_transcript(),
+                    &ProviderConsentPolicy::deepseek_summary_input(),
                 )
                 .await
         } else {
@@ -188,7 +191,7 @@ impl SummaryRuntimeService {
             .map_err(|_| SummaryError::Internal)?;
         let remembered = self
             .consents
-            .remembered(&ProviderConsentPolicy::deepseek_transcript())
+            .remembered(&ProviderConsentPolicy::deepseek_summary_input())
             .map_err(map_consent_error)?;
         Ok(DeepSeekProviderStatus {
             key_configured,
@@ -215,7 +218,7 @@ impl SummaryRuntimeService {
             remember,
             self.provider.as_ref(),
             &self.consents,
-            &ProviderConsentPolicy::deepseek_transcript(),
+            &ProviderConsentPolicy::deepseek_summary_input(),
         )?;
         self.disclosure_for_run(run, Some(remember))
     }
@@ -234,7 +237,7 @@ impl SummaryRuntimeService {
             Some(remembered) => remembered,
             None => self
                 .consents
-                .remembered(&ProviderConsentPolicy::deepseek_transcript())
+                .remembered(&ProviderConsentPolicy::deepseek_summary_input())
                 .map_err(map_consent_error)?
                 .is_some(),
         };
@@ -242,13 +245,19 @@ impl SummaryRuntimeService {
             true
         } else {
             self.consents
-                .one_time_valid(&run.id, &ProviderConsentPolicy::deepseek_transcript())
+                .one_time_valid(&run.id, &ProviderConsentPolicy::deepseek_summary_input())
                 .map_err(map_consent_error)?
         };
         Ok(SummaryExternalDisclosure {
             source_count: run.source_count,
             segment_count: run.input_segment_count,
-            input_bytes: run.input_bytes,
+            input_bytes: run
+                .input_bytes
+                .checked_add(run.document_input_bytes)
+                .ok_or(SummaryError::InputTooLarge)?,
+            document_count: run.document_count,
+            document_chunk_count: run.input_document_chunk_count,
+            document_input_bytes: run.document_input_bytes,
             template: run.template,
             output_language: run.output_language,
             remembered_consent_valid: remembered,
@@ -490,6 +499,7 @@ pub(crate) mod offline_smoke {
             .create_run(CreateSummaryRun {
                 meeting_id: meeting_id.to_string(),
                 source_ids: vec![source_id.to_string()],
+                document_ids: Vec::new(),
                 template,
                 output_language: SummaryOutputLanguage::En,
             })
@@ -536,7 +546,7 @@ pub(crate) mod offline_smoke {
         assert_eq!(first.provider, "deepseek");
         assert_eq!(first.provider_mode, "external");
         assert_eq!(first.model, "deepseek-v4-pro");
-        assert_eq!(first.prompt_version, "summary-deepseek-v1");
+        assert_eq!(first.prompt_version, "summary-deepseek-v2");
         assert_eq!(
             tauri::async_runtime::block_on(runtime.execute(&meeting.id, &first.id)),
             Err(SummaryError::DeepSeekConsentRequired)
@@ -888,7 +898,7 @@ pub(crate) mod offline_smoke {
             .expect("schema version should be readable");
         assert_eq!(integrity, "ok");
         assert_eq!(foreign_key_violations, 0);
-        assert_eq!(schema_version, 6);
+        assert_eq!(schema_version, 7);
         drop(connection);
         drop(runtime);
         drop(reopened);

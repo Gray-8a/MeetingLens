@@ -111,6 +111,7 @@ async function runFirstPass(
   const first = await summaryApi.createRun({
     meetingId: imported.meeting.id,
     sourceIds: [imported.source.id],
+    documentIds: [],
     template: "detailed",
     outputLanguage: "en",
   });
@@ -204,6 +205,7 @@ async function runFirstPass(
   const activeSourceConsumer = await summaryApi.createRun({
     meetingId: imported.meeting.id,
     sourceIds: [imported.source.id],
+    documentIds: [],
     template: "concise",
     outputLanguage: "bilingual",
   });
@@ -257,6 +259,7 @@ async function runFirstPass(
   const interrupted = await summaryApi.createRun({
     meetingId: imported.meeting.id,
     sourceIds: [recoverySource.id],
+    documentIds: [],
     template: "concise",
     outputLanguage: "en",
   });
@@ -264,6 +267,7 @@ async function runFirstPass(
   const queued = await summaryApi.createRun({
     meetingId: imported.meeting.id,
     sourceIds: [recoverySource.id],
+    documentIds: [],
     template: "actions_decisions",
     outputLanguage: "zh",
   });

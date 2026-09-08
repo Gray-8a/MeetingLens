@@ -8,10 +8,10 @@ import {
   type ConfirmSummaryExternalDisclosureRequest,
   type SummaryApi,
   type SummaryContent,
-  type SummaryEvidenceResponse,
   type SummaryExternalDisclosureRequest,
   type UpdateSummaryContentRequest,
 } from "./summary";
+import { FakeSummaryApi, syntheticSummaryRun } from "../test/fakeSummaryApi";
 
 const meetingId = "11111111-1111-4111-8111-111111111111";
 const otherMeetingId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
@@ -23,6 +23,9 @@ const seriesId = "55555555-5555-4555-8555-555555555555";
 const evidenceId = "66666666-6666-4666-8666-666666666666";
 const otherEvidenceId = "77777777-7777-4777-8777-777777777777";
 const segmentId = "88888888-8888-4888-8888-888888888888";
+const documentId = "99999999-9999-4999-8999-999999999998";
+const otherDocumentId = "99999999-9999-4999-8999-999999999997";
+const documentChunkId = "99999999-9999-4999-8999-999999999996";
 const timestamp = "2026-08-07T00:00:00.000Z";
 const laterTimestamp = "2026-08-07T00:00:01.000Z";
 const contentVersion = "a".repeat(64);
@@ -34,6 +37,8 @@ const policy = {
   triggerKind: "manual",
   provider: "deterministic_mock",
   maxSegments: 20_000,
+  maxDocuments: 20,
+  maxDocumentChunks: 20_000,
   maxInputBytes: 10 * 1024 * 1024,
   maxEvidenceExcerptBytes: 1_024,
   listDefaultLimit: 50,
@@ -55,7 +60,7 @@ const deepSeekStatus = {
   model: "deepseek-v4-pro",
   consentRemembered: false,
   consentedAt: null,
-  policyVersion: "deepseek-transcript-external-v1",
+  policyVersion: "deepseek-summary-input-external-v2",
   executionAvailable: true,
 };
 
@@ -66,19 +71,24 @@ const disclosure = {
   sourceCount: 1,
   segmentCount: 2,
   inputBytes: 128,
+  documentCount: 0,
+  documentChunkCount: 0,
+  documentInputBytes: 0,
   template: "detailed",
   outputLanguage: "en",
   dataCategories: [
     "transcript_text",
     "speaker_labels_and_names",
     "time_offsets",
+    "document_text",
+    "document_structure_locations",
     "evidence_ids",
     "summary_template",
     "output_language",
   ],
   rememberedConsentValid: false,
   requiresConfirmation: true,
-  policyVersion: "deepseek-transcript-external-v1",
+  policyVersion: "deepseek-summary-input-external-v2",
 };
 
 function content(overrides: Record<string, unknown> = {}): SummaryContent {
@@ -132,6 +142,9 @@ function queuedRun(overrides: Record<string, unknown> = {}) {
     sourceCount: 1,
     inputSegmentCount: 1,
     inputBytes: 64,
+    documentCount: 0,
+    inputDocumentChunkCount: 0,
+    documentInputBytes: 0,
     isStale: false,
     staleReason: null,
     staleAt: null,
@@ -191,9 +204,7 @@ function revisionRun(overrides: Record<string, unknown> = {}) {
   });
 }
 
-function evidence(
-  overrides: Partial<SummaryEvidenceResponse> & Record<string, unknown> = {},
-) {
+function evidence(overrides: Record<string, unknown> = {}) {
   return {
     id: evidenceId,
     summaryId,
@@ -215,6 +226,29 @@ function evidence(
   };
 }
 
+function documentEvidence(overrides: Record<string, unknown> = {}) {
+  return {
+    id: otherEvidenceId,
+    summaryId,
+    meetingId,
+    kind: "document",
+    documentId,
+    documentChunkId,
+    label: "Reference document 1, chunk 1",
+    parserVersion: "2.117.0",
+    pageStart: 1,
+    pageEnd: 2,
+    sectionPath: ["Synthetic section"],
+    tableOrdinal: null,
+    ordinal: 0,
+    globalOrdinal: 1,
+    excerpt: "Synthetic document excerpt",
+    sourceDeleted: false,
+    createdAt: timestamp,
+    ...overrides,
+  };
+}
+
 class FakeInvokeAdapter implements InvokeAdapter {
   calls: Array<{ command: string; args?: InvokeArguments }> = [];
   response: unknown = null;
@@ -227,10 +261,47 @@ class FakeInvokeAdapter implements InvokeAdapter {
   }
 }
 
+describe("FakeSummaryApi document contract", () => {
+  it("keeps historical synthetic runs at zero document input", () => {
+    expect(syntheticSummaryRun()).toMatchObject({
+      documentCount: 0,
+      inputDocumentChunkCount: 0,
+      documentInputBytes: 0,
+    });
+  });
+
+  it("clones selected document IDs and reports synthetic document totals", async () => {
+    const api = new FakeSummaryApi();
+    const sourceIds = [sourceId];
+    const documentIds = [documentId];
+    const run = await api.createRun({
+      meetingId,
+      sourceIds,
+      documentIds,
+      template: "detailed",
+      outputLanguage: "en",
+    });
+
+    sourceIds[0] = otherSourceId;
+    documentIds[0] = otherDocumentId;
+
+    expect(api.createCalls[0]).toMatchObject({
+      sourceIds: [sourceId],
+      documentIds: [documentId],
+    });
+    expect(run).toMatchObject({
+      documentCount: 1,
+      inputDocumentChunkCount: 1,
+      documentInputBytes: 64,
+    });
+  });
+});
+
 describe("summaryApi command routing", () => {
   const createRequest: CreateSummaryRunRequest = {
     meetingId,
     sourceIds: [sourceId],
+    documentIds: [documentId],
     template: "detailed",
     outputLanguage: "en",
   };
@@ -300,7 +371,11 @@ describe("summaryApi command routing", () => {
       command: "createRun",
       run: (api) => api.createRun(createRequest),
       expectedArgs: { request: createRequest },
-      response: queuedRun(),
+      response: queuedRun({
+        documentCount: 1,
+        inputDocumentChunkCount: 1,
+        documentInputBytes: 64,
+      }),
     },
     {
       command: "createRevision",
@@ -455,7 +530,11 @@ describe("summaryApi command routing", () => {
 
   it("filters unapproved caller properties before invoking Rust", async () => {
     const adapter = new FakeInvokeAdapter();
-    adapter.response = queuedRun();
+    adapter.response = queuedRun({
+      documentCount: 1,
+      inputDocumentChunkCount: 1,
+      documentInputBytes: 64,
+    });
     const expandedCreateRequest = {
       ...createRequest,
       sourcePath: "private",
@@ -482,6 +561,7 @@ describe("summaryApi request boundary", () => {
         api.createRun({
           meetingId: "not-a-uuid",
           sourceIds: [sourceId],
+          documentIds: [],
           template: "detailed",
           outputLanguage: "en",
         }),
@@ -492,6 +572,7 @@ describe("summaryApi request boundary", () => {
         api.createRun({
           meetingId,
           sourceIds: [],
+          documentIds: [],
           template: "detailed",
           outputLanguage: "en",
         }),
@@ -502,6 +583,7 @@ describe("summaryApi request boundary", () => {
         api.createRun({
           meetingId,
           sourceIds: [sourceId, sourceId],
+          documentIds: [],
           template: "detailed",
           outputLanguage: "en",
         }),
@@ -512,7 +594,55 @@ describe("summaryApi request boundary", () => {
         api.createRun({
           meetingId,
           sourceIds: [sourceId],
+          documentIds: [],
           template: "unknown" as CreateSummaryRunRequest["template"],
+          outputLanguage: "en",
+        }),
+    },
+    {
+      name: "an invalid document ID",
+      run: (api: SummaryApi) =>
+        api.createRun({
+          meetingId,
+          sourceIds: [sourceId],
+          documentIds: ["not-a-uuid"],
+          template: "detailed",
+          outputLanguage: "en",
+        }),
+    },
+    {
+      name: "a missing document selection array",
+      run: (api: SummaryApi) =>
+        api.createRun({
+          meetingId,
+          sourceIds: [sourceId],
+          template: "detailed",
+          outputLanguage: "en",
+        } as unknown as CreateSummaryRunRequest),
+    },
+    {
+      name: "duplicate documents",
+      run: (api: SummaryApi) =>
+        api.createRun({
+          meetingId,
+          sourceIds: [sourceId],
+          documentIds: [documentId, documentId],
+          template: "detailed",
+          outputLanguage: "en",
+        }),
+    },
+    {
+      name: "more than twenty documents",
+      run: (api: SummaryApi) =>
+        api.createRun({
+          meetingId,
+          sourceIds: [sourceId],
+          documentIds: Array.from(
+            { length: 21 },
+            (_, index) =>
+              `99999999-9999-4999-8999-${String(index).padStart(12, "0")}`,
+          ),
+          template: "detailed",
           outputLanguage: "en",
         }),
     },
@@ -605,7 +735,11 @@ describe("summaryApi request boundary", () => {
 describe("summaryApi response and error boundary", () => {
   it("returns fully typed content and evidence DTOs", async () => {
     const adapter = new FakeInvokeAdapter();
-    adapter.response = completedRun();
+    adapter.response = completedRun({
+      documentCount: 1,
+      inputDocumentChunkCount: 1,
+      documentInputBytes: 64,
+    });
     const run = await createSummaryApi(adapter).getRun({
       meetingId,
       summaryId,
@@ -616,12 +750,20 @@ describe("summaryApi response and error boundary", () => {
       dueDate: null,
       status: "unconfirmed",
     });
+    expect(run).toMatchObject({
+      documentCount: 1,
+      inputDocumentChunkCount: 1,
+      documentInputBytes: 64,
+    });
 
     adapter.response = {
-      items: [evidence({ sourceDeleted: true })],
+      items: [
+        evidence({ sourceDeleted: true }),
+        documentEvidence({ sourceDeleted: true }),
+      ],
       nextCursor: null,
       hasMore: false,
-      totalCount: 1,
+      totalCount: 2,
     };
     const page = await createSummaryApi(adapter).listEvidence({
       meetingId,
@@ -632,6 +774,25 @@ describe("summaryApi response and error boundary", () => {
       sourceDeleted: true,
       excerpt: "Synthetic transcript excerpt",
     });
+    const documentItem = page.items[1];
+    expect(documentItem).toEqual(documentEvidence({ sourceDeleted: true }));
+    if (documentItem?.kind !== "document") throw new Error("Expected document");
+    expect(documentItem.sectionPath).toEqual(["Synthetic section"]);
+  });
+
+  it("binds a created run to the requested document count", async () => {
+    const adapter = new FakeInvokeAdapter();
+    adapter.response = queuedRun();
+
+    await expect(
+      createSummaryApi(adapter).createRun({
+        meetingId,
+        sourceIds: [sourceId],
+        documentIds: [documentId],
+        template: "detailed",
+        outputLanguage: "en",
+      }),
+    ).rejects.toEqual(new SummaryApiError("internal_error", false));
   });
 
   it("accepts the stable interrupted failure state", async () => {
@@ -790,6 +951,40 @@ describe("summaryApi response and error boundary", () => {
     ["a cross-meeting ID", () => queuedRun({ meetingId: otherMeetingId })],
     ["an unknown provider", () => queuedRun({ provider: "external" })],
     ["an unknown failure code", () => failedRun({ errorCode: "private" })],
+    [
+      "document chunks without a document",
+      () => queuedRun({ inputDocumentChunkCount: 1, documentInputBytes: 64 }),
+    ],
+    ["a document without frozen chunks", () => queuedRun({ documentCount: 1 })],
+    [
+      "more documents than frozen chunks",
+      () =>
+        queuedRun({
+          documentCount: 2,
+          inputDocumentChunkCount: 1,
+          documentInputBytes: 64,
+        }),
+    ],
+    [
+      "a combined input count above the limit",
+      () =>
+        queuedRun({
+          inputSegmentCount: 20_000,
+          documentCount: 1,
+          inputDocumentChunkCount: 1,
+          documentInputBytes: 64,
+        }),
+    ],
+    [
+      "combined input bytes above the limit",
+      () =>
+        queuedRun({
+          inputBytes: 10 * 1024 * 1024,
+          documentCount: 1,
+          inputDocumentChunkCount: 1,
+          documentInputBytes: 1,
+        }),
+    ],
     ["queued content", () => queuedRun({ content: content() })],
     ["queued start time", () => queuedRun({ startedAt: timestamp })],
     ["completed content missing", () => completedRun({ content: null })],
@@ -865,6 +1060,36 @@ describe("summaryApi response and error boundary", () => {
     adapter.response = revisionRun({ meetingId: otherMeetingId });
     await expect(
       createSummaryApi(adapter).createRevision({ meetingId, summaryId }),
+    ).rejects.toMatchObject({ code: "internal_error" });
+  });
+
+  it("accepts historical DeepSeek v1 runs but rejects v1 for new runs and revisions", async () => {
+    const deepSeekV1 = {
+      provider: "deepseek",
+      providerMode: "external",
+      model: "deepseek-v4-pro",
+      promptVersion: "summary-deepseek-v1",
+    };
+    const adapter = new FakeInvokeAdapter();
+    const api = createSummaryApi(adapter);
+
+    adapter.response = queuedRun(deepSeekV1);
+    await expect(api.getRun({ meetingId, summaryId })).resolves.toMatchObject({
+      promptVersion: "summary-deepseek-v1",
+    });
+    await expect(
+      api.createRun({
+        meetingId,
+        sourceIds: [sourceId],
+        documentIds: [],
+        template: "detailed",
+        outputLanguage: "en",
+      }),
+    ).rejects.toMatchObject({ code: "internal_error" });
+
+    adapter.response = revisionRun(deepSeekV1);
+    await expect(
+      api.createRevision({ meetingId, summaryId }),
     ).rejects.toMatchObject({ code: "internal_error" });
   });
 
@@ -987,9 +1212,66 @@ describe("summaryApi response and error boundary", () => {
   });
 
   it.each([
+    ["an unknown evidence kind", () => evidence({ kind: "screen" })],
+    [
+      "transcript-only fields on document evidence",
+      () => documentEvidence({ sourceId }),
+    ],
+    [
+      "document-only fields on transcript evidence",
+      () => evidence({ documentId }),
+    ],
+    [
+      "an invalid document ID",
+      () => documentEvidence({ documentId: "not-a-uuid" }),
+    ],
+    [
+      "an unsafe parser version",
+      () => documentEvidence({ parserVersion: "2.117.0 private" }),
+    ],
+    ["a partial page range", () => documentEvidence({ pageEnd: null })],
+    [
+      "a reversed page range",
+      () => documentEvidence({ pageStart: 2, pageEnd: 1 }),
+    ],
+    [
+      "a page outside the parser limit",
+      () => documentEvidence({ pageStart: 1, pageEnd: 301 }),
+    ],
+    [
+      "an over-deep section path",
+      () =>
+        documentEvidence({
+          sectionPath: Array.from({ length: 17 }, () => "Section"),
+        }),
+    ],
+    [
+      "an empty section component",
+      () => documentEvidence({ sectionPath: [" "] }),
+    ],
+    [
+      "an out-of-range table ordinal",
+      () => documentEvidence({ tableOrdinal: 20_000 }),
+    ],
+  ] as const)("rejects %s fail-closed", async (_name, response) => {
+    const adapter = new FakeInvokeAdapter();
+    adapter.response = {
+      items: [response()],
+      nextCursor: null,
+      hasMore: false,
+      totalCount: 1,
+    };
+    await expect(
+      createSummaryApi(adapter).listEvidence({ meetingId, summaryId }),
+    ).rejects.toEqual(new SummaryApiError("internal_error", false));
+  });
+
+  it.each([
     { ...policy, extraLimit: 1 },
     { ...policy, templates: ["detailed", "detailed", "actions_decisions"] },
     { ...policy, outputLanguages: ["en", "zh", "bilingual"] },
+    { ...policy, maxDocuments: 21 },
+    { ...policy, maxDocumentChunks: 20_001 },
     { ...policy, maxInputBytes: 1 },
     { ...policy, provider: "deepseek" },
     { ...deepSeekPolicy, maxInputBytes: policy.maxInputBytes },
@@ -1018,7 +1300,7 @@ describe("summaryApi security surface", () => {
       provider: "deepseek",
       providerMode: "external",
       model: "deepseek-v4-pro",
-      promptVersion: "summary-deepseek-v1",
+      promptVersion: "summary-deepseek-v2",
     });
     await expect(
       createSummaryApi(adapter).getRun({ meetingId, summaryId }),
@@ -1026,8 +1308,18 @@ describe("summaryApi security surface", () => {
       provider: "deepseek",
       providerMode: "external",
       model: "deepseek-v4-pro",
+      promptVersion: "summary-deepseek-v2",
+    });
+
+    adapter.response = queuedRun({
+      provider: "deepseek",
+      providerMode: "external",
+      model: "deepseek-v4-pro",
       promptVersion: "summary-deepseek-v1",
     });
+    await expect(
+      createSummaryApi(adapter).getRun({ meetingId, summaryId }),
+    ).resolves.toMatchObject({ promptVersion: "summary-deepseek-v1" });
 
     for (const overrides of [
       { provider: "deepseek", providerMode: "mock" },
@@ -1058,6 +1350,10 @@ describe("summaryApi security surface", () => {
         consentRemembered: true,
         consentedAt: "2026-08-17T02:03:04Z",
       },
+      {
+        ...deepSeekStatus,
+        policyVersion: "deepseek-transcript-external-v1",
+      },
       { ...deepSeekStatus, unexpected: true },
     ]) {
       adapter.response = response;
@@ -1066,10 +1362,50 @@ describe("summaryApi security surface", () => {
       );
     }
 
+    adapter.response = {
+      ...disclosure,
+      inputBytes: 192,
+      documentCount: 1,
+      documentChunkCount: 1,
+      documentInputBytes: 64,
+    };
+    await expect(
+      api.getExternalDisclosure({ summaryId }),
+    ).resolves.toMatchObject({
+      inputBytes: 192,
+      documentCount: 1,
+      documentChunkCount: 1,
+      documentInputBytes: 64,
+    });
+
     for (const response of [
       { ...disclosure, sourceCount: 3, segmentCount: 2 },
       { ...disclosure, inputBytes: 0 },
       { ...disclosure, inputBytes: 1024 * 1024 + 1 },
+      {
+        ...disclosure,
+        documentChunkCount: 1,
+        documentInputBytes: 64,
+      },
+      {
+        ...disclosure,
+        documentCount: 1,
+        documentChunkCount: 1,
+        documentInputBytes: 129,
+      },
+      {
+        ...disclosure,
+        documentCount: 1,
+        documentChunkCount: 1,
+        documentInputBytes: disclosure.inputBytes,
+      },
+      {
+        ...disclosure,
+        segmentCount: 20_000,
+        documentCount: 1,
+        documentChunkCount: 1,
+        documentInputBytes: 1,
+      },
       {
         ...disclosure,
         dataCategories: [...disclosure.dataCategories].reverse(),
@@ -1182,10 +1518,11 @@ describe("summaryApi security surface", () => {
     ).resolves.toMatchObject({ id: summaryId, meetingId });
   });
 
-  it("does not expose document, screen or non-transcript evidence kinds", () => {
-    expect(summarySource).not.toMatch(
-      /kind:\s*"(?:document|screen|manual_note|audio)"/,
-    );
+  it("exposes only transcript and document evidence kinds", () => {
+    expect(summarySource).toMatch(/kind:\s*"transcript"/);
+    expect(summarySource).toMatch(/kind:\s*"document"/);
+    expect(summarySource).not.toMatch(/kind:\s*"(?:screen|manual_note|audio)"/);
     expect(otherSourceId).not.toEqual(sourceId);
+    expect(otherDocumentId).not.toEqual(documentId);
   });
 });

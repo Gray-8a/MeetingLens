@@ -7,8 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .chunks import NormalizedChunk, encode_chunks_jsonl
 from .constants import (
+    CHUNK_SCHEMA_VERSION,
     DOCLING_VERSION,
+    MAX_CHUNKS_JSONL_BYTES,
     MAX_DOCUMENT_JSON_BYTES,
     MAX_MARKDOWN_BYTES,
     MAX_TEXT_BYTES,
@@ -20,11 +23,12 @@ from .constants import (
 from .errors import WorkerError
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, repr=False, slots=True)
 class ArtifactPayloads:
     document: dict[str, Any]
     markdown: str
     text: str
+    chunks: list[NormalizedChunk]
     page_count: int | None
     has_ocr: bool
     warnings: list[str]
@@ -43,10 +47,12 @@ def write_artifacts(
     document_bytes = _json_bytes(payloads.document)
     markdown_bytes = payloads.markdown.encode("utf-8")
     text_bytes = payloads.text.encode("utf-8")
+    chunks_bytes = encode_chunks_jsonl(payloads.chunks)
     limits = (
         (document_bytes, MAX_DOCUMENT_JSON_BYTES),
         (markdown_bytes, MAX_MARKDOWN_BYTES),
         (text_bytes, MAX_TEXT_BYTES),
+        (chunks_bytes, MAX_CHUNKS_JSONL_BYTES),
     )
     if any(len(data) > limit for data, limit in limits):
         raise WorkerError(ParserErrorCode.OUTPUT_TOO_LARGE)
@@ -57,6 +63,7 @@ def write_artifacts(
         ("document_json", "document.json", document_bytes),
         ("markdown", "content.md", markdown_bytes),
         ("text", "content.txt", text_bytes),
+        ("chunks_jsonl", "chunks.jsonl", chunks_bytes),
     )
     artifacts = [
         _artifact_entry(kind, relative_path, data) for kind, relative_path, data in artifact_specs
@@ -64,6 +71,7 @@ def write_artifacts(
 
     manifest: dict[str, object] = {
         "schemaVersion": 1,
+        "chunkSchemaVersion": CHUNK_SCHEMA_VERSION,
         "protocolVersion": PROTOCOL_VERSION,
         "requestId": request_id,
         "documentId": document_id,
@@ -137,10 +145,12 @@ def _cleanup_fixed_artifacts(output_root: Path) -> None:
         "document.json",
         "content.md",
         "content.txt",
+        "chunks.jsonl",
         "manifest.json",
         ".document.json.tmp",
         ".content.md.tmp",
         ".content.txt.tmp",
+        ".chunks.jsonl.tmp",
         ".manifest.json.tmp",
     ):
         try:

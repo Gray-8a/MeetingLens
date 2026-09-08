@@ -10,7 +10,7 @@ MeetingLens 当前采用 Personal Edition 基线，近期只推进总结模式�
 - 外键级联只处理结构化引用，不能替代物理文件的可恢复删除协调。
 - AI 输出始终带模型、模板版本和来源范围，允许重建与审计。
 - API key、access token 和密码不属于业务数据模型，禁止写入数据库。
-- 总结、翻译和会议模式的长期愿景只是界面/能力预设，不建立三套实体或状态机；schema v5 只追加 DeepSeek remembered Consent 的最小当前偏好表，schema v6 只扩展既有 source type 约束以加入 `imported_audio`，不建立通用事件、会话、任务或企业审计模型。
+- 总结、翻译和会议模式的长期愿景只是界面/能力预设，不建立三套实体或状态机；schema v5 只追加 DeepSeek remembered Consent 的最小当前偏好表，schema v6 只扩展 source type 以加入 `imported_audio`，schema v7 只追加文档 chunks/snapshots/evidence 和 Summary 计数，不建立通用事件、会话、任务或企业审计模型。
 - 原始音频、规范化逐字稿和会议纪要是三个不同的数据类别，分别拥有同意、保留、导出和删除语义。
 
 ## 2. 实体关系
@@ -31,6 +31,9 @@ erDiagram
     SUMMARY ||--o{ SUMMARY_SOURCE : freezes
     SUMMARY ||--o{ EVIDENCE_ITEM : owns
     SUMMARY_SOURCE ||--o| EVIDENCE_ITEM : materializes
+    SUMMARY ||--o{ SUMMARY_DOCUMENT_SOURCE : freezes
+    SUMMARY ||--o{ DOCUMENT_EVIDENCE_ITEM : owns
+    SUMMARY_DOCUMENT_SOURCE ||--o| DOCUMENT_EVIDENCE_ITEM : materializes
     SUMMARY ||--o{ DECISION : extracts
     SUMMARY ||--o{ ACTION_ITEM : extracts
     SUMMARY ||--o{ SUMMARY_MANUAL_NOTE : includes
@@ -38,7 +41,7 @@ erDiagram
     MEETING ||--o{ PROCESSING_JOB : runs
 ```
 
-上图同时包含已实现实体和明确标注为计划/Deferred 的概念实体。当前功能分支的 SQLite schema 版本为 v6；实际已实现范围以各节的 schema 版本说明和第 8 节为准，不能从概念关系图推断未来表已经存在。`provider_consent_preferences` 是与单个 meeting 无关联的全局当前偏好，因此不画成 meeting 子实体。
+上图同时包含已实现实体和明确标注为计划/Deferred 的概念实体。当前功能分支的 SQLite schema 版本为 v7；`document_chunks`、`summary_document_sources` 和 `document_evidence_items` 已实现，而 `processing_jobs`、screen/manual-note 等仍是 Deferred。`provider_consent_preferences` 是与单个 meeting 无关联的全局当前偏好，因此不画成 meeting 子实体。
 
 ## 3. 核心表
 
@@ -58,7 +61,7 @@ erDiagram
 | `deleted_at`           | TEXT NULL | 软删除/清理协调标记                                                       |
 | `deletion_error_code`  | TEXT NULL | 删除失败的稳定安全错误码，不含路径或原始异常                              |
 
-当前 schema v6（该 meeting 结构源自早期 schema，v3–v6 未增加此字段）没有独立、可编辑的会议发生日期字段。`created_at` 只表示 MeetingLens 创建该记录的时间，`started_at/ended_at` 只由真实或模拟会议生命周期写入；总结模式输入 UI 可以将 `created_at` 明确展示为创建时间，但不得把它冒充会议发生日期，也不得提供无法持久化的日期输入。若以后需要 `occurred_at` 或等价语义，必须在对应功能 PR 中定义追加式 migration、API、UI 和验收，不得改写既有 migration。
+当前 schema v7（该 meeting 结构源自早期 schema，v3–v7 未增加此字段）没有独立、可编辑的会议发生日期字段。`created_at` 只表示 MeetingLens 创建该记录的时间，`started_at/ended_at` 只由真实或模拟会议生命周期写入；总结模式输入 UI 可以将 `created_at` 明确展示为创建时间，但不得把它冒充会议发生日期，也不得提供无法持久化的日期输入。若以后需要 `occurred_at` 或等价语义，必须在对应功能 PR 中定义追加式 migration、API、UI 和验收，不得改写既有 migration。
 
 #### 会议生命周期
 
@@ -80,9 +83,9 @@ erDiagram
 
 #### 模式提示
 
-当前 schema v6 不持久化模式，总结模式入口只是导航到共享 meeting/transcript 工作区。`workflow_mode` 之类的布局提示不属于当前计划；若未来解冻三模式，只能通过追加式 migration 在对应功能 PR 中评估，且不得决定权限、同意、数据保留或会议状态。
+当前 schema v7 不持久化模式，总结模式入口只是导航到共享 meeting/transcript 工作区。`workflow_mode` 之类的布局提示不属于当前计划；若未来解冻三模式，只能通过追加式 migration 在对应功能 PR 中评估，且不得决定权限、同意、数据保留或会议状态。
 
-### `artifacts`（Deferred 概念实体，当前 schema v6 不存在）
+### `artifacts`（Deferred 概念实体，当前 schema v7 不存在）
 
 | 字段            | 类型      | 说明                                 |
 | --------------- | --------- | ------------------------------------ |
@@ -192,7 +195,7 @@ segment 列表必须由 SQLite 按稳定 `ordinal` 顺序分页，不允许先�
 
 ### `documents`
 
-该表已由 schema migration v2 创建。当前 service 只进入 `importing/staged/import_failed/deleting/delete_failed`；解析状态仅为后续 migration 兼容预留，当前没有业务入口。
+该表已由 schema migration v2 创建。当前 service 完整使用 `importing/staged/parsing/parsed/import_failed/parse_failed/deleting/delete_failed`；只有用户对 `staged` 文档明确启动本地解析才进入 `parsing`。
 
 | 字段                      | 类型         | 说明                                                                                |
 | ------------------------- | ------------ | ----------------------------------------------------------------------------------- |
@@ -209,27 +212,27 @@ segment 列表必须由 SQLite 按稳定 `ordinal` 顺序分页，不允许先�
 | `updated_at`              | TEXT         | 最近状态更新时间                                                                    |
 | `failure_code`            | TEXT NULL    | 稳定错误码                                                                          |
 | `failure_message_safe`    | TEXT NULL    | 可展示的安全消息；不得包含绝对路径、用户名、原始异常或文件内容                      |
-| `parser_version_optional` | TEXT NULL    | 未来 Docling Worker/adapter 版本                                                    |
-| `page_count_optional`     | INTEGER NULL | 未来解析成功后可用的页数                                                            |
+| `parser_version_optional` | TEXT NULL    | 解析成功时的 Docling adapter/parser 版本；其他状态为空                              |
+| `page_count_optional`     | INTEGER NULL | `parsed` 后可用的页数（1–300）；无页格式可为空                                      |
 | `created_at`              | TEXT         | 记录创建时间                                                                        |
 
 源文件绝对路径不得持久化。文件内容不得写入 SQLite BLOB；解析文本和派生 artifacts 使用独立表或受控文件。`meeting_id` 使用外键，但删除不能只依赖 `CASCADE`，必须先协调物理文件。
 
 #### 文档生命周期
 
-| 转换                                    | 所属阶段                              | 规则                                                |
-| --------------------------------------- | ------------------------------------- | --------------------------------------------------- |
-| `importing → staged`                    | MVP 1B-1A                             | 文件完成校验并原子进入正式目录                      |
-| `importing → import_failed`             | MVP 1B-1A                             | 复制、类型、配额、完整性或存储失败                  |
-| `staged → parsing`                      | `feat/document-parsing-orchestration` | Rust 编排器持久化任务后调用隔离 Worker              |
-| `parsing → parsed/parse_failed`         | `feat/document-parsing-orchestration` | Rust 复验产物后持久化受控结果或稳定错误             |
-| `staged/parsed → deleting`              | MVP 1B-1A 及后续                      | 接受删除请求                                        |
-| `import_failed/parse_failed → deleting` | MVP 1B-1A 及后续                      | 清理失败输入或解析产物                              |
-| `deleting → 记录消失`                   | MVP 1B-1A                             | 物理文件和关联 artifacts 全部清理成功后才删除元数据 |
-| `deleting → delete_failed`              | MVP 1B-1A                             | 清理失败，保留安全错误和可恢复状态                  |
-| `delete_failed → deleting`              | MVP 1B-1A                             | 幂等重试                                            |
+| 转换                                    | 所属阶段                              | 规则                                                 |
+| --------------------------------------- | ------------------------------------- | ---------------------------------------------------- |
+| `importing → staged`                    | MVP 1B-1A                             | 文件完成校验并原子进入正式目录                       |
+| `importing → import_failed`             | MVP 1B-1A                             | 复制、类型、配额、完整性或存储失败                   |
+| `staged → parsing`                      | `feat/document-parsing-orchestration` | 用户明确启动；Rust 注册 active job 后调用隔离 Worker |
+| `parsing → parsed/parse_failed`         | `feat/document-parsing-orchestration` | Rust 复验产物后持久化受控结果或稳定错误              |
+| `staged/parsed → deleting`              | MVP 1B-1A 及后续                      | 接受删除请求                                         |
+| `import_failed/parse_failed → deleting` | MVP 1B-1A 及后续                      | 清理失败输入或解析产物                               |
+| `deleting → 记录消失`                   | MVP 1B-1A                             | 物理文件和关联 artifacts 全部清理成功后才删除元数据  |
+| `deleting → delete_failed`              | MVP 1B-1A                             | 清理失败，保留安全错误和可恢复状态                   |
+| `delete_failed → deleting`              | MVP 1B-1A                             | 幂等重试                                             |
 
-页面和通用 update 不得直接修改状态。安全导入阶段只实现 `importing/staged/import_failed/deleting/delete_failed`；PR #14 只建立无数据库访问的 Worker 基础，`parsing/parsed/parse_failed` 由 `feat/document-parsing-orchestration` 引入。未知状态 fail closed。
+页面和通用 update 不得直接修改状态。每个用户 parse 请求最多两个 attempt；只有 Worker 明确标记 retryable 的第一次失败可自动重试，其他错误直接进入 `parse_failed`。用户取消使文档回到 `staged`，启动恢复把遗留 `parsing` 转为安全中断的 `parse_failed`，不自动续跑或重放。未知状态 fail closed。
 
 同一会议使用 `(meeting_id, sha256)` 唯一约束识别相同内容。重复时不创建第二条记录或物理副本，返回 `document_already_imported` 和已有 document ID。不同会议首版不做物理去重；文件名不参与重复判断，同名不同内容允许导入，不同名相同内容视为重复。
 
@@ -241,21 +244,30 @@ schema v2 使用统一删除任务表协调 meeting/document 的文件清理：`
 
 ### `document_chunks`
 
-该计划实体在当前录音文件批量转录经审查合并后，由简化的 `feat/document-parsing-orchestration` 与 document evidence 一起接入现有 Summary pipeline。它不属于 schema v3–v6，也不能替代 `transcript_segments`；具体 migration 只能在该功能 PR 中确定。
+该表由 append-only schema v7 引入，只保存经 Rust 复验的 Docling protocol-v2/chunk-schema-v1 规范化结果。它不能替代或混入 `transcript_segments`。
 
-| 字段           | 类型         | 说明                         |
-| -------------- | ------------ | ---------------------------- |
-| `id`           | TEXT PK      | UUID                         |
-| `document_id`  | TEXT FK      | 来源文档                     |
-| `ordinal`      | INTEGER      | 文档内顺序                   |
-| `page_number`  | INTEGER NULL | 来源页码                     |
-| `section_path` | TEXT NULL    | 标题/工作表/幻灯片等结构路径 |
-| `text`         | TEXT         | 提取正文                     |
-| `content_hash` | TEXT         | 去重与完整性校验             |
+| 字段                   | 类型         | 说明                                                       |
+| ---------------------- | ------------ | ---------------------------------------------------------- |
+| `id`                   | TEXT PK      | chunk UUID                                                 |
+| `document_id`          | TEXT FK      | 来源 document UUID                                         |
+| `meeting_id`           | TEXT FK      | 与 document 一致的 meeting UUID；与 `document_id` 组合外键 |
+| `ordinal`              | INTEGER      | document 内从 0 开始的连续顺序，0–19,999                   |
+| `kind`                 | TEXT         | `heading/paragraph/list_item/table`                        |
+| `text`                 | TEXT         | 非空 UTF-8 提取正文，最多 64 KiB                           |
+| `content_sha256`       | TEXT         | 该规范化 chunk text 的 64 位小写 SHA-256                   |
+| `page_start`           | INTEGER NULL | 1–300 的起始页；无页格式可空                               |
+| `page_end`             | INTEGER NULL | 与 `page_start` 同时有值且不小于起始页                     |
+| `section_path_json`    | TEXT         | 有效 JSON string array，最多 4 KiB；空路径使用 `[]`        |
+| `table_ordinal`        | INTEGER NULL | `table` 必须有值，非 table 必须为空                        |
+| `parser_version`       | TEXT         | 受限 parser/adapter 版本，最多 64 bytes                    |
+| `chunk_schema_version` | INTEGER      | 固定为 `1`                                                 |
+| `created_at`           | TEXT         | 原子提交时的 UTC 时间                                      |
+
+`(document_id, ordinal)` 唯一，`(id, document_id, meeting_id)` 作为后续严格关联键。成功解析在单事务中写入完整 chunks 并将 document 转为 `parsed`；失败/取消不留部分 rows。单文档合计正文上限 10 MiB，页数上限 300。
 
 ### `evidence_items`
 
-schema v4 首先只创建 transcript evidence；document、screen 和 manual note evidence 仍由各自后续阶段扩展，不能提前写入该表。
+schema v4 的 `evidence_items` 只保存 transcript evidence；schema v7 不重建或改写它，而是用独立 `document_evidence_items` 保存 document evidence。screen 和 manual note evidence 仍属 Deferred。
 
 | 字段                             | 类型         | 说明                                               |
 | -------------------------------- | ------------ | -------------------------------------------------- |
@@ -277,7 +289,7 @@ schema v4 首先只创建 transcript evidence；document、screen 和 manual not
 | `source_deleted`                 | INTEGER      | 0/1；来源删除后仍可解释已有纪要                    |
 | `created_at`                     | TEXT         | 创建时间                                           |
 
-每条 `summary_sources` 快照行在冻结时获得稳定 UUID，并作为仅属于该 run 的 evidence allowlist。Rust Provider 输出必须先完成版本化结构、大小和 allowlist 校验；只有结果实际引用的 ID 才会在同一完成事务中物化为 `evidence_items`。`summary_id + summary_source_id` 唯一，复合外键同时绑定 run、meeting、source、segment、revision、segment ordinal 和 global ordinal，且 `evidence.id = summary_source_id`；因此原始 SQL 也不能伪造跨 run/meeting 或错 revision 的 evidence tuple。未知 ID 不得接受，也不得根据模型自然语言补造。document 只证明材料内容，screen 只证明当时展示内容，manual note 是用户补充；除非 transcript 或人工确认明确支持，任何单一来源都不能自动证明会议已达成决定。
+每条 `summary_sources` 快照行在冻结时获得稳定 UUID，并与 `summary_document_sources` 共同构成仅属于该 run 的 evidence allowlist。Rust Provider 输出必须先完成版本化结构、大小和 allowlist 校验；只有结果实际引用的 ID 才会在同一完成事务中物化到对应 evidence 表。transcript evidence 的复合外键继续绑定 run/meeting/source/segment/revision/ordinal，document evidence 使用对应的快照复合外键。decision/action item 必须至少引用一条 transcript evidence；document 只证明材料内容，不能单独证明会议已达成决定。
 
 UI 的单条 citation 读取必须同时验证 meeting、summary、evidence 三元归属，且 ID 仍被当前 `content_json` 引用；不能为了一个引用读取全部 evidence。用户编辑允许改变 claim 文字但不改变 evidence 绑定，因此 evidence 只证明冻结转录中的原始引用，不证明后续改写已重新经过 Provider 或事实校验。
 
@@ -357,6 +369,9 @@ UI 的单条 citation 读取必须同时验证 meeting、summary、evidence 三�
 | `source_count`                      | INTEGER   | 冻结的来源数                                              |
 | `input_segment_count`               | INTEGER   | 冻结的 final segment 数，1–20,000                         |
 | `input_bytes`                       | INTEGER   | 冻结正文 UTF-8 bytes，1–10 MiB                            |
+| `document_count`                    | INTEGER   | 已选已解析 reference document 数，0–20                    |
+| `input_document_chunk_count`        | INTEGER   | 冻结 document chunk 数，0–20,000                          |
+| `document_input_bytes`              | INTEGER   | 冻结 document chunk 正文 UTF-8 bytes，0–10 MiB            |
 | `is_stale`                          | INTEGER   | 0/1；live 输入后续变化                                    |
 | `stale_reason`                      | TEXT NULL | `segment_revised/source_deleted`                          |
 | `stale_at`                          | TEXT NULL | 首次标记 stale 的时间                                     |
@@ -370,11 +385,11 @@ UI 的单条 citation 读取必须同时验证 meeting、summary、evidence 三�
 
 `(series_id, revision)` 唯一，同一 series 同时最多一个 queued/running run；revision 1 没有 previous，后续 revision 的四列复合自外键把 `previous_summary_id` 约束为同一会议、同一 series、恰好前一 revision。Rust Service 在 IMMEDIATE 事务内额外保证 parent 已终态且仍是 latest，并重新冻结当前 live revisions，不能覆盖旧结果。状态字段与 result/error/timestamp 使用组合 `CHECK`：只有 completed 可含 `content_json`，failed 必须含安全 `error_code`，terminal 必须有 `finished_at`。正常状态机是 `queued → running → completed/failed/cancelled` 和 `queued → cancelled`；启动恢复把遗留 `running` 原子转为 `failed + summary_interrupted`，不自动重放 Provider。
 
-`content_json` 的版本化 schema v1 固定为五区：`overview`、`decisions`、`actionItems`、`risks`、`openQuestions`。`feat/summary-mode-minutes` 不扩展 Provider schema，也不增加编辑表：受限保存只 overlay 现有正文和 action item owner/due date，保留 evidence ID、item status、顺序、schema、lineage 与 Provider 元数据，并原位更新当前 completed DeepSeek revision。第一次实际变更设置 `is_user_edited=1`；同一 revision 不另存 Provider 原稿、编辑历史或恢复点。no-op 保存不改变 `content_json`、`updated_at` 或 `is_user_edited`。
+schema v7 不改变 `content_json` 的版本化 schema v1，仍固定为五区：`overview`、`decisions`、`actionItems`、`risks`、`openQuestions`。Summary 必须至少冻结一个 transcript segment；document 只是默认未选的可选 reference。`input_segment_count + input_document_chunk_count <= 20,000`，`input_bytes + document_input_bytes <= 10 MiB`。受限保存仍只 overlay 现有正文和 action item owner/due date，保留 evidence ID、item status、顺序、schema、lineage 与 Provider 元数据，并原位更新当前 completed DeepSeek revision。第一次实际变更设置 `is_user_edited=1`；同一 revision 不另存 Provider 原稿、编辑历史或恢复点。
 
-Rust 从规范 typed `SummaryContent` JSON 字节派生 SHA-256 `contentVersion`（64 位小写 hex），completed 响应返回该值，其他状态返回 null。编辑、Markdown 获取和保存必须提交当前 `expectedContentVersion`；事务内重读、版本比较和 SQL CAS 防止静默覆盖。`contentVersion` 不写入 SQLite；schema v6 没有改变该编辑契约。
+Rust 从规范 typed `SummaryContent` JSON 字节派生 SHA-256 `contentVersion`（64 位小写 hex），completed 响应返回该值，其他状态返回 null。编辑、Markdown 获取和保存必须提交当前 `expectedContentVersion`；事务内重读、版本比较和 SQL CAS 防止静默覆盖。`contentVersion` 不写入 SQLite；schema v7 没有改变该编辑契约。
 
-历史 `deterministic_mock` 结果可读并可生成 Markdown，但严格只读；不能编辑或成为 DeepSeek revision 的 parent。整份重新生成只允许 series 中 latest terminal DeepSeek revision，重新冻结当前 live transcript，而不读取用户编辑后的 `content_json`。`source_deleted` 阻止同 series regenerate；`segment_revised` 允许用户明确创建下一 revision。
+历史 `deterministic_mock` 结果可读并可生成 Markdown，但严格只读；不能编辑或成为 DeepSeek revision 的 parent。整份重新生成只允许 series 中 latest terminal DeepSeek revision，重新冻结当前 live transcript 与当次明确选择的 parsed documents，而不读取用户编辑后的 `content_json`。历史同 provider/mode/model 的 `summary-deepseek-v1` terminal run 仍可作 parent；旧 revision 保留 v1 provenance，新 child 固定使用 `summary-deepseek-v2` 并冻结当前范围。`source_deleted` 阻止同 series regenerate；`segment_revised` 允许用户明确创建下一 revision。
 
 schema v4 的通用快照约束仍允许最多 10 MiB，以保持已存在 run 可读；当前 production DeepSeek policy 只允许 1 MiB。读取历史或已经冻结的较大 run 不因新策略而损坏，但执行超过 DeepSeek 上限的 run 在网络前以 `summary_provider_input_too_large` fail closed。
 
@@ -413,7 +428,62 @@ Checkpoint 功能当前为 Frozen / Deferred。若未来解冻，仍首先只允
 | `source_deleted`                  | INTEGER      | 0/1                                                      |
 | `redacted_at`                     | TEXT NULL    | 显式删除触发的安全清理时间                               |
 
-同一 run 的 `(segment_id_snapshot, segment_revision)` 与 `global_ordinal` 分别唯一。每个 run 最多冻结 20,000 个 final segments 和合计 10 MiB UTF-8 正文，超限整体拒绝、不截断。Rust Provider 只能从这些行重建请求，不能重新读取 `transcript_segments.original_text`。segment 后续修正只标记依赖旧 revision 的 summary stale；显式 source 删除是唯一允许清理 snapshot 正文和显示元数据的例外，已完成结果与实际引用的最小 evidence 不被静默改写。
+同一 run 的 `(segment_id_snapshot, segment_revision)` 与 `global_ordinal` 分别唯一。schema v7 仍要求至少一个 final transcript segment，并在 transcript + document 合并范围上执行 20,000 items/10 MiB 上限，超限整体拒绝、不截断。Rust Provider 只能从这些 run-owned snapshots 重建请求，不能重新读取 live segment/chunk。segment 后续修正只标记依赖旧 revision 的 summary stale；显式 source 删除是唯一允许清理 snapshot 正文和显示元数据的例外，已完成结果与实际引用的最小 evidence 不被静默改写。
+
+### `summary_document_sources` （schema v7）
+
+每行是一个 run-owned document chunk 不可变快照，不建立指向 live `documents/document_chunks` 的外键。transcript `summary_sources.global_ordinal` 始终在前，document global ordinal 从冻结 transcript count 继续。
+
+| 字段                             | 类型         | 说明                                                |
+| -------------------------------- | ------------ | --------------------------------------------------- |
+| `id`                             | TEXT PK      | snapshot UUID，同时是 Provider 可引用的 evidence ID |
+| `summary_id`                     | TEXT FK      | 所属 Summary run                                    |
+| `meeting_id`                     | TEXT FK      | 与 Summary 一致的 meeting                           |
+| `document_id_snapshot`           | TEXT         | 历史 document UUID 值；不是 live FK                 |
+| `document_chunk_id_snapshot`     | TEXT         | 历史 chunk UUID 值；不是 live FK                    |
+| `document_ordinal`               | INTEGER      | 已选 document 顺序，0–19                            |
+| `chunk_ordinal`                  | INTEGER      | 文档内 ordinal，0–19,999                            |
+| `global_ordinal`                 | INTEGER      | 合并输入全局顺序，0–19,999                          |
+| `chunk_kind_snapshot`            | TEXT         | `heading/paragraph/list_item/table`                 |
+| `document_display_name_snapshot` | TEXT NULL    | 冻结安全显示名；文档删除后清空                      |
+| `document_sha256_snapshot`       | TEXT         | 冻结 document SHA-256                               |
+| `chunk_sha256_snapshot`          | TEXT         | 冻结 chunk text SHA-256                             |
+| `page_start_snapshot`            | INTEGER NULL | 冻结起始页                                          |
+| `page_end_snapshot`              | INTEGER NULL | 冻结结束页                                          |
+| `section_path_json_snapshot`     | TEXT NULL    | 冻结 JSON string array；文档删除后清空              |
+| `table_ordinal_snapshot`         | INTEGER NULL | 冻结 table ordinal                                  |
+| `parser_version_snapshot`        | TEXT         | 冻结 parser version；删除后保留                     |
+| `chunk_schema_version_snapshot`  | INTEGER      | 固定为 `1`                                          |
+| `text_snapshot`                  | TEXT NULL    | 完整冻结 chunk 正文；文档删除后清空                 |
+| `snapshot_at`                    | TEXT         | 快照时间                                            |
+| `source_deleted`                 | INTEGER      | 0/1                                                 |
+| `redacted_at`                    | TEXT NULL    | 文档删除脱敏时间                                    |
+
+同一 run 的 `document_chunk_id_snapshot` 与 `global_ordinal` 分别唯一。`source_deleted=0` 时 display name/section path/text 必须存在且 `redacted_at` 为空；删除后三者必须清空、`source_deleted=1` 且记录 `redacted_at`。哈希、parser/chunk schema 与必要 locator provenance 保留。
+
+### `document_evidence_items` （schema v7）
+
+| 字段                         | 类型         | 说明                                         |
+| ---------------------------- | ------------ | -------------------------------------------- |
+| `id`                         | TEXT PK      | 必须等于 `summary_document_source_id`        |
+| `summary_id`                 | TEXT FK      | 所属 Summary run                             |
+| `meeting_id`                 | TEXT FK      | 与 Summary/snapshot 一致                     |
+| `summary_document_source_id` | TEXT FK      | 被引用的 run-owned document snapshot         |
+| `kind`                       | TEXT         | 固定 `document`                              |
+| `document_id_snapshot`       | TEXT         | 冻结 document UUID                           |
+| `document_chunk_id_snapshot` | TEXT         | 冻结 chunk UUID                              |
+| `label`                      | TEXT         | 安全文档证据标签                             |
+| `parser_version_snapshot`    | TEXT         | 解析 provenance                              |
+| `page_start` / `page_end`    | INTEGER NULL | 可选页码范围                                 |
+| `section_path_json`          | TEXT         | 有效 JSON string array                       |
+| `table_ordinal`              | INTEGER NULL | 表格 locator；非表格为空                     |
+| `ordinal`                    | INTEGER      | 原文档 chunk ordinal                         |
+| `global_ordinal`             | INTEGER      | 合并输入全局顺序                             |
+| `excerpt`                    | TEXT         | 实际引用的非空摘录，最多 1,024 UTF-8 bytes   |
+| `source_deleted`             | INTEGER      | 0/1；删除后 locator/excerpt 仍可解释历史结果 |
+| `created_at`                 | TEXT         | 物化时间                                     |
+
+严格复合外键绑定 snapshot ID、summary、meeting、document/chunk 历史 ID、chunk/global ordinal，防止跨 run/meeting 伪造。UI 以 tagged union 区分 transcript/document evidence，不根据可选字段猜测 kind。
 
 ### `summary_manual_notes`（Frozen / Deferred 概念实体）
 
@@ -454,7 +524,7 @@ Checkpoint 功能当前为 Frozen / Deferred。若未来解冻，仍首先只允
 
 ### `processing_jobs`（Deferred 通用调度概念）
 
-当前 schema v6 不包含通用处理任务调度器。audio transcription job 只存在于 Rust 进程内，终态状态只用于安全 DTO/清理，不持久化到本表；简化的 Docling 编排也不以本表作为近期前置设计。
+当前 schema v7 不包含通用处理任务调度器。audio transcription 和 document parsing job 只存在于 Rust 进程内，终态状态只用于安全 DTO/清理，不持久化到本表。Docling 只保留 document status/failure 作为恢复真相，不保存 attempt history、checkpoint 或调度队列。
 
 | 字段            | 类型      | 说明                                             |
 | --------------- | --------- | ------------------------------------------------ |
@@ -475,12 +545,12 @@ Checkpoint 功能当前为 Frozen / Deferred。若未来解冻，仍首先只允
 | 字段                 | 类型    | 说明                                                              |
 | -------------------- | ------- | ----------------------------------------------------------------- |
 | `provider`           | TEXT PK | 当前只允许 `deepseek`；每个 Provider 最多一行当前 remembered 偏好 |
-| `policy_version`     | TEXT    | 固定 `deepseek-transcript-external-v1`                            |
+| `policy_version`     | TEXT    | 当前固定 `deepseek-summary-input-external-v2`                     |
 | `policy_fingerprint` | TEXT    | 64 位小写 SHA-256，覆盖 Provider/host/model/version/数据类别顺序  |
 | `consented_at`       | TEXT    | 用户记住选择的 UTC 时间                                           |
 | `updated_at`         | TEXT    | 最近更新 UTC 时间，且不早于 `consented_at`                        |
 
-该表只表示当前 remembered Consent，不是事件或审计日志。它不保存 summary/meeting/source ID、transcript、evidence excerpt、Prompt、Provider response、API Key、SecretStore target 或路径；撤销即删除该行。policy version 或 fingerprint 不再匹配时旧行不再授权。一次性确认不写入 SQLite：它按 summary run 绑定，在 Rust 进程内最多保留 10 分钟、只能消费一次且应用重启后失效；撤销同时清除所有尚未消费的一次性确认。没有有效确认时执行 fail closed。
+该表只表示当前 remembered Consent，不是事件或审计日志。它不保存 summary/meeting/source/document ID、transcript/document text、evidence excerpt、Prompt、Provider response、API Key、SecretStore target 或路径；撤销即删除该行。v2 fingerprint 按固定顺序覆盖 transcript text、speaker、time offsets、document text、document structure/locations、evidence IDs、template 和 output language；任何 v1 remembered row 不再授权。一次性确认不写入 SQLite：它按 summary run 绑定，在 Rust 进程内最多保留 10 分钟、只能消费一次且应用重启后失效；撤销同时清除所有尚未消费的一次性确认。没有有效确认时执行 fail closed。
 
 该设计只面向单人 Personal Edition，不足以作为团队、客户或公众分发时的企业合规审计体系；不得据此恢复独立 `feat/consent-data-core` 或通用 `consent_events`。
 
@@ -493,6 +563,7 @@ Checkpoint 功能当前为 Frozen / Deferred。若未来解冻，仍首先只允
 - schema v4 已由 PR #21 的 Summary Run Core 创建 `summaries`、`summary_sources` 和 transcript-only `evidence_items`。关键索引包括 `(series_id, revision)` 唯一约束、direct-previous lineage、每个 series 最多一个 active run 的 partial unique index、meeting/created、status/updated、meeting/stale、live source/segment snapshot 查询以及 evidence 的 summary/global ordinal 查询。
 - schema v5 追加无 rowid 的 `provider_consent_preferences`；`provider` 主键与固定值约束使当前只存在一行 DeepSeek remembered 偏好，不增加正文索引或通用 Consent 关系。
 - schema v6 事务性重建 `transcript_sources` 与 `summary_sources` 的类型约束以加入 `imported_audio`，逐行复制并验证全部既有数据，恢复原索引/外键；不增加新表或索引。升级 checksum、rollback、integrity 与 foreign-key 检查必须覆盖 v5→v6。
+- schema v7 追加 `documents(id, meeting_id)` 唯一索引、`document_chunks` 的 meeting/document/ordinal 索引、`summary_document_sources` 的 summary order/live document 索引，以及 `document_evidence_items` 的 summary order/source 索引。复合外键把 document/chunk/summary/evidence 归属绑定在同一 meeting/run；升级验收覆盖 v6→v7。
 - `documents(meeting_id, sha256)` 对非 NULL 哈希使用唯一约束，确保同一会议内容去重；跨会议不共享物理副本。
 - 状态字段使用 `CHECK` 约束或迁移层枚举校验。
 - 所有迁移在事务中执行，并在 schema 版本表中记录。
@@ -511,14 +582,18 @@ app-data/
     │   ├── inputs/<job-id>/                       # Ephemeral：终态清理
     │   ├── outputs/<job-id>/                      # Ephemeral：终态清理
     │   └── work/<job-id>/                         # Ephemeral：终态清理
+    ├── document-parser-staging/<attempt-id>/          # Ephemeral：每 attempt 终态/启动清理
     ├── deletion-trash/<deletion-id>/
     └── .meetinglens-storage.lock
 
 %LOCALAPPDATA%/MeetingLens/transcription/models/
 └── small-<pinned-revision>/                        # 显式 provision、仓库外、manifest/hash 验证
+
+%LOCALAPPDATA%/MeetingLens/docling/models/2.117.0/
+└── meetinglens-docling-models.json + pinned files # 显式 provision、仓库外、runtime offline
 ```
 
-当前已实现布局包括 SQLite、受控 documents、document staging、audio job staging、deletion-trash、storage lock 和仓库外 transcription model；通用 artifacts 行仍是 Deferred 概念。音频 staging 不属于持久 meeting artifact：只有 opaque UUID job 目录，正常/失败/取消后清理，启动时协调删除遗留目录。Markdown Save As 直接写入用户在原生对话框中选择的应用外位置，不创建内部 export 实体、目录或数据库路径。数据库保存相对于 `app-data` 的受控路径；本 PR 不移动现有 SQLite。任何私有文件访问必须先解析、规范化并确认最终路径仍位于批准根目录内。目标路径只由 Rust 使用 meeting/document/job UUID 构造；原始文件名不能参与路径拼接。拒绝 `..`、绝对路径、盘符、UNC、Alternate Data Streams 和任何逃逸结果。
+当前已实现布局包括 SQLite、受控 documents、document import/parser staging、audio job staging、deletion-trash、storage lock 和仓库外 transcription/Docling models；通用 artifacts 行仍是 Deferred 概念。audio/document parser staging 均不属于持久 meeting artifact：只有 opaque UUID job/attempt 目录，正常/失败/取消后清理，启动时协调删除遗留目录。Docling 模型固定位于 `%LOCALAPPDATA%\MeetingLens\docling\models\2.117.0`，明确不放在普通 app-data/meeting-data 或仓库。Markdown Save As 直接写入用户在原生对话框中选择的应用外位置，不创建内部 export 实体、目录或数据库路径。数据库保存相对于 `app-data` 的受控路径；本 PR 不移动现有 SQLite。任何私有文件访问必须先解析、规范化并确认最终路径仍位于批准根目录内。目标路径只由 Rust 使用 meeting/document/job UUID 构造；原始文件名不能参与路径拼接。拒绝 `..`、绝对路径、盘符、UNC、Alternate Data Streams 和任何逃逸结果。
 
 导入在 `staging` 中创建随机临时文件，流式复制并同时计算 SHA-256；尽早检查声明大小，复制中超过限制立即停止并清理。最终大小、类型和会议累计配额验证成功后，使用同卷原子 rename 进入 `documents`。不把用户文件长期放在 Temp、Git 仓库或当前工作目录，不设置可执行权限，也不调用 Windows 文件关联程序。源文件保持不变。
 
@@ -550,7 +625,7 @@ MVP 1A-2-1 的当前无文件删除状态契约固定如下：
 | 未知状态        | fail closed                                     |
 
 1. 接受请求时在事务中将会议设为 `deleting`、写入 `deleted_at` tombstone，并禁止编辑、开始、导入或生成纪要。
-2. 持久化协调状态必须能枚举原始文档、schema v4 summaries/snapshots/evidence、schema v6 `imported_audio` source/segments，以及未来解析、译文、speaker aliases、manual notes、checkpoint、屏幕临时数据、缓存和导出产物；schema v5 的全局 Provider 偏好不属于单场会议删除范围，用户通过设置单独撤销。
+2. 持久化协调状态必须能枚举原始文档、schema v7 document chunks、schema v6 `imported_audio` source/segments、summaries、transcript/document snapshots 与两类 evidence，以及未来译文、speaker aliases、manual notes、checkpoint、屏幕临时数据、缓存和导出产物；schema v5 的全局 Provider 偏好不属于单场会议删除范围，用户通过设置单独撤销。
 3. 取消或等待任务并关闭句柄后，将受控文件同卷移动至应用私有 `deletion-trash`，或采用具备同等恢复能力的设计。
 4. 只有文件和派生数据清理全部成功后，才最终删除数据库记录和 tombstone。
 5. 任何步骤失败时进入 `delete_failed`，保留稳定安全错误码，不伪装成功，也不把残留重新暴露为正常会议数据。
@@ -559,7 +634,7 @@ MVP 1A-2-1 的当前无文件删除状态契约固定如下：
 
 音频 job 不是持久 deletion job。meeting 删除开始前必须对该 meeting 的 active transcription 发出取消并等待 Worker/文件句柄结束；Rust 随后清理该 job 的 inputs/outputs/work。已完成 `imported_audio` 只按普通 transcript source/segments 与 Summary snapshot 规则删除；用户原录音从未由 MeetingLens 持久保管，因此不受删除协调影响。
 
-单个文档删除同样先进入 `deleting`。`staged`、`parsed`、`import_failed`、`parse_failed` 可请求删除；`importing`/`parsing` 必须先取消或等待安全终止；`deleting` 的重复请求幂等；`delete_failed` 可重试。物理文件与关联 artifacts 清理成功后才删除元数据，失败则保留 `delete_failed`。删除不得影响用户源文件。
+单个文档删除同样先进入 `deleting`。`staged`、`parsed`、`import_failed`、`parse_failed` 可请求删除；`importing`/`parsing` 必须先取消或等待安全终止；`deleting` 的重复请求幂等；`delete_failed` 可重试。active queued/running Summary 使用该 document snapshot 时拒绝删除；terminal Summary 不阻塞，但在删除 live document/chunks 前先标记 stale/source-deleted，清空 snapshot 正文、display name 和 section path，保留已引用 evidence excerpt 与 page/section/table locator。物理文件与关联 chunks/artifacts 清理成功后才删除元数据，删除不得影响用户源文件。
 
 会议处于 `draft`、`recording` 或 `ready` 时允许增删文档；`processing`、`deleting`、`delete_failed`、`failed`、`archived` 和未知状态下，普通用户文档集合变更 fail closed。`delete_failed` 仅允许删除协调器重试，不允许以单文档操作绕过会议 tombstone。
 
@@ -593,12 +668,14 @@ Minutes 新增的稳定边界错误至少包括：`summary_edit_conflict`（`con
 
 音频转写稳定 code allowlist 为：`audio_picker_unavailable`、`audio_invalid_input`、`audio_unsupported_type`、`audio_type_mismatch`、`audio_empty`、`audio_too_large`、`audio_too_long`、`audio_stream_missing`、`audio_model_missing`、`audio_model_incompatible`、`audio_worker_unavailable`、`audio_worker_start_failed`、`audio_worker_crashed`、`audio_protocol_error`、`audio_output_too_large`、`audio_integrity_failed`、`audio_timeout`、`audio_cancelled`、`audio_transcription_busy`、`audio_persistence_failed`、`meeting_not_found`、`meeting_invalid_state` 与 `internal_error`。Picker cancel 使用 `{cancelled:true}` 的正常结果；status `errorCode` 也只可为此集合或 null。命令错误只含 stable code/safe localized message/retryable，不含文件名、路径、媒体/正文、模型路径、Worker stderr 或原生异常。
 
+文档解析稳定 code allowlist 为：`parser_unavailable`、`parser_environment_missing`、`parser_dependency_incompatible`、`parser_models_missing`、`parser_models_incompatible`、`parser_invalid_input`、`parser_unsupported_type`、`parser_ocr_unavailable`、`parser_protocol_error`、`parser_worker_start_failed`、`parser_worker_crashed`、`parser_timeout`、`parser_cancelled`、`parser_resource_limit`、`parser_page_limit_exceeded`、`parser_output_too_large`、`parser_partial_result`、`parser_integrity_failed` 和 `parser_failed`，另复用 document/meeting 状态与 `internal_error`。只有后端明确标记 retryable 的第一次失败可自动重试；status 不含文件名、路径、chunk 正文、artifact 或 Worker stderr。
+
 错误响应只包含稳定 `code`、安全 `message`、明确 `retryable` 和必要的安全 ID。不得返回源绝对路径、用户目录、文件内容、解析器 traceback 或底层异常；前端只根据 code 判断，未知错误 fail closed。
 
 ## 8. 数据模型版本化
 
 - `schema_migrations(version, applied_at, checksum)` 记录数据库迁移。
-- 当前功能分支的 SQLite schema 版本为 6：v1 是 meeting 数据核心；v2 以事务方式保留既有 meeting 数据并扩展删除状态，同时创建 `documents`、`deletion_jobs` 和相关索引；v3 创建 `transcript_sources` 与 `transcript_segments`；v4 创建 Summary series/run、完整 transcript snapshot 与 run-owned evidence；v5 只创建 `provider_consent_preferences`；v6 只扩展 transcript/summary source type constraints 以允许 `imported_audio`。重复启动按 checksum 幂等跳过，冲突或中途失败 fail closed。
-- 后续 Docling parsing 或其他 migration 不得复用或改写 v1–v6，必须基于合并时最新版本顺序递增。
+- 当前功能分支的 SQLite schema 版本为 7：v1 是 meeting 数据核心；v2 创建 `documents`/`deletion_jobs`；v3 创建 `transcript_sources`/`transcript_segments`；v4 创建 Summary series/run、完整 transcript snapshot 与 run-owned transcript evidence；v5 只创建 `provider_consent_preferences`；v6 只扩展 source type 以允许 `imported_audio`；v7 追加 `document_chunks`、Summary document 计数、不可变 `summary_document_sources` 和 `document_evidence_items`。重复启动按 checksum 幂等跳过，冲突或中途失败 fail closed。
+- 后续 migration 不得复用或改写 v1–v7，必须基于合并时最新版本顺序递增。
 - Sidecar API 和 `content_json` 都包含独立 `api_version/schema_version`。
 - 破坏性迁移必须先备份并获得用户批准，不得自动丢弃未知字段。

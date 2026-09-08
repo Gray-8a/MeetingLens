@@ -1,7 +1,9 @@
 use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 
 use super::document_error::{DocumentError, DocumentResult};
-use super::document_model::{DeletionJob, Document, DocumentStatus};
+use super::document_model::{
+    DeletionJob, Document, DocumentChunk, DocumentChunkInput, DocumentChunkKind, DocumentStatus,
+};
 
 const DOCUMENT_COLUMNS: &str = "
     id, meeting_id, original_filename, safe_extension, detected_media_type,
@@ -10,12 +12,24 @@ const DOCUMENT_COLUMNS: &str = "
     page_count_optional, created_at
 ";
 
+const DOCUMENT_CHUNK_COLUMNS: &str = "
+    id, document_id, meeting_id, ordinal, kind, text, content_sha256,
+    page_start, page_end, section_path_json, table_ordinal, parser_version,
+    chunk_schema_version, created_at
+";
+
 pub(crate) struct NewImport<'a> {
     pub id: &'a str,
     pub meeting_id: &'a str,
     pub original_filename: &'a str,
     pub safe_extension: &'a str,
     pub storage_relative_path: &'a str,
+}
+
+pub(crate) struct NewDocumentChunk<'a> {
+    pub id: &'a str,
+    pub ordinal: u64,
+    pub input: &'a DocumentChunkInput,
 }
 
 pub(crate) fn insert_importing(
@@ -153,6 +167,250 @@ pub(crate) fn mark_staged(
     Ok(())
 }
 
+pub(crate) fn begin_parse(transaction: &Transaction<'_>, id: &str) -> DocumentResult<()> {
+    let changed = transaction
+        .execute(
+            "
+            UPDATE documents
+            SET status = 'parsing',
+                failure_code = NULL,
+                failure_message_safe = NULL,
+                parser_version_optional = NULL,
+                page_count_optional = NULL,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE id = ?1 AND status = 'staged'
+            ",
+            [id],
+        )
+        .map_err(|_| DocumentError::Internal)?;
+    if changed == 0 {
+        return Err(DocumentError::InvalidState);
+    }
+    Ok(())
+}
+
+pub(crate) fn commit_parse(
+    transaction: &Transaction<'_>,
+    document: &Document,
+    parser_version: &str,
+    page_count: Option<u64>,
+    chunks: &[NewDocumentChunk<'_>],
+) -> DocumentResult<()> {
+    let page_count = page_count
+        .map(|value| i64::try_from(value).map_err(|_| DocumentError::IntegrityFailed))
+        .transpose()?;
+    let changed = transaction
+        .execute(
+            "
+            UPDATE documents
+            SET status = 'parsed',
+                parser_version_optional = ?2,
+                page_count_optional = ?3,
+                failure_code = NULL,
+                failure_message_safe = NULL,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE id = ?1 AND meeting_id = ?4 AND status = 'parsing'
+            ",
+            params![document.id, parser_version, page_count, document.meeting_id],
+        )
+        .map_err(|_| DocumentError::Internal)?;
+    if changed == 0 {
+        return Err(DocumentError::InvalidState);
+    }
+
+    for chunk in chunks {
+        transaction
+            .execute(
+                "
+                INSERT INTO document_chunks(
+                    id, document_id, meeting_id, ordinal, kind, text, content_sha256,
+                    page_start, page_end, section_path_json, table_ordinal,
+                    parser_version, chunk_schema_version, created_at
+                ) VALUES (
+                    ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13,
+                    strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+                )
+                ",
+                params![
+                    chunk.id,
+                    document.id,
+                    document.meeting_id,
+                    sqlite_integer(chunk.ordinal)?,
+                    chunk.input.kind.as_str(),
+                    chunk.input.text,
+                    chunk.input.content_sha256,
+                    optional_sqlite_integer(chunk.input.page_start)?,
+                    optional_sqlite_integer(chunk.input.page_end)?,
+                    chunk.input.section_path_json,
+                    optional_sqlite_integer(chunk.input.table_ordinal)?,
+                    parser_version,
+                    sqlite_integer(chunk.input.chunk_schema_version)?,
+                ],
+            )
+            .map_err(|_| DocumentError::IntegrityFailed)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn mark_parse_failed(
+    transaction: &Transaction<'_>,
+    id: &str,
+    error: &DocumentError,
+) -> DocumentResult<()> {
+    let changed = transaction
+        .execute(
+            "
+            UPDATE documents
+            SET status = 'parse_failed',
+                parser_version_optional = NULL,
+                page_count_optional = NULL,
+                failure_code = ?2,
+                failure_message_safe = ?3,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE id = ?1 AND status = 'parsing'
+            ",
+            params![id, error.code(), error.safe_message()],
+        )
+        .map_err(|_| DocumentError::Internal)?;
+    if changed == 0 {
+        return Err(DocumentError::InvalidState);
+    }
+    transaction
+        .execute("DELETE FROM document_chunks WHERE document_id = ?1", [id])
+        .map_err(|_| DocumentError::Internal)?;
+    Ok(())
+}
+
+pub(crate) fn cancel_parse(transaction: &Transaction<'_>, id: &str) -> DocumentResult<()> {
+    let changed = transaction
+        .execute(
+            "
+            UPDATE documents
+            SET status = 'staged',
+                parser_version_optional = NULL,
+                page_count_optional = NULL,
+                failure_code = NULL,
+                failure_message_safe = NULL,
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE id = ?1 AND status = 'parsing'
+            ",
+            [id],
+        )
+        .map_err(|_| DocumentError::Internal)?;
+    if changed == 0 {
+        return Err(DocumentError::InvalidState);
+    }
+    transaction
+        .execute("DELETE FROM document_chunks WHERE document_id = ?1", [id])
+        .map_err(|_| DocumentError::Internal)?;
+    Ok(())
+}
+
+pub(crate) fn mark_parse_interrupted(
+    transaction: &Transaction<'_>,
+    id: &str,
+) -> DocumentResult<()> {
+    let changed = transaction
+        .execute(
+            "
+            UPDATE documents
+            SET status = 'parse_failed',
+                parser_version_optional = NULL,
+                page_count_optional = NULL,
+                failure_code = 'document_parse_interrupted',
+                failure_message_safe = 'Document parsing was interrupted and did not resume.',
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE id = ?1 AND status = 'parsing'
+            ",
+            [id],
+        )
+        .map_err(|_| DocumentError::Internal)?;
+    if changed == 0 {
+        return Err(DocumentError::InvalidState);
+    }
+    transaction
+        .execute("DELETE FROM document_chunks WHERE document_id = ?1", [id])
+        .map_err(|_| DocumentError::Internal)?;
+    Ok(())
+}
+
+pub(crate) fn mark_parsed_integrity_failed(
+    transaction: &Transaction<'_>,
+    id: &str,
+) -> DocumentResult<()> {
+    let changed = transaction
+        .execute(
+            "
+            UPDATE documents
+            SET status = 'parse_failed',
+                parser_version_optional = NULL,
+                page_count_optional = NULL,
+                failure_code = 'document_integrity_failed',
+                failure_message_safe = 'The parsed document could not be verified safely.',
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE id = ?1 AND status = 'parsed'
+            ",
+            [id],
+        )
+        .map_err(|_| DocumentError::Internal)?;
+    if changed == 0 {
+        return Err(DocumentError::InvalidState);
+    }
+    transaction
+        .execute("DELETE FROM document_chunks WHERE document_id = ?1", [id])
+        .map_err(|_| DocumentError::Internal)?;
+    Ok(())
+}
+
+pub(crate) fn list_chunks(
+    connection: &Connection,
+    document_id: &str,
+) -> DocumentResult<Vec<DocumentChunk>> {
+    let sql = format!(
+        "SELECT {DOCUMENT_CHUNK_COLUMNS} FROM document_chunks \
+         WHERE document_id = ?1 ORDER BY ordinal, id"
+    );
+    let mut statement = connection
+        .prepare(&sql)
+        .map_err(|_| DocumentError::Internal)?;
+    statement
+        .query_map([document_id], document_chunk_from_row)
+        .map_err(|_| DocumentError::Internal)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| DocumentError::Internal)
+}
+
+pub(crate) fn get_chunk(
+    connection: &Connection,
+    document_id: &str,
+    chunk_id: &str,
+) -> DocumentResult<DocumentChunk> {
+    let sql = format!(
+        "SELECT {DOCUMENT_CHUNK_COLUMNS} FROM document_chunks \
+         WHERE document_id = ?1 AND id = ?2"
+    );
+    connection
+        .query_row(
+            &sql,
+            params![document_id, chunk_id],
+            document_chunk_from_row,
+        )
+        .optional()
+        .map_err(|_| DocumentError::Internal)?
+        .ok_or(DocumentError::NotFound)
+}
+
+pub(crate) fn has_chunks(connection: &Connection, document_id: &str) -> DocumentResult<bool> {
+    connection
+        .query_row(
+            "SELECT EXISTS(SELECT 1 FROM document_chunks WHERE document_id = ?1)",
+            [document_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|value| value == 1)
+        .map_err(|_| DocumentError::Internal)
+}
+
 pub(crate) fn mark_import_failed(
     transaction: &Transaction<'_>,
     id: &str,
@@ -214,7 +472,9 @@ pub(crate) fn begin_delete(
                 failure_code = NULL,
                 failure_message_safe = NULL,
                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
-            WHERE id = ?1 AND status IN ('staged', 'import_failed', 'delete_failed')
+            WHERE id = ?1 AND status IN (
+                'staged', 'parsed', 'parse_failed', 'import_failed', 'delete_failed'
+            )
             ",
             [&document.id],
         )
@@ -444,4 +704,64 @@ fn document_from_row(row: &Row<'_>) -> rusqlite::Result<Document> {
         page_count_optional: row.get::<_, Option<i64>>(14)?.map(|value| value as u64),
         created_at: row.get(15)?,
     })
+}
+
+fn document_chunk_from_row(row: &Row<'_>) -> rusqlite::Result<DocumentChunk> {
+    let kind = row.get::<_, String>(4)?;
+    let kind = DocumentChunkKind::from_database(&kind).map_err(|_| {
+        rusqlite::Error::FromSqlConversionFailure(
+            4,
+            rusqlite::types::Type::Text,
+            Box::new(DocumentError::Internal),
+        )
+    })?;
+    Ok(DocumentChunk {
+        id: row.get(0)?,
+        document_id: row.get(1)?,
+        meeting_id: row.get(2)?,
+        ordinal: nonnegative_integer(row, 3)?,
+        kind,
+        text: row.get(5)?,
+        content_sha256: row.get(6)?,
+        page_start: optional_nonnegative_integer(row, 7)?,
+        page_end: optional_nonnegative_integer(row, 8)?,
+        section_path_json: row.get(9)?,
+        table_ordinal: optional_nonnegative_integer(row, 10)?,
+        parser_version: row.get(11)?,
+        chunk_schema_version: nonnegative_integer(row, 12)?,
+        created_at: row.get(13)?,
+    })
+}
+
+fn sqlite_integer(value: u64) -> DocumentResult<i64> {
+    i64::try_from(value).map_err(|_| DocumentError::IntegrityFailed)
+}
+
+fn optional_sqlite_integer(value: Option<u64>) -> DocumentResult<Option<i64>> {
+    value.map(sqlite_integer).transpose()
+}
+
+fn nonnegative_integer(row: &Row<'_>, index: usize) -> rusqlite::Result<u64> {
+    let value: i64 = row.get(index)?;
+    u64::try_from(value).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(
+            index,
+            rusqlite::types::Type::Integer,
+            Box::new(error),
+        )
+    })
+}
+
+fn optional_nonnegative_integer(row: &Row<'_>, index: usize) -> rusqlite::Result<Option<u64>> {
+    row.get::<_, Option<i64>>(index)?
+        .map(|value| {
+            u64::try_from(value).map_err(|error| {
+                rusqlite::Error::FromSqlConversionFailure(
+                    index,
+                    rusqlite::types::Type::Integer,
+                    Box::new(error),
+                )
+            })
+        })
+        .transpose()
 }

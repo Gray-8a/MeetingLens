@@ -32,7 +32,9 @@ mod transcript_workflow;
 
 pub use document_error::{DocumentError, DocumentResult};
 pub use document_model::{
-    ALLOWED_DOCUMENT_EXTENSIONS, Document, DocumentImportOutcome, DocumentImportPhase,
+    ALLOWED_DOCUMENT_EXTENSIONS, DOCUMENT_CHUNK_MAX_BYTES, DOCUMENT_CHUNK_MAX_COUNT,
+    DOCUMENT_CHUNK_SCHEMA_VERSION, DOCUMENT_CHUNKS_MAX_TOTAL_BYTES, Document, DocumentChunk,
+    DocumentChunkInput, DocumentChunkKind, DocumentImportOutcome, DocumentImportPhase,
     DocumentImportPolicy, DocumentImportProgress, DocumentStatus, ReconcileReport,
 };
 pub use document_service::DocumentService;

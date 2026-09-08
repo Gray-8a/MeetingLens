@@ -11,8 +11,9 @@ import {
   type SummaryEvidenceResponse,
   type SummaryRunResponse,
 } from "../api/summary";
+import i18n from "../i18n";
 import { summaryErrorMessage } from "../i18n/errors";
-import { formatLocalDate } from "../i18n/formatters";
+import { formatLocalDate, formatNumber } from "../i18n/formatters";
 import { ErrorNotice, InfoNotice } from "./UiState";
 
 export interface SummaryResultViewProps {
@@ -507,20 +508,66 @@ export function SummaryResultView({
               </div>
               <p>{evidence.excerpt}</p>
               <dl className="summary-run-meta">
-                <div>
-                  <dt>{t("summaryMinutes.evidence.speaker")}</dt>
-                  <dd>
-                    {evidence.speakerSnapshot ?? t("common.notAvailable")}
-                  </dd>
-                </div>
+                {evidence.kind === "transcript" ? (
+                  <>
+                    <div>
+                      <dt>{t("summaryMinutes.evidence.kind")}</dt>
+                      <dd>{t("summaryMinutes.evidence.transcript")}</dd>
+                    </div>
+                    <div>
+                      <dt>{t("summaryMinutes.evidence.speaker")}</dt>
+                      <dd>
+                        {evidence.speakerSnapshot ?? t("common.notAvailable")}
+                      </dd>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <div>
+                      <dt>{t("summaryMinutes.evidence.kind")}</dt>
+                      <dd>{t("summaryMinutes.evidence.document")}</dd>
+                    </div>
+                    <div>
+                      <dt>{t("summaryMinutes.evidence.pages")}</dt>
+                      <dd>
+                        {formatDocumentPages(
+                          evidence.pageStart,
+                          evidence.pageEnd,
+                        )}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>{t("summaryMinutes.evidence.section")}</dt>
+                      <dd>
+                        {evidence.sectionPath.length === 0
+                          ? t("common.notAvailable")
+                          : evidence.sectionPath.join(" › ")}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>{t("summaryMinutes.evidence.table")}</dt>
+                      <dd>
+                        {evidence.tableOrdinal === null
+                          ? t("common.notAvailable")
+                          : formatNumber(evidence.tableOrdinal + 1)}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>{t("summaryMinutes.evidence.parserVersion")}</dt>
+                      <dd>{evidence.parserVersion}</dd>
+                    </div>
+                  </>
+                )}
                 <div>
                   <dt>{t("summaryMinutes.evidence.ordinal")}</dt>
-                  <dd>{evidence.ordinal + 1}</dd>
+                  <dd>{formatNumber(evidence.ordinal + 1)}</dd>
                 </div>
               </dl>
               {evidence.sourceDeleted ? (
                 <p className="restriction">
-                  {t("summaryMinutes.evidence.sourceDeleted")}
+                  {evidence.kind === "transcript"
+                    ? t("summaryMinutes.evidence.sourceDeleted")
+                    : t("summaryMinutes.evidence.documentDeleted")}
                 </p>
               ) : null}
             </aside>
@@ -540,6 +587,18 @@ export function SummaryResultView({
       ) : null}
     </section>
   );
+}
+
+function formatDocumentPages(
+  pageStart: number | null,
+  pageEnd: number | null,
+): string {
+  if (pageStart === null) return i18n.t("common.notAvailable");
+  if (pageEnd === null || pageEnd === pageStart) return formatNumber(pageStart);
+  return i18n.t("summaryMinutes.evidence.pageRange", {
+    start: formatNumber(pageStart),
+    end: formatNumber(pageEnd),
+  });
 }
 
 function SummaryContentView({

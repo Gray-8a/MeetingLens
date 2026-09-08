@@ -24,13 +24,15 @@ use crate::secret_store::{SecretKind, SecretStoreService, SecretValue};
 pub const DEEPSEEK_SUMMARY_PROVIDER: &str = "deepseek";
 pub const DEEPSEEK_SUMMARY_PROVIDER_MODE: &str = "external";
 pub const DEEPSEEK_SUMMARY_MODEL: &str = "deepseek-v4-pro";
-pub const DEEPSEEK_SUMMARY_PROMPT_VERSION: &str = "summary-deepseek-v1";
+pub const DEEPSEEK_SUMMARY_PROMPT_VERSION: &str = "summary-deepseek-v2";
 pub const DEEPSEEK_ENDPOINT_HOST: &str = "api.deepseek.com";
-pub const DEEPSEEK_CONSENT_POLICY_VERSION: &str = "deepseek-transcript-external-v1";
-pub const DEEPSEEK_CONSENT_DATA_CATEGORIES: [&str; 6] = [
+pub const DEEPSEEK_CONSENT_POLICY_VERSION: &str = "deepseek-summary-input-external-v2";
+pub const DEEPSEEK_CONSENT_DATA_CATEGORIES: [&str; 8] = [
     "transcript_text",
     "speaker_labels_and_names",
     "time_offsets",
+    "document_text",
+    "document_structure_locations",
     "evidence_ids",
     "summary_template",
     "output_language",
@@ -729,6 +731,7 @@ mod tests {
             template: SummaryTemplate::Detailed,
             output_language: SummaryOutputLanguage::En,
             segments: vec![segment(text)],
+            document_chunks: Vec::new(),
         }
     }
 
@@ -790,7 +793,7 @@ mod tests {
         assert_eq!(DEEPSEEK_SUMMARY_PROVIDER, "deepseek");
         assert_eq!(DEEPSEEK_SUMMARY_PROVIDER_MODE, "external");
         assert_eq!(DEEPSEEK_SUMMARY_MODEL, "deepseek-v4-pro");
-        assert_eq!(DEEPSEEK_SUMMARY_PROMPT_VERSION, "summary-deepseek-v1");
+        assert_eq!(DEEPSEEK_SUMMARY_PROMPT_VERSION, "summary-deepseek-v2");
         assert_eq!(DEEPSEEK_ENDPOINT_HOST, "api.deepseek.com");
         let transport = ReqwestDeepSeekTransport::new().expect("fixed endpoint should configure");
         assert_eq!(transport.endpoint.scheme(), "https");
@@ -805,7 +808,7 @@ mod tests {
         );
         assert_eq!(
             DEEPSEEK_CONSENT_POLICY_VERSION,
-            "deepseek-transcript-external-v1"
+            "deepseek-summary-input-external-v2"
         );
         assert_eq!(
             DEEPSEEK_CONSENT_DATA_CATEGORIES,
@@ -813,6 +816,8 @@ mod tests {
                 "transcript_text",
                 "speaker_labels_and_names",
                 "time_offsets",
+                "document_text",
+                "document_structure_locations",
                 "evidence_ids",
                 "summary_template",
                 "output_language"

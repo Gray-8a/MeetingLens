@@ -64,6 +64,23 @@ async function importIntoDraft(): Promise<void> {
       ? true
       : null,
   );
+  const parserPolicy = await documentApi.getParserPolicy();
+  requireCondition(parserPolicy.device === "cpu");
+  requireCondition(parserPolicy.formats.length === 10);
+  requireCondition(
+    parserPolicy.formats.every(
+      (format) =>
+        format.extension.length > 0 &&
+        (!format.requiresModels ||
+          parserPolicy.modelsAvailable ||
+          !format.available),
+    ),
+  );
+  await waitFor(() =>
+    document.querySelectorAll("[data-acceptance='document-parse']").length === 2
+      ? true
+      : null,
+  );
 
   mark("restart-imported");
 }

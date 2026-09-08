@@ -35,6 +35,8 @@ export type SummaryProvider = "deepseek" | "deterministic_mock";
 export type SummaryProviderMode = "external" | "mock";
 
 export type SummaryExternalDataCategory =
+  | "document_structure_locations"
+  | "document_text"
   | "evidence_ids"
   | "output_language"
   | "speaker_labels_and_names"
@@ -49,7 +51,7 @@ export interface DeepSeekProviderStatusResponse {
   model: "deepseek-v4-pro";
   consentRemembered: boolean;
   consentedAt: string | null;
-  policyVersion: string;
+  policyVersion: "deepseek-summary-input-external-v2";
   executionAvailable: boolean;
 }
 
@@ -60,12 +62,15 @@ export interface SummaryExternalDisclosureResponse {
   sourceCount: number;
   segmentCount: number;
   inputBytes: number;
+  documentCount: number;
+  documentChunkCount: number;
+  documentInputBytes: number;
   template: SummaryTemplate;
   outputLanguage: SummaryOutputLanguage;
   dataCategories: SummaryExternalDataCategory[];
   rememberedConsentValid: boolean;
   requiresConfirmation: boolean;
-  policyVersion: string;
+  policyVersion: "deepseek-summary-input-external-v2";
 }
 
 export interface ConfirmSummaryExternalDisclosureRequest {
@@ -80,6 +85,7 @@ export interface SummaryExternalDisclosureRequest {
 export interface CreateSummaryRunRequest {
   meetingId: string;
   sourceIds: string[];
+  documentIds: string[];
   template: SummaryTemplate;
   outputLanguage: SummaryOutputLanguage;
 }
@@ -192,6 +198,9 @@ export interface SummaryRunResponse {
   sourceCount: number;
   inputSegmentCount: number;
   inputBytes: number;
+  documentCount: number;
+  inputDocumentChunkCount: number;
+  documentInputBytes: number;
   isStale: boolean;
   staleReason: SummaryStaleReason | null;
   staleAt: string | null;
@@ -204,7 +213,7 @@ export interface SummaryRunResponse {
   updatedAt: string;
 }
 
-export interface SummaryEvidenceResponse {
+export interface TranscriptSummaryEvidenceResponse {
   id: string;
   summaryId: string;
   meetingId: string;
@@ -222,6 +231,30 @@ export interface SummaryEvidenceResponse {
   sourceDeleted: boolean;
   createdAt: string;
 }
+
+export interface DocumentSummaryEvidenceResponse {
+  id: string;
+  summaryId: string;
+  meetingId: string;
+  kind: "document";
+  documentId: string;
+  documentChunkId: string;
+  label: string;
+  parserVersion: string;
+  pageStart: number | null;
+  pageEnd: number | null;
+  sectionPath: string[];
+  tableOrdinal: number | null;
+  ordinal: number;
+  globalOrdinal: number;
+  excerpt: string;
+  sourceDeleted: boolean;
+  createdAt: string;
+}
+
+export type SummaryEvidenceResponse =
+  | TranscriptSummaryEvidenceResponse
+  | DocumentSummaryEvidenceResponse;
 
 export interface ListSummaryRunsResponse {
   items: SummaryRunResponse[];
@@ -244,6 +277,8 @@ export interface SummaryPolicyResponse {
   triggerKind: "manual";
   provider: SummaryProvider;
   maxSegments: number;
+  maxDocuments: number;
+  maxDocumentChunks: number;
   maxInputBytes: number;
   maxEvidenceExcerptBytes: number;
   listDefaultLimit: number;
@@ -388,11 +423,15 @@ const frozenOutputLanguages: readonly SummaryOutputLanguage[] = [
   "en",
   "bilingual",
 ];
-const deepSeekPolicyVersion = "deepseek-transcript-external-v1";
+const deepSeekPolicyVersion = "deepseek-summary-input-external-v2";
 const deepSeekProvider = "deepseek";
 const deepSeekEndpointHost = "api.deepseek.com";
 const deepSeekModel = "deepseek-v4-pro";
-const deepSeekPromptVersion = "summary-deepseek-v1";
+const deepSeekPromptVersions = new Set([
+  "summary-deepseek-v1",
+  "summary-deepseek-v2",
+]);
+const currentDeepSeekPromptVersion = "summary-deepseek-v2";
 const deepSeekMaxInputBytes = 1024 * 1024;
 const deterministicMockModel = "meetinglens-deterministic-mock-v1";
 const deterministicMockPromptVersion = "summary-core-mock-v1";
@@ -400,6 +439,8 @@ const frozenExternalDataCategories: readonly SummaryExternalDataCategory[] = [
   "transcript_text",
   "speaker_labels_and_names",
   "time_offsets",
+  "document_text",
+  "document_structure_locations",
   "evidence_ids",
   "summary_template",
   "output_language",
@@ -407,6 +448,8 @@ const frozenExternalDataCategories: readonly SummaryExternalDataCategory[] = [
 
 const summaryLimits = {
   maxSegments: 20_000,
+  maxDocuments: 20,
+  maxDocumentChunks: 20_000,
   maxInputBytes: 10 * 1024 * 1024,
   maxEvidenceExcerptBytes: 1_024,
   maxResultBytes: 1024 * 1024,
@@ -553,6 +596,7 @@ export function createSummaryApi(
           request: {
             meetingId: request.meetingId,
             sourceIds: [...request.sourceIds],
+            documentIds: [...request.documentIds],
             template: request.template,
             outputLanguage: request.outputLanguage,
           },
@@ -731,6 +775,10 @@ function validateCreateRequest(request: CreateSummaryRunRequest): void {
     request.sourceIds.length > summaryLimits.maxSegments ||
     !request.sourceIds.every(isUuid) ||
     new Set(request.sourceIds).size !== request.sourceIds.length ||
+    !Array.isArray(request.documentIds) ||
+    request.documentIds.length > summaryLimits.maxDocuments ||
+    !request.documentIds.every(isUuid) ||
+    new Set(request.documentIds).size !== request.documentIds.length ||
     typeof request.template !== "string" ||
     !summaryTemplates.has(request.template as SummaryTemplate) ||
     typeof request.outputLanguage !== "string" ||
@@ -878,7 +926,9 @@ function parseCreatedRun(
     run.previousSummaryId !== null ||
     run.template !== request.template ||
     run.outputLanguage !== request.outputLanguage ||
-    run.sourceCount !== request.sourceIds.length
+    run.sourceCount !== request.sourceIds.length ||
+    run.documentCount !== request.documentIds.length ||
+    !hasCurrentCreatedProviderIdentity(run)
   ) {
     throw internalError();
   }
@@ -895,7 +945,8 @@ function parseCreatedRevision(
     run.id === request.summaryId ||
     run.previousSummaryId !== request.summaryId ||
     run.revision <= 1 ||
-    run.status !== "queued"
+    run.status !== "queued" ||
+    !hasCurrentCreatedProviderIdentity(run)
   ) {
     throw internalError();
   }
@@ -940,6 +991,9 @@ function parseRun(value: unknown): SummaryRunResponse {
     "sourceCount",
     "inputSegmentCount",
     "inputBytes",
+    "documentCount",
+    "inputDocumentChunkCount",
+    "documentInputBytes",
     "isStale",
     "staleReason",
     "staleAt",
@@ -982,6 +1036,20 @@ function parseRun(value: unknown): SummaryRunResponse {
     value.inputSegmentCount > summaryLimits.maxSegments ||
     !isPositiveSafeInteger(value.inputBytes) ||
     value.inputBytes > summaryLimits.maxInputBytes ||
+    !isNonNegativeSafeInteger(value.documentCount) ||
+    value.documentCount > summaryLimits.maxDocuments ||
+    !isNonNegativeSafeInteger(value.inputDocumentChunkCount) ||
+    value.inputDocumentChunkCount > summaryLimits.maxDocumentChunks ||
+    !isNonNegativeSafeInteger(value.documentInputBytes) ||
+    value.documentInputBytes > summaryLimits.maxInputBytes ||
+    value.inputSegmentCount + value.inputDocumentChunkCount >
+      summaryLimits.maxSegments ||
+    value.inputBytes + value.documentInputBytes > summaryLimits.maxInputBytes ||
+    !hasValidDocumentTotals(
+      value.documentCount,
+      value.inputDocumentChunkCount,
+      value.documentInputBytes,
+    ) ||
     typeof value.isStale !== "boolean" ||
     !isNullableStaleReason(value.staleReason) ||
     !isNullableUtcIso(value.staleAt) ||
@@ -1034,6 +1102,9 @@ function parseRun(value: unknown): SummaryRunResponse {
     sourceCount: value.sourceCount,
     inputSegmentCount: value.inputSegmentCount,
     inputBytes: value.inputBytes,
+    documentCount: value.documentCount,
+    inputDocumentChunkCount: value.inputDocumentChunkCount,
+    documentInputBytes: value.documentInputBytes,
     isStale: value.isStale,
     staleReason: value.staleReason,
     staleAt: value.staleAt,
@@ -1315,8 +1386,23 @@ function parseEvidencePage(
 }
 
 function parseEvidence(value: unknown): SummaryEvidenceResponse {
+  if (!isRecord(value) || typeof value.kind !== "string") {
+    throw internalError();
+  }
+  switch (value.kind) {
+    case "transcript":
+      return parseTranscriptEvidence(value);
+    case "document":
+      return parseDocumentEvidence(value);
+    default:
+      throw internalError();
+  }
+}
+
+function parseTranscriptEvidence(
+  value: Record<string, unknown>,
+): TranscriptSummaryEvidenceResponse {
   if (
-    !isRecord(value) ||
     !hasExactlyKeys(value, [
       "id",
       "summaryId",
@@ -1372,6 +1458,76 @@ function parseEvidence(value: unknown): SummaryEvidenceResponse {
     speakerSnapshot: value.speakerSnapshot,
     startOffsetMs: value.startOffsetMs,
     endOffsetMs: value.endOffsetMs,
+    ordinal: value.ordinal,
+    globalOrdinal: value.globalOrdinal,
+    excerpt: value.excerpt,
+    sourceDeleted: value.sourceDeleted,
+    createdAt: value.createdAt,
+  };
+}
+
+function parseDocumentEvidence(
+  value: Record<string, unknown>,
+): DocumentSummaryEvidenceResponse {
+  if (
+    !hasExactlyKeys(value, [
+      "id",
+      "summaryId",
+      "meetingId",
+      "kind",
+      "documentId",
+      "documentChunkId",
+      "label",
+      "parserVersion",
+      "pageStart",
+      "pageEnd",
+      "sectionPath",
+      "tableOrdinal",
+      "ordinal",
+      "globalOrdinal",
+      "excerpt",
+      "sourceDeleted",
+      "createdAt",
+    ]) ||
+    !isUuid(value.id) ||
+    !isUuid(value.summaryId) ||
+    !isUuid(value.meetingId) ||
+    value.kind !== "document" ||
+    !isUuid(value.documentId) ||
+    !isUuid(value.documentChunkId) ||
+    !isSafeBoundedText(value.label, summaryLimits.maxResultMetadataBytes) ||
+    !isParserVersion(value.parserVersion) ||
+    !isNullablePageNumber(value.pageStart) ||
+    !isNullablePageNumber(value.pageEnd) ||
+    !hasValidPageRange(value.pageStart, value.pageEnd) ||
+    !isSectionPath(value.sectionPath) ||
+    !isNullableBoundedOrdinal(
+      value.tableOrdinal,
+      summaryLimits.maxDocumentChunks,
+    ) ||
+    !isNonNegativeSafeInteger(value.ordinal) ||
+    value.ordinal >= summaryLimits.maxDocumentChunks ||
+    !isNonNegativeSafeInteger(value.globalOrdinal) ||
+    value.globalOrdinal >= summaryLimits.maxSegments ||
+    !isSafeBoundedText(value.excerpt, summaryLimits.maxEvidenceExcerptBytes) ||
+    typeof value.sourceDeleted !== "boolean" ||
+    !isUtcIso(value.createdAt)
+  ) {
+    throw internalError();
+  }
+  return {
+    id: value.id,
+    summaryId: value.summaryId,
+    meetingId: value.meetingId,
+    kind: "document",
+    documentId: value.documentId,
+    documentChunkId: value.documentChunkId,
+    label: value.label,
+    parserVersion: value.parserVersion,
+    pageStart: value.pageStart,
+    pageEnd: value.pageEnd,
+    sectionPath: [...value.sectionPath],
+    tableOrdinal: value.tableOrdinal,
     ordinal: value.ordinal,
     globalOrdinal: value.globalOrdinal,
     excerpt: value.excerpt,
@@ -1459,6 +1615,8 @@ function parsePolicy(value: unknown): SummaryPolicyResponse {
       "triggerKind",
       "provider",
       "maxSegments",
+      "maxDocuments",
+      "maxDocumentChunks",
       "maxInputBytes",
       "maxEvidenceExcerptBytes",
       "listDefaultLimit",
@@ -1473,6 +1631,8 @@ function parsePolicy(value: unknown): SummaryPolicyResponse {
     (value.provider !== "deterministic_mock" &&
       value.provider !== deepSeekProvider) ||
     value.maxSegments !== summaryLimits.maxSegments ||
+    value.maxDocuments !== summaryLimits.maxDocuments ||
+    value.maxDocumentChunks !== summaryLimits.maxDocumentChunks ||
     value.maxInputBytes !== expectedMaxInputBytes ||
     value.maxEvidenceExcerptBytes !== summaryLimits.maxEvidenceExcerptBytes ||
     value.listDefaultLimit !== summaryRunPageLimits.default ||
@@ -1489,6 +1649,8 @@ function parsePolicy(value: unknown): SummaryPolicyResponse {
     triggerKind: "manual",
     provider: value.provider as SummaryProvider,
     maxSegments: summaryLimits.maxSegments,
+    maxDocuments: summaryLimits.maxDocuments,
+    maxDocumentChunks: summaryLimits.maxDocumentChunks,
     maxInputBytes: expectedMaxInputBytes,
     maxEvidenceExcerptBytes: summaryLimits.maxEvidenceExcerptBytes,
     listDefaultLimit: summaryRunPageLimits.default,
@@ -1552,6 +1714,9 @@ function parseExternalDisclosure(
       "sourceCount",
       "segmentCount",
       "inputBytes",
+      "documentCount",
+      "documentChunkCount",
+      "documentInputBytes",
       "template",
       "outputLanguage",
       "dataCategories",
@@ -1568,6 +1733,18 @@ function parseExternalDisclosure(
     value.segmentCount > summaryLimits.maxSegments ||
     !isPositiveSafeInteger(value.inputBytes) ||
     value.inputBytes > deepSeekMaxInputBytes ||
+    !isNonNegativeSafeInteger(value.documentCount) ||
+    value.documentCount > summaryLimits.maxDocuments ||
+    !isNonNegativeSafeInteger(value.documentChunkCount) ||
+    value.documentChunkCount > summaryLimits.maxDocumentChunks ||
+    !isNonNegativeSafeInteger(value.documentInputBytes) ||
+    value.documentInputBytes >= value.inputBytes ||
+    value.segmentCount + value.documentChunkCount > summaryLimits.maxSegments ||
+    !hasValidDocumentTotals(
+      value.documentCount,
+      value.documentChunkCount,
+      value.documentInputBytes,
+    ) ||
     typeof value.template !== "string" ||
     !summaryTemplates.has(value.template as SummaryTemplate) ||
     typeof value.outputLanguage !== "string" ||
@@ -1587,6 +1764,9 @@ function parseExternalDisclosure(
     sourceCount: value.sourceCount,
     segmentCount: value.segmentCount,
     inputBytes: value.inputBytes,
+    documentCount: value.documentCount,
+    documentChunkCount: value.documentChunkCount,
+    documentInputBytes: value.documentInputBytes,
     template: value.template as SummaryTemplate,
     outputLanguage: value.outputLanguage as SummaryOutputLanguage,
     dataCategories: [...frozenExternalDataCategories],
@@ -1605,7 +1785,15 @@ function hasValidProviderIdentity(value: Record<string, unknown>): boolean {
     (value.provider === deepSeekProvider &&
       value.providerMode === "external" &&
       value.model === deepSeekModel &&
-      value.promptVersion === deepSeekPromptVersion)
+      typeof value.promptVersion === "string" &&
+      deepSeekPromptVersions.has(value.promptVersion))
+  );
+}
+
+function hasCurrentCreatedProviderIdentity(run: SummaryRunResponse): boolean {
+  return (
+    run.provider !== deepSeekProvider ||
+    run.promptVersion === currentDeepSeekPromptVersion
   );
 }
 
@@ -1717,6 +1905,57 @@ function isNullableNonNegativeSafeInteger(
   value: unknown,
 ): value is number | null {
   return value === null || isNonNegativeSafeInteger(value);
+}
+
+function hasValidDocumentTotals(
+  documentCount: number,
+  documentChunkCount: number,
+  documentInputBytes: number,
+): boolean {
+  return documentCount === 0
+    ? documentChunkCount === 0 && documentInputBytes === 0
+    : documentChunkCount >= documentCount && documentInputBytes > 0;
+}
+
+function isNullablePageNumber(value: unknown): value is number | null {
+  return value === null || (isPositiveSafeInteger(value) && value <= 300);
+}
+
+function hasValidPageRange(start: number | null, end: number | null): boolean {
+  if (start === null || end === null) return start === null && end === null;
+  return start <= end;
+}
+
+function isNullableBoundedOrdinal(
+  value: unknown,
+  exclusiveMaximum: number,
+): value is number | null {
+  return (
+    value === null ||
+    (isNonNegativeSafeInteger(value) && value < exclusiveMaximum)
+  );
+}
+
+function isParserVersion(value: unknown): value is string {
+  return (
+    typeof value === "string" &&
+    value.length > 0 &&
+    utf8Length(value) <= 64 &&
+    /^[A-Za-z0-9._+-]+$/.test(value)
+  );
+}
+
+function isSectionPath(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) &&
+    value.length <= 16 &&
+    value.every(
+      (part) =>
+        isSafeBoundedText(part, summaryLimits.maxResultMetadataBytes) &&
+        !part.includes("\0"),
+    ) &&
+    utf8Length(JSON.stringify(value)) <= 4_096
+  );
 }
 
 function isSafeBoundedText(value: unknown, maxBytes: number): value is string {

@@ -104,7 +104,7 @@ class SecurityTests(unittest.TestCase):
     ) -> ParseRequest:
         return ParseRequest.model_validate(
             {
-                "protocolVersion": "1",
+                "protocolVersion": "2",
                 "requestId": str(uuid.uuid4()),
                 "operation": "parse",
                 "documentId": str(uuid.uuid4()),

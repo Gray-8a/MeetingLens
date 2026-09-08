@@ -26,7 +26,7 @@ describe("DeepSeekConsentDialog", () => {
     );
 
     const dialog = screen.getByRole("dialog", {
-      name: "Send this frozen transcript to DeepSeek?",
+      name: "Send this frozen meeting input to DeepSeek?",
     });
     expect(dialog).toHaveAttribute("aria-modal", "true");
     expect(screen.getByText("api.deepseek.com")).toBeInTheDocument();
@@ -34,6 +34,12 @@ describe("DeepSeekConsentDialog", () => {
     expect(screen.getByText("Frozen transcript text")).toBeInTheDocument();
     expect(
       screen.getByText("Speaker labels and speaker names"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Frozen parsed reference-document text"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Document page, section and table locations"),
     ).toBeInTheDocument();
     expect(dialog).toHaveTextContent("MeetingLens cannot recall");
     expect(dialog).not.toHaveTextContent("Synthetic transcript body");
@@ -133,7 +139,7 @@ describe("DeepSeekConsentDialog", () => {
       screen.getByRole("button", { name: "Consent this time and continue" }),
     );
     const heading = screen.getByRole("heading", {
-      name: "Send this frozen transcript to DeepSeek?",
+      name: "Send this frozen meeting input to DeepSeek?",
     });
     expect(heading).toHaveFocus();
 
@@ -182,13 +188,13 @@ describe("DeepSeekConsentDialog", () => {
     const user = userEvent.setup();
     render(<FocusHarness />);
     const trigger = screen.getByRole("button", {
-      name: "External transcript sharing",
+      name: "External summary input sharing",
     });
     trigger.focus();
     await user.click(trigger);
     expect(
       screen.getByRole("heading", {
-        name: "Send this frozen transcript to DeepSeek?",
+        name: "Send this frozen meeting input to DeepSeek?",
       }),
     ).toHaveFocus();
     await user.click(screen.getByRole("button", { name: "Cancel" }));
@@ -228,7 +234,7 @@ describe("DeepSeekConsentDialog", () => {
       />,
     );
     const heading = screen.getByRole("heading", {
-      name: "Send this frozen transcript to DeepSeek?",
+      name: "Send this frozen meeting input to DeepSeek?",
     });
     expect(heading).toHaveFocus();
     fireEvent.keyDown(heading, { key: "Tab", shiftKey: true });
@@ -247,7 +253,7 @@ describe("DeepSeekConsentDialog", () => {
     );
     expect(
       screen.getByRole("heading", {
-        name: "将这份冻结转录发送给 DeepSeek？",
+        name: "将这份冻结会议输入发送给 DeepSeek？",
       }),
     ).toBeInTheDocument();
     expect(

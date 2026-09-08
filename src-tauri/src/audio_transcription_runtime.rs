@@ -1337,7 +1337,7 @@ pub(crate) fn run_local_audio_smoke(
         })
         .map_err(|_| "foreign_key_check_failed")?;
     drop(connection);
-    if schema_version != 6 || integrity != "ok" || foreign_key_violations != 0 {
+    if schema_version != 7 || integrity != "ok" || foreign_key_violations != 0 {
         return Err("database_validation_failed");
     }
     reopened

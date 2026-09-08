@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "meetinglens-docling-worker"
-version = "0.1.0"
+version = "0.2.0"
 description = "Isolated, offline document parsing worker for MeetingLens"
 requires-python = "==3.12.*"
 dependencies = [

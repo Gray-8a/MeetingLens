@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from .artifacts import ArtifactPayloads, write_artifacts
+from .chunks import build_chunks
 from .constants import (
     DOCLING_VERSION,
     MAX_CPU_THREADS,
@@ -239,6 +240,7 @@ def _convert(
             document=document_dict,
             markdown=markdown,
             text=text,
+            chunks=build_chunks(document),
             page_count=page_count,
             has_ocr=request.parser_options.ocr,
             warnings=[],
@@ -267,10 +269,13 @@ def _convert_text(path: Path, document_id: str) -> ArtifactPayloads:
             document=document.export_to_dict(),
             markdown=document.export_to_markdown(escape_html=True),
             text=document.export_to_text(),
+            chunks=build_chunks(document),
             page_count=None,
             has_ocr=False,
             warnings=["Plain UTF-8 text was normalized into the Docling document schema."],
         )
+    except WorkerError:
+        raise
     except Exception as error:
         raise WorkerError(ParserErrorCode.FAILED) from error
 

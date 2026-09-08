@@ -9,8 +9,8 @@ use std::task::{Poll, Waker};
 
 use super::summary_error::{SummaryError, SummaryResult};
 use super::summary_model::{
-    SUMMARY_MAX_INPUT_BYTES, SummaryContent, SummaryOutputLanguage, SummarySnapshotSegment,
-    SummaryTemplate,
+    SUMMARY_MAX_INPUT_BYTES, SummaryContent, SummaryOutputLanguage, SummarySnapshotDocumentChunk,
+    SummarySnapshotSegment, SummaryTemplate,
 };
 #[cfg(any(test, debug_assertions))]
 use super::summary_model::{
@@ -130,6 +130,7 @@ pub struct SummaryProviderRequest {
     pub template: SummaryTemplate,
     pub output_language: SummaryOutputLanguage,
     pub segments: Vec<SummarySnapshotSegment>,
+    pub document_chunks: Vec<SummarySnapshotDocumentChunk>,
 }
 
 impl fmt::Debug for SummaryProviderRequest {
@@ -141,6 +142,7 @@ impl fmt::Debug for SummaryProviderRequest {
             .field("template", &self.template)
             .field("output_language", &self.output_language)
             .field("segment_count", &self.segments.len())
+            .field("document_chunk_count", &self.document_chunks.len())
             .finish()
     }
 }
@@ -283,11 +285,14 @@ impl SummaryProvider for DeterministicMockSummaryProvider {
                 .first()
                 .ok_or(SummaryError::SnapshotMissing)?;
             let last = request.segments.last().unwrap_or(first);
-            let overview_evidence = if first.evidence_id == last.evidence_id {
+            let mut overview_evidence = if first.evidence_id == last.evidence_id {
                 vec![first.evidence_id.clone()]
             } else {
                 vec![first.evidence_id.clone(), last.evidence_id.clone()]
             };
+            if let Some(document) = request.document_chunks.first() {
+                overview_evidence.push(document.evidence_id.clone());
+            }
 
             Ok(SummaryProviderOutput {
                 run_id: request.run_id.clone(),
@@ -295,8 +300,8 @@ impl SummaryProvider for DeterministicMockSummaryProvider {
                     schema_version: 1,
                     overview: SummaryClaim {
                         text: format!(
-                            "Deterministic mock summary generated from {} frozen transcript segment(s).",
-                            request.segments.len()
+                            "Deterministic mock summary generated from {} frozen transcript segment(s) and {} reference document chunk(s).",
+                            request.segments.len(), request.document_chunks.len()
                         ),
                         evidence_ids: overview_evidence,
                     },
@@ -385,6 +390,7 @@ mod tests {
                 segment("00000000-0000-4000-8000-000000000011", 0),
                 segment("00000000-0000-4000-8000-000000000012", 1),
             ],
+            document_chunks: Vec::new(),
         };
 
         let provider = DeterministicMockSummaryProvider::default();
@@ -409,6 +415,7 @@ mod tests {
             template: SummaryTemplate::Detailed,
             output_language: SummaryOutputLanguage::En,
             segments: Vec::new(),
+            document_chunks: Vec::new(),
         };
 
         assert_eq!(
@@ -427,6 +434,7 @@ mod tests {
             template: SummaryTemplate::Detailed,
             output_language: SummaryOutputLanguage::En,
             segments: vec![segment("00000000-0000-4000-8000-000000000011", 0)],
+            document_chunks: Vec::new(),
         };
 
         assert_eq!(
@@ -457,6 +465,7 @@ mod tests {
             template: SummaryTemplate::Detailed,
             output_language: SummaryOutputLanguage::En,
             segments: vec![segment("00000000-0000-4000-8000-000000000011", 0)],
+            document_chunks: Vec::new(),
         };
 
         for execution in 1..=2 {

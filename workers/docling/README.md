@@ -1,10 +1,10 @@
 # MeetingLens Docling Worker
 
-This directory contains the isolated, offline document-parser process delivered in PR #14. It is not the existing authenticated HTTP Sidecar and it exposes no network listener. Rust starts one Python process per request, sends one bounded JSON Lines request on standard input, reads one bounded response from standard output, and terminates the complete Windows Job Object on success, cancellation, timeout, crash, or resource-limit failure.
+This directory contains the isolated, offline document-parser process established in PR #14 and wired into the product by the current `feat/document-parsing-orchestration` delivery. It is not the authenticated HTTP Sidecar and exposes no network listener. Rust starts one Python process per attempt, sends one bounded JSON Lines request on standard input, reads one bounded response from standard output, and terminates the complete Windows Job Object on success, cancellation, timeout, crash, or resource-limit failure.
 
 ## Scope
 
-This PR provides only the parser foundation:
+The Worker and current orchestration provide:
 
 - an exact Python 3.12 dependency lock;
 - health, capability, and parse protocol operations;
@@ -13,8 +13,13 @@ This PR provides only the parser foundation:
 - bounded artifacts with hashes and relative paths;
 - explicit local-model provisioning and compatibility verification;
 - Rust process control, timeout, cancellation, memory limit, and output revalidation.
+- protocol-v2 normalized `chunks.jsonl` for append-only schema-v7 `document_chunks`;
+- product commands/status, private per-attempt staging, atomic persistence, and restart-safe recovery;
+- immutable optional document snapshots and typed document evidence in transcript-backed Summary runs.
 
-It does **not** add Tauri commands, WebView access, database migrations, parsing jobs, document state transitions, product UI, background supervision, packaging, DeepSeek calls, or remote model access. The foundation was merged in PR #14 and is retained as an optional reference-document enhancement. Under the Personal Edition roadmap, product wiring is planned for the single simplified `feat/document-parsing-orchestration` stage after `feat/audio-file-transcription`. That stage may add document chunks/evidence and one automatic retry; a second failure asks the user to re-import rather than introducing a general scheduler, long-lived checkpoints, multi-level recovery, or an enterprise monitoring surface. It is not a prerequisite for pasted/TXT/SRT/VTT transcripts or the first usable transcript-only minutes. Realtime capture work is Frozen/Deferred, and future PR numbers are descriptive rather than authoritative.
+It does **not** create a general parsing-job scheduler, long-lived supervisor, checkpoint system, enterprise monitoring surface, release bundle, DeepSeek client, or remote-model path. One parse has at most two attempts: only a retryable first failure receives one automatic retry; the next/non-retryable failure asks the user to delete and re-import. Cancellation kills the process tree and cleans staging. On restart, interrupted parsing is marked failed safely and is never replayed. Pasted/TXT/SRT/VTT transcripts continue through the bounded Rust transcript parser and are never reparsed here.
+
+Documents are optional references and remain semantically separate from transcripts. A Summary run still requires at least one transcript; combined ordinals are transcript first, and every decision/action item needs transcript evidence. Local parsing never calls DeepSeek. Only an explicit user Generate action plus Consent v2 may send normalized text/structure from selected immutable document snapshots; original files, paths, unselected documents, and Worker artifacts never leave the device.
 
 ## Locked environment
 
@@ -35,7 +40,7 @@ The 92 installed distributions were audited from locked metadata. The main parsi
 
 ## Local models
 
-Model downloads are never implicit. The explicit provisioning command defaults to a versioned directory under `%LOCALAPPDATA%\MeetingLens`, outside the repository and outside the system temporary directory:
+Model downloads are never implicit. The explicit provisioning command uses `%LOCALAPPDATA%\MeetingLens\docling\models\2.117.0`, outside the repository, outside ordinary MeetingLens app-data, and outside the system temporary directory:
 
 ```powershell
 .\scripts\provision-docling-models.ps1
@@ -58,7 +63,7 @@ uv run --project workers/docling --frozen python workers/docling/windows_smoke.p
   --models-root "$env:LOCALAPPDATA\MeetingLens\docling\models\2.117.0"
 ```
 
-The validated model set contains 14 inventoried files (564,981,412 bytes). The Windows CPU smoke parses programmatically generated TXT, Markdown, CSV, DOCX, PPTX, XLSX, digital PDF, PNG/JPEG OCR, and scanned-PDF OCR with networking forced offline. It also checks missing models, URL/root/hash rejection, page/output limits, artifact integrity/path hygiene, network listeners, and residual processes. The final acceptance run took about 78 seconds and observed a peak process-tree RSS of 1,665,912,832 bytes, below the fixed 4 GiB Job Object cap. Results vary by CPU and available memory.
+The validated model set contains 14 inventoried files (564,981,412 bytes). The Windows CPU smoke parses programmatically generated TXT, Markdown, CSV, DOCX, PPTX, XLSX, digital PDF, PNG/JPEG OCR, and scanned-PDF OCR with networking forced offline. It also checks missing models, URL/root/hash rejection, page/output limits, artifact integrity/path hygiene, network listeners, and residual processes. The final acceptance run took about 82 seconds and observed a peak process-tree RSS of 1,340,301,312 bytes, below the fixed 4 GiB Job Object cap. The OCR fixtures use an explicit legible font, and every format must recover synthetic keywords into normalized chunks; both `.jpg` and `.jpeg` are exercised. No network listeners or residual Workers remained, and temporary data was removed. Results vary by CPU and available memory.
 
 ## Security contract
 
@@ -68,6 +73,8 @@ The validated model set contains 14 inventoried files (564,981,412 bytes). The W
 - Network-backed Docling services, plugins, and remote models are disabled.
 - Limits are 300 pages, 100 MiB input, 128 MiB total artifacts, 1 MiB protocol messages, 150 seconds, and 4 GiB Job Object memory in production.
 - Responses and errors never contain source text, absolute paths, SQL, raw exceptions, environment values, or credentials.
-- Output is limited to `document.json`, `content.md`, `content.txt`, and `manifest.json`, written atomically beneath the approved parser-staging root.
+- Output is limited to `document.json`, `content.md`, `content.txt`, `chunks.jsonl`, and `manifest.json`, written atomically beneath the approved parser-staging root.
 
-The current adapter handles TXT, Markdown, CSV, DOCX, PPTX, and XLSX without model weights. PDF, PNG, JPEG, and OCR require the compatible local model set. The later simplified orchestration PR must persist only Rust-revalidated artifacts and stable status/error data, keep paths hidden from React, retry a failed parse at most once automatically, and never send source files externally without an explicit future scope change.
+The adapter handles TXT, Markdown, CSV, DOCX, PPTX, and XLSX without model weights. PDF, PNG, JPG/JPEG, and OCR require the compatible local model set. Current product parsing is available only from a source checkout under debug/`tauri dev`; release Worker/model bundling remains Frozen. Rust persists only revalidated normalized chunks and stable status/error data, keeps paths and Worker stderr hidden from React, and never treats Docling output as transcript data.
+
+The current PR also upgrades new DeepSeek Summary provenance to `summary-deepseek-v2`. A historical terminal v1 run with the same provider/mode/model may still parent a new revision; the old revision retains v1 provenance, while the child freezes the current v2 contract and current selected scope.
