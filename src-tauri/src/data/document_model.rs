@@ -1,3 +1,5 @@
+use std::fmt;
+
 use serde::{Deserialize, Serialize};
 
 use super::document_error::{DocumentError, DocumentResult};
@@ -5,6 +7,10 @@ use super::document_error::{DocumentError, DocumentResult};
 pub const ALLOWED_DOCUMENT_EXTENSIONS: &[&str] = &[
     "pdf", "docx", "pptx", "xlsx", "txt", "md", "csv", "png", "jpg", "jpeg",
 ];
+pub const DOCUMENT_CHUNK_MAX_BYTES: usize = 65_536;
+pub const DOCUMENT_CHUNK_MAX_COUNT: usize = 20_000;
+pub const DOCUMENT_CHUNKS_MAX_TOTAL_BYTES: usize = 10 * 1024 * 1024;
+pub const DOCUMENT_CHUNK_SCHEMA_VERSION: u64 = 1;
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -66,6 +72,104 @@ pub struct Document {
     pub parser_version_optional: Option<String>,
     pub page_count_optional: Option<u64>,
     pub created_at: String,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DocumentChunkKind {
+    Heading,
+    ListItem,
+    Paragraph,
+    Table,
+}
+
+impl DocumentChunkKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Heading => "heading",
+            Self::ListItem => "list_item",
+            Self::Paragraph => "paragraph",
+            Self::Table => "table",
+        }
+    }
+
+    pub(crate) fn from_database(value: &str) -> DocumentResult<Self> {
+        match value {
+            "heading" => Ok(Self::Heading),
+            "list_item" => Ok(Self::ListItem),
+            "paragraph" => Ok(Self::Paragraph),
+            "table" => Ok(Self::Table),
+            _ => Err(DocumentError::Internal),
+        }
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct DocumentChunkInput {
+    pub kind: DocumentChunkKind,
+    pub text: String,
+    pub content_sha256: String,
+    pub page_start: Option<u64>,
+    pub page_end: Option<u64>,
+    pub section_path_json: String,
+    pub table_ordinal: Option<u64>,
+    pub chunk_schema_version: u64,
+}
+
+impl fmt::Debug for DocumentChunkInput {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DocumentChunkInput")
+            .field("kind", &self.kind)
+            .field("text", &"[REDACTED]")
+            .field("content_sha256", &"[REDACTED]")
+            .field("page_start", &self.page_start)
+            .field("page_end", &self.page_end)
+            .field("section_path_json", &"[REDACTED]")
+            .field("table_ordinal", &self.table_ordinal)
+            .field("chunk_schema_version", &self.chunk_schema_version)
+            .finish()
+    }
+}
+
+#[derive(Clone, PartialEq, Eq)]
+pub struct DocumentChunk {
+    pub id: String,
+    pub document_id: String,
+    pub meeting_id: String,
+    pub ordinal: u64,
+    pub kind: DocumentChunkKind,
+    pub text: String,
+    pub content_sha256: String,
+    pub page_start: Option<u64>,
+    pub page_end: Option<u64>,
+    pub section_path_json: String,
+    pub table_ordinal: Option<u64>,
+    pub parser_version: String,
+    pub chunk_schema_version: u64,
+    pub created_at: String,
+}
+
+impl fmt::Debug for DocumentChunk {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DocumentChunk")
+            .field("id", &self.id)
+            .field("document_id", &self.document_id)
+            .field("meeting_id", &self.meeting_id)
+            .field("ordinal", &self.ordinal)
+            .field("kind", &self.kind)
+            .field("text", &"[REDACTED]")
+            .field("content_sha256", &"[REDACTED]")
+            .field("page_start", &self.page_start)
+            .field("page_end", &self.page_end)
+            .field("section_path_json", &"[REDACTED]")
+            .field("table_ordinal", &self.table_ordinal)
+            .field("parser_version", &self.parser_version)
+            .field("chunk_schema_version", &self.chunk_schema_version)
+            .field("created_at", &self.created_at)
+            .finish()
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -150,6 +254,8 @@ pub struct ReconcileReport {
     pub quarantined_files: u64,
     pub deletions_completed: u64,
     pub deletions_failed: u64,
+    pub parses_failed_closed: u64,
+    pub parsed_integrity_failures: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

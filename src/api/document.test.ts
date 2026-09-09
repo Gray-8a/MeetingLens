@@ -23,6 +23,45 @@ const documentDto = {
   pageCount: null,
 };
 
+const parseJobId = "33333333-3333-4333-8333-333333333333";
+
+const parserPolicy = {
+  workerAvailable: true,
+  modelsAvailable: true,
+  busy: false,
+  parserVersion: "2.117.0",
+  device: "cpu",
+  maxInputBytes: 100 * 1024 * 1024,
+  maxPages: 300,
+  timeoutMs: 150_000,
+  formats: [
+    ["pdf", true, true, true],
+    ["docx", true, false, false],
+    ["pptx", true, false, false],
+    ["xlsx", true, false, false],
+    ["txt", true, false, false],
+    ["md", true, false, false],
+    ["csv", true, false, false],
+    ["png", true, true, true],
+    ["jpg", true, true, true],
+    ["jpeg", true, true, true],
+  ].map(([extension, available, requiresModels, ocrAvailable]) => ({
+    extension,
+    available,
+    requiresModels,
+    ocrAvailable,
+  })),
+};
+
+const parseProgress = {
+  jobId: parseJobId,
+  documentId: documentDto.id,
+  phase: "parsing",
+  status: "running",
+  attempt: 1,
+  errorCode: null,
+};
+
 class FakeInvokeAdapter implements InvokeAdapter {
   calls: Array<{ command: string; args?: InvokeArguments }> = [];
   response: unknown = null;
@@ -203,6 +242,171 @@ describe("documentApi", () => {
     ).resolves.toMatchObject({ cancelled: true });
   });
 
+  it("parses the fixed local parser policy through the approved command", async () => {
+    const invoke = new FakeInvokeAdapter();
+    invoke.response = parserPolicy;
+    const api = createDocumentApi(invoke, new FakeProgressAdapter());
+
+    await expect(api.getParserPolicy()).resolves.toEqual(parserPolicy);
+    expect(invoke.calls).toEqual([
+      {
+        command: documentCommandNames.getParserPolicy,
+        args: undefined,
+      },
+    ]);
+  });
+
+  it("parses by document ID and routes status and cancellation by job ID", async () => {
+    const invoke = new FakeInvokeAdapter();
+    const progress = new FakeProgressAdapter();
+    const api = createDocumentApi(invoke, progress);
+    const received: unknown[] = [];
+    const parsedDocument = {
+      ...documentDto,
+      status: "parsed",
+      parserVersion: "2.117.0",
+      pageCount: 1,
+    };
+    invoke.response = parsedDocument;
+    invoke.beforeResolve = () => progress.handler?.(parseProgress);
+
+    await expect(
+      api.parse(documentDto.id, (event) => received.push(event)),
+    ).resolves.toEqual(parsedDocument);
+    expect(invoke.calls[0]).toEqual({
+      command: documentCommandNames.parse,
+      args: {
+        request: { documentId: documentDto.id },
+        onProgress: progress.argument,
+      },
+    });
+    expect(received).toEqual([parseProgress]);
+    expect(progress.disposed).toBe(true);
+
+    invoke.beforeResolve = null;
+    invoke.response = {
+      ...parseProgress,
+      phase: "retrying",
+      attempt: 2,
+      errorCode: "parser_worker_crashed",
+    };
+    await expect(api.getParseStatus(parseJobId)).resolves.toEqual(
+      invoke.response,
+    );
+    expect(invoke.calls[invoke.calls.length - 1]).toEqual({
+      command: documentCommandNames.getParseStatus,
+      args: { request: { jobId: parseJobId } },
+    });
+
+    invoke.response = {
+      ...parseProgress,
+      phase: "cancelled",
+      status: "cancelled",
+      errorCode: "parser_cancelled",
+    };
+    await expect(api.cancelParse(parseJobId)).resolves.toEqual(invoke.response);
+    expect(invoke.calls[invoke.calls.length - 1]).toEqual({
+      command: documentCommandNames.cancelParse,
+      args: { request: { jobId: parseJobId } },
+    });
+    expect(JSON.stringify(invoke.calls)).not.toMatch(
+      /(?:source|storage|artifact|file)?path|sha(?:256)?|manifest|chunks?|content|text/i,
+    );
+  });
+
+  it("keeps only safe active parse progress available across page remounts", async () => {
+    let resolveInvoke: (value: unknown) => void = () => undefined;
+    const pending = new Promise<unknown>((resolve) => {
+      resolveInvoke = resolve;
+    });
+    const invoke: InvokeAdapter = {
+      invoke: () => pending,
+    };
+    const progress = new FakeProgressAdapter();
+    const api = createDocumentApi(invoke, progress);
+    const parsedDocument = {
+      ...documentDto,
+      status: "parsed",
+      parserVersion: "2.117.0",
+      pageCount: 1,
+    };
+
+    const parsePromise = api.parse(documentDto.id, () => undefined);
+    progress.handler?.(parseProgress);
+    expect(api.getActiveParseProgress(documentDto.id)).toEqual(parseProgress);
+
+    resolveInvoke(parsedDocument);
+    await expect(parsePromise).resolves.toEqual(parsedDocument);
+    expect(api.getActiveParseProgress(documentDto.id)).toBeNull();
+    expect(progress.disposed).toBe(true);
+  });
+
+  it("rejects an asynchronous malformed channel event and cancels the known job", async () => {
+    let resolveParse: (value: unknown) => void = () => undefined;
+    const pendingParse = new Promise<unknown>((resolve) => {
+      resolveParse = resolve;
+    });
+    const calls: string[] = [];
+    const invoke: InvokeAdapter = {
+      invoke: (command) => {
+        calls.push(command);
+        if (command === documentCommandNames.cancelParse) {
+          return Promise.resolve({
+            ...parseProgress,
+            phase: "cancelled",
+            status: "cancelled",
+            errorCode: "parser_cancelled",
+          });
+        }
+        return pendingParse;
+      },
+    };
+    const progress = new FakeProgressAdapter();
+    const api = createDocumentApi(invoke, progress);
+    const parsePromise = api.parse(documentDto.id, () => undefined);
+
+    progress.handler?.(parseProgress);
+    await Promise.resolve();
+    progress.handler?.({ ...parseProgress, text: "untrusted body" });
+
+    await expect(parsePromise).rejects.toMatchObject({
+      code: "internal_error",
+    });
+    expect(calls).toEqual([
+      documentCommandNames.parse,
+      documentCommandNames.cancelParse,
+    ]);
+    expect(progress.disposed).toBe(true);
+    resolveParse({
+      ...documentDto,
+      status: "parsed",
+      parserVersion: "2.117.0",
+    });
+    await Promise.resolve();
+  });
+
+  it("rejects non-terminal or unprovenanced parse success DTOs", async () => {
+    const invalidResults = [
+      documentDto,
+      {
+        ...documentDto,
+        status: "parsed",
+        failureCode: "parser_failed",
+        parserVersion: "2.117.0",
+      },
+      { ...documentDto, status: "parsed", parserVersion: null },
+    ];
+
+    for (const response of invalidResults) {
+      const invoke = new FakeInvokeAdapter();
+      invoke.response = response;
+      const api = createDocumentApi(invoke, new FakeProgressAdapter());
+      await expect(
+        api.parse(documentDto.id, () => undefined),
+      ).rejects.toMatchObject({ code: "internal_error" });
+    }
+  });
+
   it("converts stable backend failures and unknown values safely", async () => {
     const invoke = new FakeInvokeAdapter();
     const api = createDocumentApi(invoke, new FakeProgressAdapter());
@@ -221,6 +425,38 @@ describe("documentApi", () => {
     await expect(api.list(documentDto.meetingId)).rejects.toEqual(
       new DocumentApiError("internal_error", false),
     );
+  });
+
+  it.each([
+    "parser_unavailable",
+    "parser_environment_missing",
+    "parser_dependency_incompatible",
+    "parser_models_missing",
+    "parser_models_incompatible",
+    "parser_invalid_input",
+    "parser_unsupported_type",
+    "parser_ocr_unavailable",
+    "parser_protocol_error",
+    "parser_worker_start_failed",
+    "parser_worker_crashed",
+    "parser_timeout",
+    "parser_cancelled",
+    "parser_resource_limit",
+    "parser_page_limit_exceeded",
+    "parser_output_too_large",
+    "parser_partial_result",
+    "parser_integrity_failed",
+    "parser_failed",
+  ] as const)("accepts the stable %s backend error", async (code) => {
+    const invoke = new FakeInvokeAdapter();
+    const api = createDocumentApi(invoke, new FakeProgressAdapter());
+    invoke.error = {
+      code,
+      message: "private backend wording is ignored",
+      retryable: true,
+    };
+
+    await expect(api.getParserPolicy()).rejects.toMatchObject({ code });
   });
 
   it("fails closed for invalid progress and response payloads", async () => {
@@ -285,13 +521,165 @@ describe("documentApi", () => {
     ).rejects.toMatchObject({ code: "internal_error" });
 
     invoke.response = { ...documentDto, status: "future_status" };
-    await expect(api.get(documentDto.id)).resolves.toMatchObject({
-      status: "unknown",
+    await expect(api.get(documentDto.id)).rejects.toMatchObject({
+      code: "internal_error",
     });
     invoke.response = { ...documentDto, storageRelativePath: "private" };
     await expect(api.get(documentDto.id)).rejects.toMatchObject({
       code: "internal_error",
     });
+    invoke.response = {
+      ...documentDto,
+      status: "parse_failed",
+      failureCode: "parser_timeout",
+    };
+    await expect(api.get(documentDto.id)).resolves.toMatchObject({
+      status: "parse_failed",
+      failureCode: "parser_timeout",
+    });
+    invoke.response = { ...documentDto, failureCode: "future_error" };
+    await expect(api.get(documentDto.id)).rejects.toMatchObject({
+      code: "internal_error",
+    });
+  });
+
+  it("keeps the document list readable after Rust recovers an interrupted parse", async () => {
+    const invoke = new FakeInvokeAdapter();
+    const api = createDocumentApi(invoke, new FakeProgressAdapter());
+    const interrupted = {
+      ...documentDto,
+      status: "parse_failed",
+      failureCode: "document_parse_interrupted",
+    };
+    invoke.response = { documents: [interrupted] };
+    await expect(api.list(documentDto.meetingId)).resolves.toEqual({
+      documents: [interrupted],
+    });
+    invoke.response = interrupted;
+    await expect(api.get(documentDto.id)).resolves.toEqual(interrupted);
+  });
+
+  it("fails closed for malformed parser policy and capability payloads", async () => {
+    const invoke = new FakeInvokeAdapter();
+    const api = createDocumentApi(invoke, new FakeProgressAdapter());
+    const invalidPolicies = [
+      { ...parserPolicy, device: "gpu" },
+      { ...parserPolicy, maxPages: 0 },
+      { ...parserPolicy, parserVersion: "2.117.0\u0000private" },
+      { ...parserPolicy, modelsPath: "C:\\private\\models" },
+      {
+        ...parserPolicy,
+        formats: parserPolicy.formats.slice(1),
+      },
+      {
+        ...parserPolicy,
+        formats: parserPolicy.formats.map((format, index) =>
+          index === 0 ? { ...format, extension: "txt" } : format,
+        ),
+      },
+      {
+        ...parserPolicy,
+        formats: parserPolicy.formats.map((format, index) =>
+          index === 0
+            ? { ...format, manifest: "private worker details" }
+            : format,
+        ),
+      },
+    ];
+
+    for (const policy of invalidPolicies) {
+      invoke.response = policy;
+      await expect(api.getParserPolicy()).rejects.toMatchObject({
+        code: "internal_error",
+      });
+    }
+  });
+
+  it("fails closed for malformed parse progress and leaked parser data", async () => {
+    const invalidProgress = [
+      { ...parseProgress, phase: "future_phase" },
+      { ...parseProgress, status: "failed" },
+      { ...parseProgress, attempt: 3 },
+      { ...parseProgress, errorCode: "future_error" },
+      { ...parseProgress, errorCode: "parser_failed" },
+      {
+        ...parseProgress,
+        phase: "retrying",
+        attempt: 1,
+        errorCode: "parser_worker_crashed",
+      },
+      {
+        ...parseProgress,
+        phase: "completed",
+        status: "completed",
+        errorCode: "parser_failed",
+      },
+      { ...parseProgress, sourcePath: "C:\\private\\document.pdf" },
+      { ...parseProgress, sha256: "synthetic-hash" },
+      { ...parseProgress, manifest: { parser: "private" } },
+      { ...parseProgress, text: "synthetic meeting body" },
+    ];
+
+    for (const event of invalidProgress) {
+      const invoke = new FakeInvokeAdapter();
+      const progress = new FakeProgressAdapter();
+      const api = createDocumentApi(invoke, progress);
+      invoke.response = { ...documentDto, status: "parsed" };
+      invoke.beforeResolve = () => progress.handler?.(event);
+      await expect(
+        api.parse(documentDto.id, () => undefined),
+      ).rejects.toMatchObject({ code: "internal_error" });
+      expect(progress.disposed).toBe(true);
+    }
+  });
+
+  it("rejects cross-document progress, cross-job status and leaked parse results", async () => {
+    const invoke = new FakeInvokeAdapter();
+    const progress = new FakeProgressAdapter();
+    const api = createDocumentApi(invoke, progress);
+    invoke.response = { ...documentDto, status: "parsed" };
+    invoke.beforeResolve = () =>
+      progress.handler?.({
+        ...parseProgress,
+        documentId: "44444444-4444-4444-8444-444444444444",
+      });
+    await expect(
+      api.parse(documentDto.id, () => undefined),
+    ).rejects.toMatchObject({ code: "internal_error" });
+
+    invoke.beforeResolve = null;
+    invoke.response = {
+      ...parseProgress,
+      jobId: "44444444-4444-4444-8444-444444444444",
+    };
+    await expect(api.getParseStatus(parseJobId)).rejects.toMatchObject({
+      code: "internal_error",
+    });
+
+    invoke.response = {
+      ...documentDto,
+      status: "parsed",
+      chunks: [{ text: "synthetic meeting body" }],
+    };
+    await expect(
+      api.parse(documentDto.id, () => undefined),
+    ).rejects.toMatchObject({ code: "internal_error" });
+  });
+
+  it("rejects invalid parse and job IDs before invoking Rust", async () => {
+    const invoke = new FakeInvokeAdapter();
+    const api = createDocumentApi(invoke, new FakeProgressAdapter());
+
+    await expect(
+      api.parse("not-a-document-id", () => undefined),
+    ).rejects.toMatchObject({ code: "parser_invalid_input" });
+    await expect(api.getParseStatus("not-a-job-id")).rejects.toMatchObject({
+      code: "parser_invalid_input",
+    });
+    await expect(api.cancelParse("not-a-job-id")).rejects.toMatchObject({
+      code: "parser_invalid_input",
+    });
+    expect(invoke.calls).toEqual([]);
   });
 
   it("does not expose open, reveal, read, source-path or storage APIs", () => {
@@ -302,8 +690,13 @@ describe("documentApi", () => {
     expect(Object.keys(api).sort()).toEqual(
       [
         "get",
+        "getActiveParseProgress",
         "getImportPolicy",
+        "getParseStatus",
+        "getParserPolicy",
         "list",
+        "cancelParse",
+        "parse",
         "requestDelete",
         "retryDelete",
         "selectAndImport",

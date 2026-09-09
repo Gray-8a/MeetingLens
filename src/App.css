@@ -1439,6 +1439,17 @@ input[aria-invalid="true"] {
   padding: 5px 9px;
 }
 
+.document-parser-policy {
+  align-items: flex-start;
+  display: grid;
+  gap: 6px;
+}
+
+.document-parser-policy > span:first-child {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+
 .document-status--staged,
 .document-status--parsed {
   border-color: rgba(44, 157, 105, 0.38);
@@ -1514,6 +1525,15 @@ input[aria-invalid="true"] {
 .document-row__main span {
   color: var(--muted);
   font-size: 0.82rem;
+}
+
+.document-row__main .document-parse-detail {
+  color: var(--success);
+  overflow-wrap: anywhere;
+}
+
+.document-row__main .document-parse-detail--failed {
+  color: var(--danger);
 }
 
 .document-row__actions,

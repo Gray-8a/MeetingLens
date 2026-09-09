@@ -66,9 +66,24 @@ class OfflineIntegrationTests(unittest.TestCase):
     def test_parses_utf8_text_into_official_docling_schema(self) -> None:
         result, output = self._parse_file("synthetic.txt", "Synthetic UTF-8 文本。")
         self.assertEqual(result["manifest"]["status"], "success")
+        self.assertEqual(result["manifest"]["chunkSchemaVersion"], 1)
         document = json.loads((output / "document.json").read_text(encoding="utf-8"))
         self.assertIn("texts", document)
         self.assertIn("Synthetic UTF-8", (output / "content.txt").read_text(encoding="utf-8"))
+        chunks = [
+            json.loads(line)
+            for line in (output / "chunks.jsonl").read_text(encoding="utf-8").splitlines()
+        ]
+        self.assertEqual(len(chunks), 1)
+        self.assertEqual(chunks[0]["kind"], "paragraph")
+        self.assertIn("Synthetic UTF-8", chunks[0]["text"])
+
+    def test_text_chunk_limit_preserves_the_non_retryable_output_error(self) -> None:
+        with patch("meetinglens_docling_worker.chunks.MAX_TOTAL_CHUNK_TEXT_BYTES", 3):
+            with self.assertRaises(WorkerError) as context:
+                self._parse_file("oversized.txt", "Synthetic bounded text.")
+        self.assertEqual(context.exception.code, ParserErrorCode.OUTPUT_TOO_LARGE)
+        self.assertFalse(context.exception.retryable)
 
     def test_parses_markdown_offline(self) -> None:
         _, output = self._parse_file("synthetic.md", "# Synthetic\n\nOffline content.")
@@ -115,7 +130,7 @@ class OfflineIntegrationTests(unittest.TestCase):
         output.mkdir()
         request = ParseRequest.model_validate(
             {
-                "protocolVersion": "1",
+                "protocolVersion": "2",
                 "requestId": str(uuid.uuid4()),
                 "operation": "parse",
                 "documentId": str(uuid.uuid4()),

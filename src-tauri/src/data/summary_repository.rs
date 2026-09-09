@@ -5,7 +5,8 @@ use rusqlite::{Connection, OptionalExtension, Row, Transaction, params};
 use super::summary_error::{SummaryError, SummaryResult};
 use super::summary_model::{
     SummaryContent, SummaryEvidence, SummaryEvidencePage, SummaryOutputLanguage, SummaryRun,
-    SummaryRunPage, SummarySnapshotSegment, SummaryStatus, SummaryTemplate,
+    SummaryRunPage, SummarySnapshotDocumentChunk, SummarySnapshotSegment, SummaryStatus,
+    SummaryTemplate,
 };
 
 const SUMMARY_COLUMNS: &str = "
@@ -13,7 +14,8 @@ const SUMMARY_COLUMNS: &str = "
     template, output_language, status, provider, provider_mode, model, prompt_version, content_json,
     error_code, source_count, input_segment_count, input_bytes, is_stale, stale_reason,
     stale_at, is_user_edited, snapshot_created_at, created_at, started_at, finished_at,
-    cancel_requested_at, updated_at
+    cancel_requested_at, updated_at, document_count, input_document_chunk_count,
+    document_input_bytes
 ";
 
 const SNAPSHOT_COLUMNS: &str = "
@@ -30,6 +32,22 @@ const EVIDENCE_COLUMNS: &str = "
     transcript_segment_id_snapshot, segment_revision, label, speaker_snapshot,
     start_offset_ms, end_offset_ms, ordinal, global_ordinal, excerpt,
     source_deleted, created_at
+";
+
+const DOCUMENT_SNAPSHOT_COLUMNS: &str = "
+    id, summary_id, meeting_id, document_id_snapshot, document_chunk_id_snapshot,
+    document_ordinal, chunk_ordinal, global_ordinal, chunk_kind_snapshot,
+    document_display_name_snapshot, document_sha256_snapshot, chunk_sha256_snapshot,
+    page_start_snapshot, page_end_snapshot, section_path_json_snapshot,
+    table_ordinal_snapshot, parser_version_snapshot, chunk_schema_version_snapshot,
+    text_snapshot, snapshot_at
+";
+
+const DOCUMENT_EVIDENCE_COLUMNS: &str = "
+    id, summary_id, meeting_id, kind, document_id_snapshot,
+    document_chunk_id_snapshot, label, parser_version_snapshot,
+    page_start, page_end, section_path_json, table_ordinal, ordinal,
+    global_ordinal, excerpt, source_deleted, created_at
 ";
 
 pub(crate) struct NewSummary<'a> {
@@ -49,6 +67,9 @@ pub(crate) struct NewSummary<'a> {
     pub(crate) source_count: usize,
     pub(crate) input_segment_count: usize,
     pub(crate) input_bytes: usize,
+    pub(crate) document_count: usize,
+    pub(crate) input_document_chunk_count: usize,
+    pub(crate) document_input_bytes: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -68,11 +89,12 @@ pub(crate) fn insert_summary(
                 run_purpose, trigger_kind, meeting_title_snapshot,
                 meeting_primary_language_snapshot, template, output_language, status,
                 provider, provider_mode, model, prompt_version, source_count,
-                input_segment_count, input_bytes, snapshot_created_at,
+                input_segment_count, input_bytes, document_count,
+                input_document_chunk_count, document_input_bytes, snapshot_created_at,
                 created_at, updated_at
             ) VALUES (
                 ?1, ?2, ?3, ?4, ?5, 'final', 'manual', ?6, ?7, ?8, ?9, 'queued',
-                ?10, ?11, ?12, ?13, ?14, ?15, ?16,
+                ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18, ?19,
                 strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
                 strftime('%Y-%m-%dT%H:%M:%fZ', 'now'),
                 strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
@@ -95,6 +117,57 @@ pub(crate) fn insert_summary(
                 sqlite_usize(summary.source_count)?,
                 sqlite_usize(summary.input_segment_count)?,
                 sqlite_usize(summary.input_bytes)?,
+                sqlite_usize(summary.document_count)?,
+                sqlite_usize(summary.input_document_chunk_count)?,
+                sqlite_usize(summary.document_input_bytes)?,
+            ],
+        )
+        .map_err(SummaryError::from)?;
+    Ok(())
+}
+
+pub(crate) fn insert_document_snapshot(
+    transaction: &Transaction<'_>,
+    chunk: &SummarySnapshotDocumentChunk,
+) -> SummaryResult<()> {
+    let section_path_json =
+        serde_json::to_string(&chunk.section_path).map_err(|_| SummaryError::PersistenceFailed)?;
+    transaction
+        .execute(
+            "
+            INSERT INTO summary_document_sources(
+                id, summary_id, meeting_id, document_id_snapshot, document_chunk_id_snapshot,
+                document_ordinal, chunk_ordinal, global_ordinal, chunk_kind_snapshot,
+                document_display_name_snapshot, document_sha256_snapshot, chunk_sha256_snapshot,
+                page_start_snapshot, page_end_snapshot, section_path_json_snapshot,
+                table_ordinal_snapshot, parser_version_snapshot, chunk_schema_version_snapshot,
+                text_snapshot, snapshot_at
+            ) VALUES (
+                ?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12,
+                ?13, ?14, ?15, ?16, ?17, ?18, ?19, ?20
+            )
+            ",
+            params![
+                &chunk.evidence_id,
+                &chunk.summary_id,
+                &chunk.meeting_id,
+                &chunk.document_id,
+                &chunk.chunk_id,
+                sqlite_integer(chunk.document_ordinal)?,
+                sqlite_integer(chunk.chunk_ordinal)?,
+                sqlite_integer(chunk.global_ordinal)?,
+                &chunk.chunk_kind,
+                &chunk.document_display_name,
+                &chunk.document_sha256,
+                &chunk.chunk_sha256,
+                optional_sqlite_integer(chunk.page_start)?,
+                optional_sqlite_integer(chunk.page_end)?,
+                section_path_json,
+                optional_sqlite_integer(chunk.table_ordinal)?,
+                &chunk.parser_version,
+                i64::from(chunk.chunk_schema_version),
+                &chunk.text,
+                &chunk.snapshot_at,
             ],
         )
         .map_err(SummaryError::from)?;
@@ -294,6 +367,28 @@ pub(crate) fn source_ids_for_summary(
     Ok(source_ids)
 }
 
+pub(crate) fn document_ids_for_summary(
+    connection: &Connection,
+    summary_id: &str,
+) -> SummaryResult<Vec<String>> {
+    let mut statement = connection
+        .prepare(
+            "
+            SELECT document_id_snapshot
+            FROM summary_document_sources
+            WHERE summary_id = ?1
+            GROUP BY document_ordinal, document_id_snapshot
+            ORDER BY document_ordinal
+            ",
+        )
+        .map_err(SummaryError::from)?;
+    statement
+        .query_map([summary_id], |row| row.get(0))
+        .map_err(SummaryError::from)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(SummaryError::from)
+}
+
 pub(crate) fn source_input_totals(
     connection: &Connection,
     meeting_id: &str,
@@ -337,6 +432,25 @@ pub(crate) fn load_snapshot(
         return Err(SummaryError::SnapshotMissing);
     }
     Ok(segments)
+}
+
+pub(crate) fn load_document_snapshot(
+    connection: &Connection,
+    meeting_id: &str,
+    summary_id: &str,
+) -> SummaryResult<Vec<SummarySnapshotDocumentChunk>> {
+    let sql = format!(
+        "SELECT {DOCUMENT_SNAPSHOT_COLUMNS} FROM summary_document_sources \
+         WHERE meeting_id = ?1 AND summary_id = ?2 AND source_deleted = 0 \
+           AND text_snapshot IS NOT NULL \
+         ORDER BY global_ordinal"
+    );
+    let mut statement = connection.prepare(&sql).map_err(SummaryError::from)?;
+    statement
+        .query_map(params![meeting_id, summary_id], document_snapshot_from_row)
+        .map_err(SummaryError::from)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(SummaryError::from)
 }
 
 pub(crate) fn transition_to_running(
@@ -394,6 +508,26 @@ pub(crate) fn complete(
 }
 
 fn insert_evidence(transaction: &Transaction<'_>, evidence: &SummaryEvidence) -> SummaryResult<()> {
+    if evidence.kind == "document" {
+        return insert_document_evidence(transaction, evidence);
+    }
+    if evidence.kind != "transcript"
+        || evidence.document_chunk_id.is_some()
+        || evidence.parser_version.is_some()
+        || !evidence.section_path.is_empty()
+        || evidence.page_start.is_some()
+        || evidence.page_end.is_some()
+        || evidence.table_ordinal.is_some()
+    {
+        return Err(SummaryError::EvidenceInvalid);
+    }
+    let transcript_segment_id = evidence
+        .transcript_segment_id
+        .as_deref()
+        .ok_or(SummaryError::EvidenceInvalid)?;
+    let segment_revision = evidence
+        .segment_revision
+        .ok_or(SummaryError::EvidenceInvalid)?;
     transaction
         .execute(
             "
@@ -413,12 +547,70 @@ fn insert_evidence(transaction: &Transaction<'_>, evidence: &SummaryEvidence) ->
                 &evidence.summary_id,
                 &evidence.meeting_id,
                 &evidence.source_id,
-                &evidence.transcript_segment_id,
-                sqlite_integer(evidence.segment_revision)?,
+                transcript_segment_id,
+                sqlite_integer(segment_revision)?,
                 &evidence.label,
                 &evidence.speaker_snapshot,
                 optional_sqlite_integer(evidence.start_offset_ms)?,
                 optional_sqlite_integer(evidence.end_offset_ms)?,
+                sqlite_integer(evidence.ordinal)?,
+                sqlite_integer(evidence.global_ordinal)?,
+                &evidence.excerpt,
+                i64::from(evidence.source_deleted),
+            ],
+        )
+        .map_err(SummaryError::from)?;
+    Ok(())
+}
+
+fn insert_document_evidence(
+    transaction: &Transaction<'_>,
+    evidence: &SummaryEvidence,
+) -> SummaryResult<()> {
+    if evidence.transcript_segment_id.is_some()
+        || evidence.segment_revision.is_some()
+        || evidence.speaker_snapshot.is_some()
+        || evidence.start_offset_ms.is_some()
+        || evidence.end_offset_ms.is_some()
+    {
+        return Err(SummaryError::EvidenceInvalid);
+    }
+    let document_chunk_id = evidence
+        .document_chunk_id
+        .as_deref()
+        .ok_or(SummaryError::EvidenceInvalid)?;
+    let parser_version = evidence
+        .parser_version
+        .as_deref()
+        .ok_or(SummaryError::EvidenceInvalid)?;
+    let section_path_json =
+        serde_json::to_string(&evidence.section_path).map_err(|_| SummaryError::EvidenceInvalid)?;
+    transaction
+        .execute(
+            "
+            INSERT INTO document_evidence_items(
+                id, summary_id, meeting_id, summary_document_source_id, kind,
+                document_id_snapshot, document_chunk_id_snapshot, label,
+                parser_version_snapshot, page_start, page_end, section_path_json,
+                table_ordinal, ordinal, global_ordinal, excerpt, source_deleted, created_at
+            ) VALUES (
+                ?1, ?2, ?3, ?1, 'document', ?4, ?5, ?6, ?7, ?8, ?9,
+                ?10, ?11, ?12, ?13, ?14, ?15,
+                strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            )
+            ",
+            params![
+                &evidence.id,
+                &evidence.summary_id,
+                &evidence.meeting_id,
+                &evidence.source_id,
+                document_chunk_id,
+                &evidence.label,
+                parser_version,
+                optional_sqlite_integer(evidence.page_start)?,
+                optional_sqlite_integer(evidence.page_end)?,
+                section_path_json,
+                optional_sqlite_integer(evidence.table_ordinal)?,
                 sqlite_integer(evidence.ordinal)?,
                 sqlite_integer(evidence.global_ordinal)?,
                 &evidence.excerpt,
@@ -566,34 +758,39 @@ pub(crate) fn list_evidence(
     limit: u64,
 ) -> SummaryResult<SummaryEvidencePage> {
     get_summary(connection, meeting_id, summary_id)?;
-    let total: i64 = connection
+    let transcript_total: i64 = connection
         .query_row(
             "SELECT COUNT(*) FROM evidence_items WHERE meeting_id = ?1 AND summary_id = ?2",
             params![meeting_id, summary_id],
             |row| row.get(0),
         )
         .map_err(SummaryError::from)?;
-    let sql = format!(
-        "SELECT {EVIDENCE_COLUMNS} FROM evidence_items \
-         WHERE meeting_id = ?1 AND summary_id = ?2 AND global_ordinal > ?3 \
-         ORDER BY global_ordinal, id LIMIT ?4"
-    );
-    let fetch_limit = limit.checked_add(1).ok_or(SummaryError::InvalidInput)?;
-    let cursor_value = cursor.map(sqlite_integer).transpose()?.unwrap_or(-1);
-    let mut statement = connection.prepare(&sql).map_err(SummaryError::from)?;
-    let mut items = statement
-        .query_map(
-            params![
-                meeting_id,
-                summary_id,
-                cursor_value,
-                sqlite_integer(fetch_limit)?
-            ],
-            evidence_from_row,
+    let document_total: i64 = connection
+        .query_row(
+            "SELECT COUNT(*) FROM document_evidence_items WHERE meeting_id = ?1 AND summary_id = ?2",
+            params![meeting_id, summary_id],
+            |row| row.get(0),
         )
-        .map_err(SummaryError::from)?
-        .collect::<Result<Vec<_>, _>>()
         .map_err(SummaryError::from)?;
+    let total = transcript_total
+        .checked_add(document_total)
+        .ok_or(SummaryError::PersistenceFailed)?;
+    let cursor_value = cursor.map(sqlite_integer).transpose()?.unwrap_or(-1);
+    let mut items = transcript_evidence_after(connection, meeting_id, summary_id, cursor_value)?;
+    items.extend(document_evidence_after(
+        connection,
+        meeting_id,
+        summary_id,
+        cursor_value,
+    )?);
+    items.sort_by(|left, right| {
+        left.global_ordinal
+            .cmp(&right.global_ordinal)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    let fetch_limit = usize::try_from(limit.checked_add(1).ok_or(SummaryError::InvalidInput)?)
+        .map_err(|_| SummaryError::InvalidInput)?;
+    items.truncate(fetch_limit);
     let has_more = items.len() > usize::try_from(limit).map_err(|_| SummaryError::InvalidInput)?;
     if has_more {
         items.pop();
@@ -621,11 +818,26 @@ pub(crate) fn get_evidence(
         "SELECT {EVIDENCE_COLUMNS} FROM evidence_items \
          WHERE meeting_id = ?1 AND summary_id = ?2 AND id = ?3"
     );
-    connection
+    if let Some(evidence) = connection
         .query_row(
             &sql,
             params![meeting_id, summary_id, evidence_id],
             evidence_from_row,
+        )
+        .optional()
+        .map_err(SummaryError::from)?
+    {
+        return Ok(evidence);
+    }
+    let sql = format!(
+        "SELECT {DOCUMENT_EVIDENCE_COLUMNS} FROM document_evidence_items \
+         WHERE meeting_id = ?1 AND summary_id = ?2 AND id = ?3"
+    );
+    connection
+        .query_row(
+            &sql,
+            params![meeting_id, summary_id, evidence_id],
+            document_evidence_from_row,
         )
         .optional()
         .map_err(SummaryError::from)?
@@ -637,13 +849,52 @@ pub(crate) fn all_evidence(
     meeting_id: &str,
     summary_id: &str,
 ) -> SummaryResult<Vec<SummaryEvidence>> {
+    let mut items = transcript_evidence_after(connection, meeting_id, summary_id, -1)?;
+    items.extend(document_evidence_after(
+        connection, meeting_id, summary_id, -1,
+    )?);
+    items.sort_by(|left, right| {
+        left.global_ordinal
+            .cmp(&right.global_ordinal)
+            .then_with(|| left.id.cmp(&right.id))
+    });
+    Ok(items)
+}
+
+fn transcript_evidence_after(
+    connection: &Connection,
+    meeting_id: &str,
+    summary_id: &str,
+    cursor: i64,
+) -> SummaryResult<Vec<SummaryEvidence>> {
     let sql = format!(
         "SELECT {EVIDENCE_COLUMNS} FROM evidence_items \
-         WHERE meeting_id = ?1 AND summary_id = ?2 ORDER BY global_ordinal, id"
+         WHERE meeting_id = ?1 AND summary_id = ?2 AND global_ordinal > ?3"
     );
     let mut statement = connection.prepare(&sql).map_err(SummaryError::from)?;
     statement
-        .query_map(params![meeting_id, summary_id], evidence_from_row)
+        .query_map(params![meeting_id, summary_id, cursor], evidence_from_row)
+        .map_err(SummaryError::from)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(SummaryError::from)
+}
+
+fn document_evidence_after(
+    connection: &Connection,
+    meeting_id: &str,
+    summary_id: &str,
+    cursor: i64,
+) -> SummaryResult<Vec<SummaryEvidence>> {
+    let sql = format!(
+        "SELECT {DOCUMENT_EVIDENCE_COLUMNS} FROM document_evidence_items \
+         WHERE meeting_id = ?1 AND summary_id = ?2 AND global_ordinal > ?3"
+    );
+    let mut statement = connection.prepare(&sql).map_err(SummaryError::from)?;
+    statement
+        .query_map(
+            params![meeting_id, summary_id, cursor],
+            document_evidence_from_row,
+        )
         .map_err(SummaryError::from)?
         .collect::<Result<Vec<_>, _>>()
         .map_err(SummaryError::from)
@@ -911,6 +1162,9 @@ fn summary_from_row(row: &Row<'_>) -> rusqlite::Result<SummaryRun> {
         finished_at: row.get(26)?,
         cancel_requested_at: row.get(27)?,
         updated_at: row.get(28)?,
+        document_count: nonnegative_integer(row, 29)?,
+        input_document_chunk_count: nonnegative_integer(row, 30)?,
+        document_input_bytes: nonnegative_integer(row, 31)?,
     })
 }
 
@@ -955,17 +1209,179 @@ fn evidence_from_row(row: &Row<'_>) -> rusqlite::Result<SummaryEvidence> {
         meeting_id: row.get(2)?,
         kind: row.get(3)?,
         source_id: row.get(4)?,
-        transcript_segment_id: row.get(5)?,
-        segment_revision: nonnegative_integer(row, 6)?,
+        transcript_segment_id: Some(row.get(5)?),
+        segment_revision: Some(nonnegative_integer(row, 6)?),
+        document_chunk_id: None,
+        parser_version: None,
         label: row.get(7)?,
         speaker_snapshot: row.get(8)?,
         start_offset_ms: optional_nonnegative_integer(row, 9)?,
         end_offset_ms: optional_nonnegative_integer(row, 10)?,
+        page_start: None,
+        page_end: None,
+        section_path: Vec::new(),
+        table_ordinal: None,
         ordinal: nonnegative_integer(row, 11)?,
         global_ordinal: nonnegative_integer(row, 12)?,
         excerpt: row.get(13)?,
         source_deleted: row.get::<_, i64>(14)? == 1,
         created_at: row.get(15)?,
+    })
+}
+
+pub(crate) fn document_has_active_summary(
+    connection: &Connection,
+    meeting_id: &str,
+    document_id: &str,
+) -> SummaryResult<bool> {
+    connection
+        .query_row(
+            "
+            SELECT EXISTS(
+                SELECT 1
+                FROM summary_document_sources AS snapshot
+                JOIN summaries AS summary ON summary.id = snapshot.summary_id
+                WHERE snapshot.meeting_id = ?1
+                  AND snapshot.document_id_snapshot = ?2
+                  AND summary.status IN ('queued', 'running')
+            )
+            ",
+            params![meeting_id, document_id],
+            |row| row.get::<_, i64>(0),
+        )
+        .map(|value| value == 1)
+        .map_err(SummaryError::from)
+}
+
+pub(crate) fn redact_terminal_document(
+    transaction: &Transaction<'_>,
+    meeting_id: &str,
+    document_id: &str,
+) -> SummaryResult<()> {
+    transaction
+        .execute(
+            "
+            UPDATE summaries
+            SET is_stale = 1,
+                stale_reason = 'source_deleted',
+                stale_at = COALESCE(stale_at, strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+                updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE meeting_id = ?1 AND id IN (
+                SELECT summary_id FROM summary_document_sources
+                WHERE meeting_id = ?1 AND document_id_snapshot = ?2
+            )
+            ",
+            params![meeting_id, document_id],
+        )
+        .map_err(SummaryError::from)?;
+    transaction
+        .execute(
+            "
+            UPDATE document_evidence_items
+            SET source_deleted = 1
+            WHERE meeting_id = ?1 AND document_id_snapshot = ?2
+            ",
+            params![meeting_id, document_id],
+        )
+        .map_err(SummaryError::from)?;
+    transaction
+        .execute(
+            "
+            UPDATE summary_document_sources
+            SET document_display_name_snapshot = NULL,
+                section_path_json_snapshot = NULL,
+                text_snapshot = NULL,
+                source_deleted = 1,
+                redacted_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')
+            WHERE meeting_id = ?1 AND document_id_snapshot = ?2
+              AND summary_id IN (
+                  SELECT id FROM summaries
+                  WHERE meeting_id = ?1 AND status IN ('completed', 'failed', 'cancelled')
+              )
+            ",
+            params![meeting_id, document_id],
+        )
+        .map_err(SummaryError::from)?;
+    Ok(())
+}
+
+fn document_snapshot_from_row(row: &Row<'_>) -> rusqlite::Result<SummarySnapshotDocumentChunk> {
+    let text = row.get::<_, Option<String>>(18)?.ok_or_else(|| {
+        rusqlite::Error::FromSqlConversionFailure(
+            18,
+            rusqlite::types::Type::Null,
+            Box::new(SummaryError::SnapshotMissing),
+        )
+    })?;
+    let section_path_json: String = row.get(14)?;
+    let section_path = serde_json::from_str(&section_path_json).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(14, rusqlite::types::Type::Text, Box::new(error))
+    })?;
+    Ok(SummarySnapshotDocumentChunk {
+        evidence_id: row.get(0)?,
+        summary_id: row.get(1)?,
+        meeting_id: row.get(2)?,
+        document_id: row.get(3)?,
+        chunk_id: row.get(4)?,
+        document_ordinal: nonnegative_integer(row, 5)?,
+        chunk_ordinal: nonnegative_integer(row, 6)?,
+        global_ordinal: nonnegative_integer(row, 7)?,
+        chunk_kind: row.get(8)?,
+        document_display_name: row.get::<_, Option<String>>(9)?.ok_or_else(|| {
+            rusqlite::Error::FromSqlConversionFailure(
+                9,
+                rusqlite::types::Type::Null,
+                Box::new(SummaryError::SnapshotMissing),
+            )
+        })?,
+        document_sha256: row.get(10)?,
+        chunk_sha256: row.get(11)?,
+        page_start: optional_nonnegative_integer(row, 12)?,
+        page_end: optional_nonnegative_integer(row, 13)?,
+        section_path,
+        table_ordinal: optional_nonnegative_integer(row, 15)?,
+        parser_version: row.get::<_, Option<String>>(16)?.ok_or_else(|| {
+            rusqlite::Error::FromSqlConversionFailure(
+                16,
+                rusqlite::types::Type::Null,
+                Box::new(SummaryError::SnapshotMissing),
+            )
+        })?,
+        chunk_schema_version: u32::try_from(nonnegative_integer(row, 17)?)
+            .map_err(|_| rusqlite::Error::IntegralValueOutOfRange(17, i64::MAX))?,
+        text,
+        snapshot_at: row.get(19)?,
+    })
+}
+
+fn document_evidence_from_row(row: &Row<'_>) -> rusqlite::Result<SummaryEvidence> {
+    let section_path_json: String = row.get(10)?;
+    let section_path = serde_json::from_str(&section_path_json).map_err(|error| {
+        rusqlite::Error::FromSqlConversionFailure(10, rusqlite::types::Type::Text, Box::new(error))
+    })?;
+    Ok(SummaryEvidence {
+        id: row.get(0)?,
+        summary_id: row.get(1)?,
+        meeting_id: row.get(2)?,
+        kind: row.get(3)?,
+        source_id: row.get(4)?,
+        transcript_segment_id: None,
+        segment_revision: None,
+        document_chunk_id: Some(row.get(5)?),
+        parser_version: Some(row.get(7)?),
+        label: row.get(6)?,
+        speaker_snapshot: None,
+        start_offset_ms: None,
+        end_offset_ms: None,
+        page_start: optional_nonnegative_integer(row, 8)?,
+        page_end: optional_nonnegative_integer(row, 9)?,
+        section_path,
+        table_ordinal: optional_nonnegative_integer(row, 11)?,
+        ordinal: nonnegative_integer(row, 12)?,
+        global_ordinal: nonnegative_integer(row, 13)?,
+        excerpt: row.get(14)?,
+        source_deleted: row.get::<_, i64>(15)? == 1,
+        created_at: row.get(16)?,
     })
 }
 

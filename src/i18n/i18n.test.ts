@@ -20,6 +20,7 @@ import transcriptWorkspaceSource from "../pages/TranscriptWorkspacePage.tsx?raw"
 import { MeetingApiError } from "../api/meeting";
 import {
   audioTranscriptionErrorMessage,
+  documentErrorMessage,
   transcriptErrorMessage,
 } from "./errors";
 import { meetingErrorMessage, statusLabel, uiError } from "../lib/presentation";
@@ -179,6 +180,36 @@ describe("MeetingLens i18n foundation", () => {
     }
   });
 
+  it("localizes every public document parsing phase and safe parser errors", async () => {
+    const phases = [
+      "validating_input",
+      "parsing",
+      "retrying",
+      "validating_output",
+      "committing",
+      "completed",
+      "failed",
+      "cancelled",
+    ] as const;
+    for (const locale of ["en-US", "zh-CN"] as const) {
+      await i18n.changeLanguage(locale);
+      for (const phase of phases) {
+        const key = `document.parser.phase.${phase}` as const;
+        expect(i18n.exists(key)).toBe(true);
+        expect(i18n.t(key)).not.toBe(key);
+      }
+      expect(documentErrorMessage("parser_worker_crashed")).not.toContain(
+        "parser_worker_crashed",
+      );
+      expect(documentErrorMessage("parser_models_missing")).not.toContain(
+        "parser_models_missing",
+      );
+      expect(documentErrorMessage("document_parse_interrupted")).not.toContain(
+        "document_parse_interrupted",
+      );
+    }
+  });
+
   it("formats dates centrally for the active locale", async () => {
     const value = "2026-07-30T01:02:00.000Z";
     await i18n.changeLanguage("en-US");
@@ -256,7 +287,7 @@ describe("MeetingLens i18n foundation", () => {
     await i18n.changeLanguage("en-US");
     expect(i18n.t("help.availableBody")).toContain("TXT, SRT and VTT");
     expect(i18n.t("help.availableBody")).toContain("canonical Markdown");
-    expect(i18n.t("help.unavailableBody")).toContain("realtime transcription");
+    expect(i18n.t("help.unavailableBody")).toContain("Realtime recording");
     expect(i18n.t("help.deepseekBody")).toContain(
       "Rust-only DeepSeek provider",
     );
@@ -265,7 +296,7 @@ describe("MeetingLens i18n foundation", () => {
     await i18n.changeLanguage("zh-CN");
     expect(i18n.t("help.availableBody")).toContain("TXT、SRT、VTT");
     expect(i18n.t("help.availableBody")).toContain("规范 Markdown");
-    expect(i18n.t("help.unavailableBody")).toContain("实时转录");
+    expect(i18n.t("help.unavailableBody")).toContain("实时录音和转录");
     expect(i18n.t("help.deepseekBody")).toContain(
       "Rust-only DeepSeek Provider",
     );

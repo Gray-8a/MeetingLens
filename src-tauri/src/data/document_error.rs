@@ -2,7 +2,9 @@ use std::fmt;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum DocumentError {
-    AlreadyImported { document_id: String },
+    AlreadyImported {
+        document_id: String,
+    },
     DeleteFailed,
     DeletePending,
     Empty,
@@ -13,6 +15,11 @@ pub enum DocumentError {
     InvalidState,
     InvalidType,
     NotFound,
+    Parser {
+        code: &'static str,
+        message: &'static str,
+        retryable: bool,
+    },
     QuotaExceeded,
     StorageUnavailable,
     TooLarge,
@@ -33,6 +40,7 @@ impl DocumentError {
             Self::InvalidState => "document_invalid_state",
             Self::InvalidType => "document_invalid_type",
             Self::NotFound => "document_not_found",
+            Self::Parser { code, .. } => code,
             Self::QuotaExceeded => "document_quota_exceeded",
             Self::StorageUnavailable => "document_storage_unavailable",
             Self::TooLarge => "document_too_large",
@@ -53,6 +61,7 @@ impl DocumentError {
             Self::InvalidState => "The document cannot be changed in its current state.",
             Self::InvalidType => "The document type is not supported.",
             Self::NotFound => "The document was not found.",
+            Self::Parser { message, .. } => message,
             Self::QuotaExceeded => "The meeting document limit has been reached.",
             Self::StorageUnavailable => "Document storage is unavailable.",
             Self::TooLarge => "The document is too large.",
@@ -61,14 +70,17 @@ impl DocumentError {
     }
 
     pub const fn retryable(&self) -> bool {
-        matches!(
-            self,
-            Self::DeleteFailed
-                | Self::DeletePending
-                | Self::ImportFailed
-                | Self::IntegrityFailed
-                | Self::StorageUnavailable
-        )
+        match self {
+            Self::Parser { retryable, .. } => *retryable,
+            _ => matches!(
+                self,
+                Self::DeleteFailed
+                    | Self::DeletePending
+                    | Self::ImportFailed
+                    | Self::IntegrityFailed
+                    | Self::StorageUnavailable
+            ),
+        }
     }
 }
 
@@ -102,6 +114,11 @@ mod tests {
             DocumentError::InvalidState,
             DocumentError::InvalidType,
             DocumentError::NotFound,
+            DocumentError::Parser {
+                code: "parser_timeout",
+                message: "The document parser timed out.",
+                retryable: true,
+            },
             DocumentError::QuotaExceeded,
             DocumentError::StorageUnavailable,
             DocumentError::TooLarge,

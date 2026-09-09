@@ -6,6 +6,8 @@ use sha2::{Digest, Sha256};
 use super::summary_error::{SummaryError, SummaryResult};
 
 pub const SUMMARY_MAX_SEGMENTS: usize = 20_000;
+pub const SUMMARY_MAX_DOCUMENTS: usize = 20;
+pub const SUMMARY_MAX_DOCUMENT_CHUNKS: usize = 20_000;
 pub const SUMMARY_MAX_INPUT_BYTES: usize = 10 * 1024 * 1024;
 pub const SUMMARY_EVIDENCE_EXCERPT_MAX_BYTES: usize = 1_024;
 pub const SUMMARY_LIST_DEFAULT_LIMIT: u64 = 50;
@@ -116,6 +118,8 @@ pub struct SummaryPolicy {
     pub trigger_kind: &'static str,
     pub provider: &'static str,
     pub max_segments: usize,
+    pub max_documents: usize,
+    pub max_document_chunks: usize,
     pub max_input_bytes: usize,
     pub max_evidence_excerpt_bytes: usize,
     pub list_default_limit: u64,
@@ -141,6 +145,8 @@ impl Default for SummaryPolicy {
             trigger_kind: "manual",
             provider: "deterministic_mock",
             max_segments: SUMMARY_MAX_SEGMENTS,
+            max_documents: SUMMARY_MAX_DOCUMENTS,
+            max_document_chunks: SUMMARY_MAX_DOCUMENT_CHUNKS,
             max_input_bytes: SUMMARY_MAX_INPUT_BYTES,
             max_evidence_excerpt_bytes: SUMMARY_EVIDENCE_EXCERPT_MAX_BYTES,
             list_default_limit: SUMMARY_LIST_DEFAULT_LIMIT,
@@ -165,6 +171,7 @@ impl SummaryPolicy {
 pub struct CreateSummaryRun {
     pub meeting_id: String,
     pub source_ids: Vec<String>,
+    pub document_ids: Vec<String>,
     pub template: SummaryTemplate,
     pub output_language: SummaryOutputLanguage,
 }
@@ -379,6 +386,9 @@ pub struct SummaryRun {
     pub source_count: u64,
     pub input_segment_count: u64,
     pub input_bytes: u64,
+    pub document_count: u64,
+    pub input_document_chunk_count: u64,
+    pub document_input_bytes: u64,
     pub is_stale: bool,
     pub stale_reason: Option<String>,
     pub stale_at: Option<String>,
@@ -411,6 +421,12 @@ impl fmt::Debug for SummaryRun {
             .field("source_count", &self.source_count)
             .field("input_segment_count", &self.input_segment_count)
             .field("input_bytes", &self.input_bytes)
+            .field("document_count", &self.document_count)
+            .field(
+                "input_document_chunk_count",
+                &self.input_document_chunk_count,
+            )
+            .field("document_input_bytes", &self.document_input_bytes)
             .field("is_stale", &self.is_stale)
             .finish_non_exhaustive()
     }
@@ -441,6 +457,59 @@ pub struct SummarySnapshotSegment {
     pub confidence: Option<f64>,
     pub is_final: bool,
     pub snapshot_at: String,
+}
+
+#[derive(Clone, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SummarySnapshotDocumentChunk {
+    pub evidence_id: String,
+    pub summary_id: String,
+    pub meeting_id: String,
+    pub document_id: String,
+    pub chunk_id: String,
+    pub document_ordinal: u64,
+    pub chunk_ordinal: u64,
+    pub global_ordinal: u64,
+    pub chunk_kind: String,
+    pub document_display_name: String,
+    pub document_sha256: String,
+    pub chunk_sha256: String,
+    pub page_start: Option<u64>,
+    pub page_end: Option<u64>,
+    pub section_path: Vec<String>,
+    pub table_ordinal: Option<u64>,
+    pub parser_version: String,
+    pub chunk_schema_version: u32,
+    pub text: String,
+    pub snapshot_at: String,
+}
+
+impl fmt::Debug for SummarySnapshotDocumentChunk {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("SummarySnapshotDocumentChunk")
+            .field("evidence_id", &self.evidence_id)
+            .field("summary_id", &self.summary_id)
+            .field("meeting_id", &self.meeting_id)
+            .field("document_id", &self.document_id)
+            .field("chunk_id", &self.chunk_id)
+            .field("document_ordinal", &self.document_ordinal)
+            .field("chunk_ordinal", &self.chunk_ordinal)
+            .field("global_ordinal", &self.global_ordinal)
+            .field("chunk_kind", &self.chunk_kind)
+            .field("document_display_name", &"[REDACTED]")
+            .field("document_sha256", &"[SHA256]")
+            .field("chunk_sha256", &"[SHA256]")
+            .field("page_start", &self.page_start)
+            .field("page_end", &self.page_end)
+            .field("section_depth", &self.section_path.len())
+            .field("table_ordinal", &self.table_ordinal)
+            .field("parser_version", &self.parser_version)
+            .field("chunk_schema_version", &self.chunk_schema_version)
+            .field("text", &"[REDACTED]")
+            .field("snapshot_at", &self.snapshot_at)
+            .finish()
+    }
 }
 
 impl fmt::Debug for SummarySnapshotSegment {
@@ -487,12 +556,18 @@ pub struct SummaryEvidence {
     pub meeting_id: String,
     pub kind: String,
     pub source_id: String,
-    pub transcript_segment_id: String,
-    pub segment_revision: u64,
+    pub transcript_segment_id: Option<String>,
+    pub segment_revision: Option<u64>,
+    pub document_chunk_id: Option<String>,
+    pub parser_version: Option<String>,
     pub label: String,
     pub speaker_snapshot: Option<String>,
     pub start_offset_ms: Option<u64>,
     pub end_offset_ms: Option<u64>,
+    pub page_start: Option<u64>,
+    pub page_end: Option<u64>,
+    pub section_path: Vec<String>,
+    pub table_ordinal: Option<u64>,
     pub ordinal: u64,
     pub global_ordinal: u64,
     pub excerpt: String,
@@ -511,6 +586,8 @@ impl fmt::Debug for SummaryEvidence {
             .field("source_id", &self.source_id)
             .field("transcript_segment_id", &self.transcript_segment_id)
             .field("segment_revision", &self.segment_revision)
+            .field("document_chunk_id", &self.document_chunk_id)
+            .field("parser_version", &self.parser_version)
             .field("label", &"[REDACTED]")
             .field(
                 "speaker_snapshot",
@@ -518,6 +595,10 @@ impl fmt::Debug for SummaryEvidence {
             )
             .field("ordinal", &self.ordinal)
             .field("global_ordinal", &self.global_ordinal)
+            .field("page_start", &self.page_start)
+            .field("page_end", &self.page_end)
+            .field("section_depth", &self.section_path.len())
+            .field("table_ordinal", &self.table_ordinal)
             .field("excerpt", &"[REDACTED]")
             .field("source_deleted", &self.source_deleted)
             .finish_non_exhaustive()

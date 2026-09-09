@@ -45,6 +45,7 @@ const SUMMARY_COMMAND_NAMES: &[&str] = &[
 pub struct CreateSummaryRunRequest {
     pub meeting_id: String,
     pub source_ids: Vec<String>,
+    pub document_ids: Vec<String>,
     pub template: SummaryTemplate,
     pub output_language: SummaryOutputLanguage,
 }
@@ -185,6 +186,8 @@ pub struct SummaryPolicyResponse {
     pub trigger_kind: &'static str,
     pub provider: &'static str,
     pub max_segments: usize,
+    pub max_documents: usize,
+    pub max_document_chunks: usize,
     pub max_input_bytes: usize,
     pub max_evidence_excerpt_bytes: usize,
     pub list_default_limit: u64,
@@ -202,6 +205,8 @@ impl From<SummaryPolicy> for SummaryPolicyResponse {
             trigger_kind: policy.trigger_kind,
             provider: policy.provider,
             max_segments: policy.max_segments,
+            max_documents: policy.max_documents,
+            max_document_chunks: policy.max_document_chunks,
             max_input_bytes: policy.max_input_bytes,
             max_evidence_excerpt_bytes: policy.max_evidence_excerpt_bytes,
             list_default_limit: policy.list_default_limit,
@@ -249,6 +254,9 @@ pub struct SummaryExternalDisclosureResponse {
     pub source_count: u64,
     pub segment_count: u64,
     pub input_bytes: u64,
+    pub document_count: u64,
+    pub document_chunk_count: u64,
+    pub document_input_bytes: u64,
     pub template: SummaryTemplate,
     pub output_language: SummaryOutputLanguage,
     pub data_categories: Vec<&'static str>,
@@ -266,6 +274,9 @@ impl From<SummaryExternalDisclosure> for SummaryExternalDisclosureResponse {
             source_count: disclosure.source_count,
             segment_count: disclosure.segment_count,
             input_bytes: disclosure.input_bytes,
+            document_count: disclosure.document_count,
+            document_chunk_count: disclosure.document_chunk_count,
+            document_input_bytes: disclosure.document_input_bytes,
             template: disclosure.template,
             output_language: disclosure.output_language,
             data_categories: deepseek_data_categories(),
@@ -443,6 +454,9 @@ pub struct SummaryRunResponse {
     pub source_count: u64,
     pub input_segment_count: u64,
     pub input_bytes: u64,
+    pub document_count: u64,
+    pub input_document_chunk_count: u64,
+    pub document_input_bytes: u64,
     pub is_stale: bool,
     pub stale_reason: Option<String>,
     pub stale_at: Option<String>,
@@ -482,6 +496,12 @@ impl fmt::Debug for SummaryRunResponse {
             .field("source_count", &self.source_count)
             .field("input_segment_count", &self.input_segment_count)
             .field("input_bytes", &self.input_bytes)
+            .field("document_count", &self.document_count)
+            .field(
+                "input_document_chunk_count",
+                &self.input_document_chunk_count,
+            )
+            .field("document_input_bytes", &self.document_input_bytes)
             .field("is_stale", &self.is_stale)
             .field("stale_reason", &self.stale_reason)
             .field("stale_at", &self.stale_at)
@@ -528,6 +548,9 @@ impl TryFrom<SummaryRun> for SummaryRunResponse {
             source_count: run.source_count,
             input_segment_count: run.input_segment_count,
             input_bytes: run.input_bytes,
+            document_count: run.document_count,
+            input_document_chunk_count: run.input_document_chunk_count,
+            document_input_bytes: run.document_input_bytes,
             is_stale: run.is_stale,
             stale_reason: run.stale_reason,
             stale_at: run.stale_at,
@@ -543,72 +566,133 @@ impl TryFrom<SummaryRun> for SummaryRunResponse {
 }
 
 #[derive(Clone, PartialEq, Eq, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct SummaryEvidenceResponse {
-    pub id: String,
-    pub summary_id: String,
-    pub meeting_id: String,
-    pub kind: String,
-    pub source_id: String,
-    pub transcript_segment_id: String,
-    pub segment_revision: u64,
-    pub label: String,
-    pub speaker_snapshot: Option<String>,
-    pub start_offset_ms: Option<u64>,
-    pub end_offset_ms: Option<u64>,
-    pub ordinal: u64,
-    pub global_ordinal: u64,
-    pub excerpt: String,
-    pub source_deleted: bool,
-    pub created_at: String,
+#[serde(
+    tag = "kind",
+    rename_all = "snake_case",
+    rename_all_fields = "camelCase"
+)]
+pub enum SummaryEvidenceResponse {
+    Transcript {
+        id: String,
+        summary_id: String,
+        meeting_id: String,
+        source_id: String,
+        transcript_segment_id: String,
+        segment_revision: u64,
+        label: String,
+        speaker_snapshot: Option<String>,
+        start_offset_ms: Option<u64>,
+        end_offset_ms: Option<u64>,
+        ordinal: u64,
+        global_ordinal: u64,
+        excerpt: String,
+        source_deleted: bool,
+        created_at: String,
+    },
+    Document {
+        id: String,
+        summary_id: String,
+        meeting_id: String,
+        document_id: String,
+        document_chunk_id: String,
+        label: String,
+        parser_version: String,
+        page_start: Option<u64>,
+        page_end: Option<u64>,
+        section_path: Vec<String>,
+        table_ordinal: Option<u64>,
+        ordinal: u64,
+        global_ordinal: u64,
+        excerpt: String,
+        source_deleted: bool,
+        created_at: String,
+    },
 }
 
 impl fmt::Debug for SummaryEvidenceResponse {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("SummaryEvidenceResponse")
-            .field("id", &self.id)
-            .field("summary_id", &self.summary_id)
-            .field("meeting_id", &self.meeting_id)
-            .field("kind", &self.kind)
-            .field("source_id", &self.source_id)
-            .field("transcript_segment_id", &self.transcript_segment_id)
-            .field("segment_revision", &self.segment_revision)
-            .field("label", &"[REDACTED]")
-            .field(
-                "speaker_snapshot",
-                &self.speaker_snapshot.as_ref().map(|_| "[REDACTED]"),
-            )
-            .field("start_offset_ms", &self.start_offset_ms)
-            .field("end_offset_ms", &self.end_offset_ms)
-            .field("ordinal", &self.ordinal)
-            .field("global_ordinal", &self.global_ordinal)
-            .field("excerpt", &"[REDACTED]")
-            .field("source_deleted", &self.source_deleted)
-            .field("created_at", &self.created_at)
-            .finish()
+        match self {
+            Self::Transcript {
+                id,
+                summary_id,
+                meeting_id,
+                global_ordinal,
+                ..
+            } => formatter
+                .debug_struct("TranscriptSummaryEvidenceResponse")
+                .field("id", id)
+                .field("summary_id", summary_id)
+                .field("meeting_id", meeting_id)
+                .field("global_ordinal", global_ordinal)
+                .field("content", &"[REDACTED]")
+                .finish(),
+            Self::Document {
+                id,
+                summary_id,
+                meeting_id,
+                global_ordinal,
+                ..
+            } => formatter
+                .debug_struct("DocumentSummaryEvidenceResponse")
+                .field("id", id)
+                .field("summary_id", summary_id)
+                .field("meeting_id", meeting_id)
+                .field("global_ordinal", global_ordinal)
+                .field("content", &"[REDACTED]")
+                .finish(),
+        }
     }
 }
 
-impl From<SummaryEvidence> for SummaryEvidenceResponse {
-    fn from(evidence: SummaryEvidence) -> Self {
-        Self {
-            id: evidence.id,
-            summary_id: evidence.summary_id,
-            meeting_id: evidence.meeting_id,
-            kind: evidence.kind,
-            source_id: evidence.source_id,
-            transcript_segment_id: evidence.transcript_segment_id,
-            segment_revision: evidence.segment_revision,
-            label: evidence.label,
-            speaker_snapshot: evidence.speaker_snapshot,
-            start_offset_ms: evidence.start_offset_ms,
-            end_offset_ms: evidence.end_offset_ms,
-            ordinal: evidence.ordinal,
-            global_ordinal: evidence.global_ordinal,
-            excerpt: evidence.excerpt,
-            source_deleted: evidence.source_deleted,
-            created_at: evidence.created_at,
+impl TryFrom<SummaryEvidence> for SummaryEvidenceResponse {
+    type Error = SummaryError;
+
+    fn try_from(evidence: SummaryEvidence) -> Result<Self, Self::Error> {
+        match evidence.kind.as_str() {
+            "transcript" => Ok(Self::Transcript {
+                id: evidence.id,
+                summary_id: evidence.summary_id,
+                meeting_id: evidence.meeting_id,
+                source_id: evidence.source_id,
+                transcript_segment_id: evidence
+                    .transcript_segment_id
+                    .ok_or(SummaryError::PersistenceFailed)?,
+                segment_revision: evidence
+                    .segment_revision
+                    .ok_or(SummaryError::PersistenceFailed)?,
+                label: evidence.label,
+                speaker_snapshot: evidence.speaker_snapshot,
+                start_offset_ms: evidence.start_offset_ms,
+                end_offset_ms: evidence.end_offset_ms,
+                ordinal: evidence.ordinal,
+                global_ordinal: evidence.global_ordinal,
+                excerpt: evidence.excerpt,
+                source_deleted: evidence.source_deleted,
+                created_at: evidence.created_at,
+            }),
+            "document" => Ok(Self::Document {
+                id: evidence.id,
+                summary_id: evidence.summary_id,
+                meeting_id: evidence.meeting_id,
+                document_id: evidence.source_id,
+                document_chunk_id: evidence
+                    .document_chunk_id
+                    .ok_or(SummaryError::PersistenceFailed)?,
+                label: evidence.label,
+                parser_version: evidence
+                    .parser_version
+                    .ok_or(SummaryError::PersistenceFailed)?,
+                page_start: evidence.page_start,
+                page_end: evidence.page_end,
+                section_path: evidence.section_path,
+                table_ordinal: evidence.table_ordinal,
+                ordinal: evidence.ordinal,
+                global_ordinal: evidence.global_ordinal,
+                excerpt: evidence.excerpt,
+                source_deleted: evidence.source_deleted,
+                created_at: evidence.created_at,
+            }),
+            _ => Err(SummaryError::PersistenceFailed),
         }
     }
 }
@@ -672,18 +756,20 @@ impl fmt::Debug for ListSummaryEvidenceResponse {
     }
 }
 
-impl From<SummaryEvidencePage> for ListSummaryEvidenceResponse {
-    fn from(page: SummaryEvidencePage) -> Self {
-        Self {
+impl TryFrom<SummaryEvidencePage> for ListSummaryEvidenceResponse {
+    type Error = SummaryError;
+
+    fn try_from(page: SummaryEvidencePage) -> Result<Self, Self::Error> {
+        Ok(Self {
             items: page
                 .items
                 .into_iter()
-                .map(SummaryEvidenceResponse::from)
-                .collect(),
+                .map(SummaryEvidenceResponse::try_from)
+                .collect::<Result<Vec<_>, _>>()?,
             next_cursor: page.next_cursor,
             has_more: page.has_more,
             total_count: page.total_count,
-        }
+        })
     }
 }
 
@@ -807,6 +893,7 @@ pub fn create_summary_run(
         .create_run(CreateSummaryRun {
             meeting_id: request.meeting_id,
             source_ids: request.source_ids,
+            document_ids: request.document_ids,
             template: request.template,
             output_language: request.output_language,
         })
@@ -889,7 +976,7 @@ pub fn list_summary_evidence(
             request.cursor,
             request.limit,
         )
-        .map(ListSummaryEvidenceResponse::from)
+        .and_then(ListSummaryEvidenceResponse::try_from)
         .map_err(SummaryCommandError::from)
 }
 
@@ -904,7 +991,7 @@ pub fn get_summary_evidence(
             &request.summary_id,
             &request.evidence_id,
         )
-        .map(SummaryEvidenceResponse::from)
+        .and_then(SummaryEvidenceResponse::try_from)
         .map_err(SummaryCommandError::from)
 }
 
@@ -1059,6 +1146,7 @@ fn create_summary_run_with_service(
         .create_run(CreateSummaryRun {
             meeting_id: request.meeting_id,
             source_ids: request.source_ids,
+            document_ids: request.document_ids,
             template: request.template,
             output_language: request.output_language,
         })
@@ -1146,7 +1234,7 @@ fn list_summary_evidence_with_service(
             request.cursor,
             request.limit,
         )
-        .map(ListSummaryEvidenceResponse::from)
+        .and_then(ListSummaryEvidenceResponse::try_from)
         .map_err(SummaryCommandError::from)
 }
 
@@ -1162,7 +1250,7 @@ fn get_summary_evidence_with_service(
             &request.summary_id,
             &request.evidence_id,
         )
-        .map(SummaryEvidenceResponse::from)
+        .and_then(SummaryEvidenceResponse::try_from)
         .map_err(SummaryCommandError::from)
 }
 
@@ -1179,6 +1267,35 @@ mod tests {
     };
 
     use super::*;
+
+    fn evidence_identity(evidence: &SummaryEvidenceResponse) -> (&str, &str, &str) {
+        match evidence {
+            SummaryEvidenceResponse::Transcript {
+                id,
+                summary_id,
+                meeting_id,
+                ..
+            }
+            | SummaryEvidenceResponse::Document {
+                id,
+                summary_id,
+                meeting_id,
+                ..
+            } => (id, summary_id, meeting_id),
+        }
+    }
+
+    fn evidence_id(evidence: &SummaryEvidenceResponse) -> &str {
+        evidence_identity(evidence).0
+    }
+
+    fn evidence_summary_id(evidence: &SummaryEvidenceResponse) -> &str {
+        evidence_identity(evidence).1
+    }
+
+    fn evidence_meeting_id(evidence: &SummaryEvidenceResponse) -> &str {
+        evidence_identity(evidence).2
+    }
 
     struct TestWorkspace(PathBuf);
 
@@ -1278,6 +1395,9 @@ mod tests {
             source_count: 1,
             input_segment_count: 1,
             input_bytes: 32,
+            document_count: 0,
+            input_document_chunk_count: 0,
+            document_input_bytes: 0,
             is_stale: false,
             stale_reason: None,
             stale_at: None,
@@ -1299,6 +1419,7 @@ mod tests {
         let request: CreateSummaryRunRequest = serde_json::from_value(json!({
             "meetingId": meeting_id,
             "sourceIds": [source_id],
+            "documentIds": [],
             "template": "detailed",
             "outputLanguage": "en"
         }))
@@ -1316,6 +1437,7 @@ mod tests {
             json!({
                 "meetingId": Uuid::new_v4().to_string(),
                 "sourceIds": [Uuid::new_v4().to_string()],
+                "documentIds": [],
                 "template": "detailed",
                 "outputLanguage": "en",
                 "providerResult": { "overview": "private" }
@@ -1323,6 +1445,7 @@ mod tests {
             json!({
                 "meetingId": Uuid::new_v4().to_string(),
                 "sourceIds": [Uuid::new_v4().to_string()],
+                "documentIds": [],
                 "template": "detailed",
                 "outputLanguage": "en",
                 "evidence": [{ "excerpt": "private" }]
@@ -1330,6 +1453,7 @@ mod tests {
             json!({
                 "meeting_id": Uuid::new_v4().to_string(),
                 "sourceIds": [Uuid::new_v4().to_string()],
+                "documentIds": [],
                 "template": "detailed",
                 "outputLanguage": "en"
             }),
@@ -1503,24 +1627,31 @@ mod tests {
         let run =
             SummaryRunResponse::try_from(synthetic_run(Some(synthetic_content(&evidence_id))))
                 .expect("content version should derive");
-        let evidence = SummaryEvidenceResponse::from(SummaryEvidence {
+        let evidence = SummaryEvidenceResponse::try_from(SummaryEvidence {
             id: evidence_id,
             summary_id: run.id.clone(),
             meeting_id: run.meeting_id.clone(),
             kind: "transcript".to_string(),
             source_id: Uuid::new_v4().to_string(),
-            transcript_segment_id: Uuid::new_v4().to_string(),
-            segment_revision: 1,
+            transcript_segment_id: Some(Uuid::new_v4().to_string()),
+            segment_revision: Some(1),
+            document_chunk_id: None,
+            parser_version: None,
             label: "Private synthetic source label".to_string(),
             speaker_snapshot: Some("Private synthetic speaker".to_string()),
             start_offset_ms: None,
             end_offset_ms: None,
+            page_start: None,
+            page_end: None,
+            section_path: Vec::new(),
+            table_ordinal: None,
             ordinal: 0,
             global_ordinal: 0,
             excerpt: "Private synthetic evidence excerpt".to_string(),
             source_deleted: false,
             created_at: "2026-08-07T00:00:00.000Z".to_string(),
-        });
+        })
+        .expect("synthetic transcript evidence should convert");
         let debug = format!("{run:?} {evidence:?}");
 
         for private in [
@@ -1577,6 +1708,7 @@ mod tests {
             CreateSummaryRunRequest {
                 meeting_id: meeting.id.clone(),
                 source_ids: vec![source_id],
+                document_ids: Vec::new(),
                 template: SummaryTemplate::Detailed,
                 output_language: SummaryOutputLanguage::En,
             },
@@ -1623,18 +1755,19 @@ mod tests {
             evidence
                 .items
                 .iter()
-                .all(|item| item.meeting_id == meeting.id && item.summary_id == completed.id)
+                .all(|item| evidence_meeting_id(item) == meeting.id
+                    && evidence_summary_id(item) == completed.id)
         );
         let exact = get_summary_evidence_with_service(
             &service,
             GetSummaryEvidenceRequest {
                 meeting_id: meeting.id.clone(),
                 summary_id: completed.id.clone(),
-                evidence_id: evidence.items[0].id.clone(),
+                evidence_id: evidence_id(&evidence.items[0]).to_string(),
             },
         )
         .expect("referenced evidence should load exactly");
-        assert_eq!(exact.id, evidence.items[0].id);
+        assert_eq!(evidence_id(&exact), evidence_id(&evidence.items[0]));
         let unknown = get_summary_evidence_with_service(
             &service,
             GetSummaryEvidenceRequest {

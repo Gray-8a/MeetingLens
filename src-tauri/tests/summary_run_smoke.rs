@@ -57,7 +57,7 @@ fn native_summary_run_core_lifecycle_smoke() {
             .as_str(),
         "draft"
     );
-    assert_schema_and_integrity(&meetings, 6);
+    assert_schema_and_integrity(&meetings, 7);
 
     let summaries = meetings.summaries();
     let policy = summaries.policy();
@@ -69,6 +69,7 @@ fn native_summary_run_core_lifecycle_smoke() {
         .create_run(CreateSummaryRun {
             meeting_id: v3.meeting_id.clone(),
             source_ids: vec![v3.source_id.clone()],
+            document_ids: Vec::new(),
             template: SummaryTemplate::Detailed,
             output_language: SummaryOutputLanguage::En,
         })
@@ -153,6 +154,7 @@ fn native_summary_run_core_lifecycle_smoke() {
         .create_run(CreateSummaryRun {
             meeting_id: v3.meeting_id.clone(),
             source_ids: vec![v3.source_id.clone()],
+            document_ids: Vec::new(),
             template: SummaryTemplate::Concise,
             output_language: SummaryOutputLanguage::Bilingual,
         })
@@ -199,6 +201,7 @@ fn native_summary_run_core_lifecycle_smoke() {
         .create_run(CreateSummaryRun {
             meeting_id: v3.meeting_id.clone(),
             source_ids: vec![recovery_source.clone()],
+            document_ids: Vec::new(),
             template: SummaryTemplate::Detailed,
             output_language: SummaryOutputLanguage::En,
         })
@@ -207,6 +210,7 @@ fn native_summary_run_core_lifecycle_smoke() {
         .create_run(CreateSummaryRun {
             meeting_id: v3.meeting_id.clone(),
             source_ids: vec![recovery_source.clone()],
+            document_ids: Vec::new(),
             template: SummaryTemplate::ActionsDecisions,
             output_language: SummaryOutputLanguage::Zh,
         })
@@ -230,7 +234,7 @@ fn native_summary_run_core_lifecycle_smoke() {
             .status,
         SummaryStatus::Queued
     );
-    assert_schema_and_integrity(&reopened, 6);
+    assert_schema_and_integrity(&reopened, 7);
 
     drop(summaries);
     reopened
@@ -238,7 +242,7 @@ fn native_summary_run_core_lifecycle_smoke() {
         .expect("meeting deletion should cancel active summaries and cascade");
     assert_eq!(reopened.get(&v3.meeting_id), Err(DataError::NotFound));
     assert_summary_rows(&reopened, 0);
-    assert_schema_and_integrity(&reopened, 6);
+    assert_schema_and_integrity(&reopened, 7);
     drop(reopened);
     workspace.cleanup();
 }

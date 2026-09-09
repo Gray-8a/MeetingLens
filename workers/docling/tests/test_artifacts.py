@@ -9,6 +9,7 @@ from unittest.mock import patch
 
 from meetinglens_docling_worker import artifacts
 from meetinglens_docling_worker.artifacts import ArtifactPayloads, write_artifacts
+from meetinglens_docling_worker.chunks import ChunkLocator, NormalizedChunk
 from meetinglens_docling_worker.constants import ParserErrorCode
 from meetinglens_docling_worker.errors import WorkerError
 
@@ -25,9 +26,10 @@ class ArtifactTests(unittest.TestCase):
         result = self._write()
         self.assertEqual(
             sorted(path.name for path in self.output.iterdir()),
-            ["content.md", "content.txt", "document.json", "manifest.json"],
+            ["chunks.jsonl", "content.md", "content.txt", "document.json", "manifest.json"],
         )
         self.assertEqual(result["manifest"]["status"], "success")
+        self.assertEqual(result["manifest"]["chunkSchemaVersion"], 1)
 
     def test_records_size_and_hash_for_each_content_artifact(self) -> None:
         manifest = self._write()["manifest"]
@@ -70,6 +72,10 @@ class ArtifactTests(unittest.TestCase):
         with patch("meetinglens_docling_worker.artifacts.MAX_DOCUMENT_JSON_BYTES", 8):
             self._assert_output_too_large()
 
+    def test_rejects_chunks_jsonl_over_limit(self) -> None:
+        with patch("meetinglens_docling_worker.chunks.MAX_CHUNKS_JSONL_BYTES", 8):
+            self._assert_output_too_large()
+
     def test_rejects_total_output_over_limit(self) -> None:
         with patch("meetinglens_docling_worker.artifacts.MAX_TOTAL_ARTIFACT_BYTES", 8):
             self._assert_output_too_large()
@@ -79,6 +85,7 @@ class ArtifactTests(unittest.TestCase):
             document={"invalid": {"set"}},
             markdown="synthetic",
             text="synthetic",
+            chunks=self._chunks(),
             page_count=1,
             has_ocr=False,
             warnings=[],
@@ -100,6 +107,7 @@ class ArtifactTests(unittest.TestCase):
                 document={"name": "synthetic"},
                 markdown="# Synthetic",
                 text="Synthetic",
+                chunks=self._chunks(),
                 page_count=1,
                 has_ocr=False,
                 warnings=[],
@@ -110,6 +118,18 @@ class ArtifactTests(unittest.TestCase):
         with self.assertRaises(WorkerError) as context:
             self._write()
         self.assertEqual(context.exception.code, ParserErrorCode.OUTPUT_TOO_LARGE)
+
+    def _chunks(self) -> list[NormalizedChunk]:
+        text = "Synthetic"
+        return [
+            NormalizedChunk(
+                ordinal=0,
+                kind="paragraph",
+                text=text,
+                content_sha256=hashlib.sha256(text.encode()).hexdigest(),
+                locator=ChunkLocator(None, None, (), None),
+            )
+        ]
 
 
 if __name__ == "__main__":

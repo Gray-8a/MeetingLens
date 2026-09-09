@@ -9,6 +9,7 @@ use crate::data::{
     ALLOWED_DOCUMENT_EXTENSIONS, Document, DocumentError, DocumentImportOutcome,
     DocumentImportPhase, DocumentImportPolicy, DocumentImportProgress, MeetingService,
 };
+use crate::document_parsing_runtime::DocumentParsingRuntime;
 
 #[cfg(test)]
 const DOCUMENT_COMMAND_NAMES: &[&str] = &[
@@ -244,7 +245,11 @@ pub fn get_document(
 pub fn request_delete_document(
     request: DocumentIdRequest,
     service: State<'_, MeetingService>,
+    parser: State<'_, DocumentParsingRuntime>,
 ) -> CommandResult<DocumentDeleteResponse> {
+    parser
+        .cancel_for_document_and_wait(&request.document_id)
+        .map_err(DocumentCommandError::from)?;
     delete_document_with_service(&service, request, false)
 }
 
@@ -252,7 +257,11 @@ pub fn request_delete_document(
 pub fn retry_delete_document(
     request: DocumentIdRequest,
     service: State<'_, MeetingService>,
+    parser: State<'_, DocumentParsingRuntime>,
 ) -> CommandResult<DocumentDeleteResponse> {
+    parser
+        .cancel_for_document_and_wait(&request.document_id)
+        .map_err(DocumentCommandError::from)?;
     delete_document_with_service(&service, request, true)
 }
 

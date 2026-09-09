@@ -8,6 +8,7 @@ import {
 } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import App from "./App";
+import { DocumentApiError } from "./api/document";
 import type { MeetingResponse } from "./api/meeting";
 import { SummaryApiError, type SummaryRunResponse } from "./api/summary";
 import { ServicesProvider, type AppServices } from "./app/services";
@@ -15,7 +16,7 @@ import { SummaryResultView } from "./components/SummaryResultView";
 import i18n from "./i18n";
 import { ProviderRegistry } from "./providers/runtime";
 import { FakeAudioTranscriptionApi } from "./test/fakeAudioTranscriptionApi";
-import { FakeDocumentApi } from "./test/fakeDocumentApi";
+import { FakeDocumentApi, syntheticDocument } from "./test/fakeDocumentApi";
 import {
   FakeMeetingApi,
   meetingIds,
@@ -52,10 +53,12 @@ function queuedRun(overrides: Partial<SummaryRunResponse> = {}) {
 
 function renderMinutes({
   summaryApi = new FakeSummaryApi(),
+  documentApi = new FakeDocumentApi(),
   path = `/meetings/${meetingIds.draft}/minutes`,
   meetings = [syntheticMeeting()],
 }: {
   summaryApi?: FakeSummaryApi;
+  documentApi?: FakeDocumentApi;
   path?: string;
   meetings?: MeetingResponse[];
 } = {}) {
@@ -85,7 +88,7 @@ function renderMinutes({
       meetingApi,
       transcriptApi,
     ),
-    documentApi: new FakeDocumentApi(),
+    documentApi,
     meetingApi,
     secretApi: new FakeSecretApi(),
     summaryApi,
@@ -104,7 +107,14 @@ function renderMinutes({
   };
   window.history.replaceState(null, "", `#${path}`);
   const view = render(<App services={services} />);
-  return { meetingApi, services, summaryApi, transcriptApi, view };
+  return {
+    documentApi,
+    meetingApi,
+    services,
+    summaryApi,
+    transcriptApi,
+    view,
+  };
 }
 
 afterEach(async () => {
@@ -114,6 +124,81 @@ afterEach(async () => {
 });
 
 describe("Summary Minutes workspace", () => {
+  it("lists parsed reference documents separately, defaults them off and sends only selected IDs", async () => {
+    const parsed = syntheticDocument({
+      id: "88888888-8888-4888-8888-888888888888",
+      meetingId: meetingIds.draft,
+      originalFilename: "synthetic-reference.docx",
+      safeExtension: "docx",
+      detectedMediaType:
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      status: "parsed",
+      parserVersion: "2.117.0",
+      pageCount: 3,
+    });
+    const staged = syntheticDocument({
+      id: "99999999-9999-4999-8999-999999999999",
+      meetingId: meetingIds.draft,
+      originalFilename: "not-parsed.pdf",
+      safeExtension: "pdf",
+      detectedMediaType: "application/pdf",
+    });
+    const documentApi = new FakeDocumentApi([parsed, staged]);
+    const summaryApi = new FakeSummaryApi();
+    summaryApi.providerStatus = syntheticDeepSeekStatus({
+      keyConfigured: true,
+      executionAvailable: true,
+    });
+    const user = userEvent.setup();
+    renderMinutes({ documentApi, summaryApi });
+
+    const parsedOption = await screen.findByRole("checkbox", {
+      name: /synthetic-reference\.docx/i,
+    });
+    const stagedOption = screen.getByRole("checkbox", {
+      name: /not-parsed\.pdf/i,
+    });
+    expect(parsedOption).toBeEnabled();
+    expect(parsedOption).not.toBeChecked();
+    expect(stagedOption).toBeDisabled();
+
+    await user.click(parsedOption);
+    await user.click(
+      screen.getByRole("button", { name: "Generate meeting minutes" }),
+    );
+    await waitFor(() => expect(summaryApi.createCalls).toHaveLength(1));
+    expect(summaryApi.createCalls[0]?.documentIds).toEqual([parsed.id]);
+    expect(summaryApi.createCalls[0]?.sourceIds).toEqual([sourceId]);
+  });
+
+  it("shows the exact parsed-reference scope in the external disclosure", async () => {
+    const summaryApi = new FakeSummaryApi();
+    summaryApi.providerStatus = syntheticDeepSeekStatus({
+      keyConfigured: true,
+      executionAvailable: true,
+    });
+    summaryApi.disclosure = {
+      ...summaryApi.disclosure,
+      documentCount: 1,
+      documentChunkCount: 4,
+      documentInputBytes: 256,
+      inputBytes: summaryApi.disclosure.inputBytes + 256,
+    };
+    const user = userEvent.setup();
+    renderMinutes({ summaryApi });
+
+    await user.click(
+      await screen.findByRole("button", { name: "Generate meeting minutes" }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText("Reference documents")).toBeInTheDocument();
+    expect(within(dialog).getByText("Reference chunks")).toBeInTheDocument();
+    expect(
+      within(dialog).getByText("Frozen parsed reference-document text"),
+    ).toBeInTheDocument();
+    expect(dialog).not.toHaveTextContent("C:\\");
+  });
+
   it("fails closed before creating a run when no DeepSeek key is configured", async () => {
     const { summaryApi } = renderMinutes();
 
@@ -144,6 +229,74 @@ describe("Summary Minutes workspace", () => {
     expect(
       screen.getByRole("button", { name: "Generate meeting minutes" }),
     ).toBeDisabled();
+  });
+
+  it("keeps completed results readable when the optional document list fails", async () => {
+    const summaryApi = new FakeSummaryApi();
+    summaryApi.seedRun(syntheticSummaryRun());
+    const documentApi = new FakeDocumentApi();
+    documentApi.listError = new DocumentApiError(
+      "document_storage_unavailable",
+      true,
+    );
+    renderMinutes({
+      documentApi,
+      summaryApi,
+      path: `/meetings/${meetingIds.draft}/minutes/${queuedId}`,
+    });
+
+    expect(await screen.findByText("Synthetic overview")).toBeInTheDocument();
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "document_storage_unavailable",
+    );
+    expect(screen.getAllByText("Revision 1")).toHaveLength(2);
+  });
+
+  it("refreshes parsing reference documents without reloading the workspace", async () => {
+    const parsing = syntheticDocument({
+      id: "88888888-8888-4888-8888-888888888888",
+      meetingId: meetingIds.draft,
+      originalFilename: "synthetic-parsing.txt",
+      status: "parsing",
+    });
+    const documentApi = new FakeDocumentApi([parsing]);
+    renderMinutes({ documentApi });
+
+    expect(
+      await screen.findByRole("checkbox", { name: /synthetic-parsing\.txt/i }),
+    ).toBeDisabled();
+    documentApi.documents = [
+      syntheticDocument({
+        ...parsing,
+        status: "parsed",
+        parserVersion: "2.117.0",
+        pageCount: 1,
+      }),
+    ];
+
+    await waitFor(
+      () =>
+        expect(
+          screen.getByRole("checkbox", {
+            name: /synthetic-parsing\.txt/i,
+          }),
+        ).toBeEnabled(),
+      { timeout: 2_500 },
+    );
+  });
+
+  it("shows the combined transcript and document bytes in history", async () => {
+    const summaryApi = new FakeSummaryApi();
+    summaryApi.seedRun(
+      syntheticSummaryRun({
+        documentCount: 1,
+        inputDocumentChunkCount: 1,
+        documentInputBytes: 64,
+      }),
+    );
+    renderMinutes({ summaryApi });
+
+    expect(await screen.findByText(/192 B/)).toBeInTheDocument();
   });
 
   it("preserves meeting history when a deep-linked run no longer exists", async () => {
@@ -188,7 +341,7 @@ describe("Summary Minutes workspace", () => {
       await screen.findByRole("button", { name: "Generate meeting minutes" }),
     );
     const dialog = await screen.findByRole("dialog", {
-      name: "Send this frozen transcript to DeepSeek?",
+      name: "Send this frozen meeting input to DeepSeek?",
     });
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
 
@@ -244,7 +397,7 @@ describe("Summary Minutes workspace", () => {
     await act(async () => disclosurePending.resolve(summaryApi.disclosure));
     expect(
       await screen.findByRole("dialog", {
-        name: "Send this frozen transcript to DeepSeek?",
+        name: "Send this frozen meeting input to DeepSeek?",
       }),
     ).toBeInTheDocument();
     expect(summaryApi.cancelCalls).toHaveLength(0);
@@ -735,6 +888,60 @@ describe("Summary Minutes workspace", () => {
     });
     expect(evidence).toHaveTextContent("Synthetic transcript evidence");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("renders document evidence locators as text without exposing files or trusted HTML", async () => {
+    const evidenceId = "77777777-7777-4777-8777-777777777777";
+    const summaryApi = new FakeSummaryApi();
+    summaryApi.seedRun(
+      syntheticSummaryRun({
+        content: syntheticSummaryContent({
+          overview: {
+            text: "Synthetic document-backed overview",
+            evidenceIds: [evidenceId],
+          },
+        }),
+      }),
+    );
+    summaryApi.seedEvidence({
+      id: evidenceId,
+      summaryId: queuedId,
+      meetingId: meetingIds.draft,
+      kind: "document",
+      documentId: "88888888-8888-4888-8888-888888888888",
+      documentChunkId: "99999999-9999-4999-8999-999999999999",
+      label: "Synthetic reference evidence",
+      parserVersion: "2.117.0",
+      pageStart: 2,
+      pageEnd: 3,
+      sectionPath: ['<img src=x onerror="alert(1)">', "Decisions"],
+      tableOrdinal: 0,
+      ordinal: 1,
+      globalOrdinal: 0,
+      excerpt: "Synthetic parsed reference excerpt",
+      sourceDeleted: true,
+      createdAt: "2026-08-17T00:00:00.000Z",
+    });
+    const user = userEvent.setup();
+    const { view } = renderMinutes({
+      summaryApi,
+      path: `/meetings/${meetingIds.draft}/minutes/${queuedId}`,
+    });
+
+    await user.click(
+      (await screen.findAllByRole("button", { name: "Open evidence 1" }))[0]!,
+    );
+    const evidence = await screen.findByRole("complementary", {
+      name: "Synthetic reference evidence",
+    });
+    expect(evidence).toHaveTextContent("Reference document");
+    expect(evidence).toHaveTextContent("2–3");
+    expect(evidence).toHaveTextContent("<img src=x");
+    expect(evidence).toHaveTextContent(
+      "original reference document has been deleted",
+    );
+    expect(view.container.querySelector("img[src='x']")).toBeNull();
+    expect(evidence).not.toHaveTextContent("storageRelativePath");
   });
 
   it("uses one global evidence label map and displays immutable item statuses", async () => {

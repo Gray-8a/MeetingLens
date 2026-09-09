@@ -16,10 +16,10 @@ from typing import Any
 import psutil
 from docx import Document
 from openpyxl import Workbook
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 from pptx import Presentation
 
-PROTOCOL_VERSION = "1"
+PROTOCOL_VERSION = "2"
 SYNTHETIC_TEXT = "MeetingLens synthetic offline parser smoke 2026"
 SECRET_SENTINEL = "MEETINGLENS_SMOKE_SECRET_SENTINEL"
 
@@ -134,13 +134,20 @@ def _create_inputs(root: Path) -> dict[str, tuple[Path, str, str, bool]]:
     inputs["digital-pdf"] = (pdf_path, "pdf", "application/pdf", False)
 
     image = Image.new("RGB", (1500, 400), "white")
-    ImageDraw.Draw(image).text((80, 150), SYNTHETIC_TEXT, fill="black", stroke_width=1)
+    # Keep the synthetic scan legible after PDF rasterization; a stroked tiny
+    # default font can produce no OCR text and correctly fail the chunk contract.
+    ImageDraw.Draw(image).text(
+        (80, 150), SYNTHETIC_TEXT, fill="black", font=ImageFont.load_default(size=48)
+    )
     png_path = root / "synthetic.png"
     image.save(png_path, format="PNG")
     inputs["png-ocr"] = (png_path, "png", "image/png", True)
     jpeg_path = root / "synthetic.jpg"
     image.save(jpeg_path, format="JPEG", quality=95)
     inputs["jpeg-ocr"] = (jpeg_path, "jpg", "image/jpeg", True)
+    jpeg_alias_path = root / "synthetic.jpeg"
+    image.save(jpeg_alias_path, format="JPEG", quality=95)
+    inputs["jpeg-extension-ocr"] = (jpeg_alias_path, "jpeg", "image/jpeg", True)
     scanned_pdf = root / "synthetic-scan.pdf"
     image.save(scanned_pdf, format="PDF", resolution=150)
     inputs["scanned-pdf-ocr"] = (scanned_pdf, "pdf", "application/pdf", True)
@@ -271,11 +278,13 @@ def _validate_success(
         raise AssertionError(
             f"expected successful parse, received {response.get('error', {}).get('code')}"
         )
-    expected = {"document.json", "content.md", "content.txt", "manifest.json"}
+    expected = {"document.json", "content.md", "content.txt", "chunks.jsonl", "manifest.json"}
     actual = {item.name for item in output_root.iterdir() if item.is_file()}
     if actual != expected:
         raise AssertionError("unexpected artifact set")
     manifest = json.loads((output_root / "manifest.json").read_text(encoding="utf-8"))
+    if manifest.get("chunkSchemaVersion") != 1:
+        raise AssertionError("chunk schema mismatch")
     for artifact in manifest["artifacts"]:
         relative = Path(artifact["relativePath"])
         if relative.is_absolute() or ".." in relative.parts:
@@ -286,6 +295,35 @@ def _validate_success(
             or _sha256(candidate) != artifact["sha256"]
         ):
             raise AssertionError("artifact integrity mismatch")
+    chunks = [
+        json.loads(line)
+        for line in (output_root / "chunks.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    if not chunks:
+        raise AssertionError("normalized chunks are missing")
+    normalized_text = " ".join(chunk["text"] for chunk in chunks).casefold()
+    if "synthetic" not in normalized_text or "smoke" not in normalized_text:
+        raise AssertionError("synthetic text was not recovered into chunks")
+    for ordinal, chunk in enumerate(chunks):
+        expected_keys = {
+            "schemaVersion",
+            "ordinal",
+            "kind",
+            "text",
+            "contentSha256",
+            "locator",
+        }
+        if set(chunk) != expected_keys or chunk["schemaVersion"] != 1:
+            raise AssertionError("invalid chunk record")
+        if chunk["ordinal"] != ordinal or chunk["kind"] not in {
+            "heading",
+            "paragraph",
+            "list_item",
+            "table",
+        }:
+            raise AssertionError("invalid chunk ordering or kind")
+        if hashlib.sha256(chunk["text"].encode("utf-8")).hexdigest() != chunk["contentSha256"]:
+            raise AssertionError("chunk content hash mismatch")
     content = b"".join(path.read_bytes() for path in output_root.iterdir() if path.is_file())
     if SECRET_SENTINEL.encode() in content or b"data:image" in content or b"base64," in content:
         raise AssertionError("forbidden content in artifacts")
@@ -316,9 +354,9 @@ def run(models_root: Path) -> dict[str, Any]:
         if not health.get("ok") or health["result"] != {
             "status": "ok",
             "service": "meetinglens-docling-worker",
-            "workerVersion": "0.1.0",
+            "workerVersion": "0.2.0",
             "parserVersion": "2.117.0",
-            "protocolVersion": "1",
+            "protocolVersion": "2",
             "pythonVersion": sys.version.split()[0],
             "transport": "stdio",
             "networkListener": False,
@@ -348,7 +386,12 @@ def run(models_root: Path) -> dict[str, Any]:
             durations[name] = int((time.monotonic() - parse_started) * 1000)
             peak_rss = max(peak_rss, rss)
             listening_pids.update(ports)
-            _validate_success(response, output_root, [path, input_root, output_root, models_root])
+            try:
+                _validate_success(
+                    response, output_root, [path, input_root, output_root, models_root]
+                )
+            except AssertionError as error:
+                raise AssertionError(f"{name}: {error}") from None
 
         outside_path = root / "outside.txt"
         outside_path.write_text(SYNTHETIC_TEXT, encoding="utf-8")

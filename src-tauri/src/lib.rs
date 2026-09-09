@@ -5,6 +5,8 @@ mod audio_transcription_worker;
 pub mod data;
 pub mod docling_worker;
 mod document_commands;
+mod document_parsing_commands;
+mod document_parsing_runtime;
 mod meeting_commands;
 mod secret_commands;
 pub mod secret_store;
@@ -142,10 +144,15 @@ pub fn run() {
                 audio_transcription_runtime::AudioTranscriptionRuntime::initialize(
                     meeting_service.clone(),
                 );
+            let document_parsing_runtime =
+                document_parsing_runtime::DocumentParsingRuntime::initialize(
+                    meeting_service.clone(),
+                );
             app.manage(meeting_service);
             app.manage(secret_store);
             app.manage(summary_runtime);
             app.manage(audio_transcription_runtime);
+            app.manage(document_parsing_runtime);
             app.manage(sidecar::SidecarRuntime::start());
             Ok(())
         })
@@ -153,6 +160,9 @@ pub fn run() {
             if matches!(event, tauri::WindowEvent::CloseRequested { .. }) {
                 window
                     .state::<audio_transcription_runtime::AudioTranscriptionRuntime>()
+                    .shutdown();
+                window
+                    .state::<document_parsing_runtime::DocumentParsingRuntime>()
                     .shutdown();
                 window.state::<sidecar::SidecarRuntime>().shutdown();
             }
@@ -172,6 +182,10 @@ pub fn run() {
             document_commands::request_delete_document,
             document_commands::retry_delete_document,
             document_commands::get_document_import_policy,
+            document_parsing_commands::get_document_parser_policy,
+            document_parsing_commands::parse_document,
+            document_parsing_commands::get_document_parse_status,
+            document_parsing_commands::cancel_document_parse,
             secret_commands::get_secret_status,
             secret_commands::set_secret,
             secret_commands::delete_secret,

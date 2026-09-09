@@ -510,7 +510,7 @@ wheels = [
 
 [[package]]
 name = "meetinglens-docling-worker"
-version = "0.1.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "docling-slim", extra = ["convert-core", "feat-ocr-rapidocr-onnx", "format-markdown", "format-office", "format-pdf", "models-local"], marker = "(platform_machine == 'x86_64' and sys_platform == 'linux') or (platform_machine == 'AMD64' and sys_platform == 'win32')" },

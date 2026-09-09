@@ -819,6 +819,239 @@ const MIGRATIONS: &[Migration] = &[
             ON evidence_items(meeting_id, source_id_snapshot, summary_id);
     "#,
     },
+    Migration {
+        version: 7,
+        sql: r#"
+        CREATE UNIQUE INDEX idx_documents_id_meeting
+            ON documents(id, meeting_id);
+
+        CREATE TABLE document_chunks (
+            id TEXT PRIMARY KEY NOT NULL CHECK(length(id) = 36),
+            document_id TEXT NOT NULL CHECK(length(document_id) = 36),
+            meeting_id TEXT NOT NULL CHECK(length(meeting_id) = 36),
+            ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 0 AND 19999),
+            kind TEXT NOT NULL CHECK(kind IN ('heading', 'paragraph', 'list_item', 'table')),
+            text TEXT NOT NULL CHECK(
+                length(trim(text)) > 0
+                AND length(CAST(text AS BLOB)) <= 65536
+            ),
+            content_sha256 TEXT NOT NULL CHECK(
+                length(content_sha256) = 64
+                AND content_sha256 = lower(content_sha256)
+                AND content_sha256 NOT GLOB '*[^0-9a-f]*'
+            ),
+            page_start INTEGER CHECK(page_start IS NULL OR page_start BETWEEN 1 AND 300),
+            page_end INTEGER CHECK(page_end IS NULL OR page_end BETWEEN 1 AND 300),
+            section_path_json TEXT NOT NULL CHECK(
+                length(CAST(section_path_json AS BLOB)) BETWEEN 2 AND 4096
+                AND json_valid(section_path_json)
+                AND json_type(section_path_json) = 'array'
+            ),
+            table_ordinal INTEGER CHECK(
+                table_ordinal IS NULL OR table_ordinal BETWEEN 0 AND 19999
+            ),
+            parser_version TEXT NOT NULL CHECK(
+                length(trim(parser_version)) > 0
+                AND length(CAST(parser_version AS BLOB)) <= 64
+                AND parser_version NOT GLOB '*[^A-Za-z0-9._+-]*'
+            ),
+            chunk_schema_version INTEGER NOT NULL CHECK(chunk_schema_version = 1),
+            created_at TEXT NOT NULL,
+            UNIQUE(id, document_id, meeting_id),
+            UNIQUE(document_id, ordinal),
+            CHECK(
+                (page_start IS NULL AND page_end IS NULL)
+                OR (page_start IS NOT NULL AND page_end IS NOT NULL AND page_end >= page_start)
+            ),
+            CHECK(
+                (kind IN ('heading', 'paragraph', 'list_item') AND table_ordinal IS NULL)
+                OR (kind = 'table' AND table_ordinal IS NOT NULL)
+            ),
+            FOREIGN KEY(document_id, meeting_id)
+                REFERENCES documents(id, meeting_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX idx_document_chunks_meeting_document
+            ON document_chunks(meeting_id, document_id, ordinal, id);
+
+        ALTER TABLE summaries ADD COLUMN document_count INTEGER NOT NULL DEFAULT 0
+            CHECK(document_count BETWEEN 0 AND 20);
+        ALTER TABLE summaries ADD COLUMN input_document_chunk_count INTEGER NOT NULL DEFAULT 0
+            CHECK(input_document_chunk_count BETWEEN 0 AND 20000);
+        ALTER TABLE summaries ADD COLUMN document_input_bytes INTEGER NOT NULL DEFAULT 0
+            CHECK(
+                document_input_bytes BETWEEN 0 AND 10485760
+                AND input_bytes + document_input_bytes <= 10485760
+                AND input_segment_count + input_document_chunk_count <= 20000
+                AND (
+                    (document_count = 0 AND input_document_chunk_count = 0
+                        AND document_input_bytes = 0)
+                    OR (document_count > 0 AND input_document_chunk_count > 0
+                        AND document_count <= input_document_chunk_count
+                        AND document_input_bytes > 0)
+                )
+            );
+
+        CREATE TABLE summary_document_sources (
+            id TEXT PRIMARY KEY NOT NULL CHECK(length(id) = 36),
+            summary_id TEXT NOT NULL CHECK(length(summary_id) = 36),
+            meeting_id TEXT NOT NULL CHECK(length(meeting_id) = 36),
+            document_id_snapshot TEXT NOT NULL CHECK(length(document_id_snapshot) = 36),
+            document_chunk_id_snapshot TEXT NOT NULL CHECK(
+                length(document_chunk_id_snapshot) = 36
+            ),
+            document_ordinal INTEGER NOT NULL CHECK(document_ordinal BETWEEN 0 AND 19),
+            chunk_ordinal INTEGER NOT NULL CHECK(chunk_ordinal BETWEEN 0 AND 19999),
+            global_ordinal INTEGER NOT NULL CHECK(global_ordinal BETWEEN 0 AND 19999),
+            chunk_kind_snapshot TEXT NOT NULL CHECK(
+                chunk_kind_snapshot IN ('heading', 'paragraph', 'list_item', 'table')
+            ),
+            document_display_name_snapshot TEXT CHECK(
+                document_display_name_snapshot IS NULL OR (
+                    length(trim(document_display_name_snapshot)) > 0
+                    AND length(CAST(document_display_name_snapshot AS BLOB)) <= 255
+                )
+            ),
+            document_sha256_snapshot TEXT NOT NULL CHECK(
+                length(document_sha256_snapshot) = 64
+                AND document_sha256_snapshot = lower(document_sha256_snapshot)
+                AND document_sha256_snapshot NOT GLOB '*[^0-9a-f]*'
+            ),
+            chunk_sha256_snapshot TEXT NOT NULL CHECK(
+                length(chunk_sha256_snapshot) = 64
+                AND chunk_sha256_snapshot = lower(chunk_sha256_snapshot)
+                AND chunk_sha256_snapshot NOT GLOB '*[^0-9a-f]*'
+            ),
+            page_start_snapshot INTEGER CHECK(
+                page_start_snapshot IS NULL OR page_start_snapshot BETWEEN 1 AND 300
+            ),
+            page_end_snapshot INTEGER CHECK(
+                page_end_snapshot IS NULL OR page_end_snapshot BETWEEN 1 AND 300
+            ),
+            section_path_json_snapshot TEXT CHECK(
+                section_path_json_snapshot IS NULL OR (
+                    length(CAST(section_path_json_snapshot AS BLOB)) BETWEEN 2 AND 4096
+                    AND json_valid(section_path_json_snapshot)
+                    AND json_type(section_path_json_snapshot) = 'array'
+                )
+            ),
+            table_ordinal_snapshot INTEGER CHECK(
+                table_ordinal_snapshot IS NULL OR table_ordinal_snapshot BETWEEN 0 AND 19999
+            ),
+            parser_version_snapshot TEXT NOT NULL CHECK(
+                length(trim(parser_version_snapshot)) > 0
+                AND length(CAST(parser_version_snapshot AS BLOB)) <= 64
+                AND parser_version_snapshot NOT GLOB '*[^A-Za-z0-9._+-]*'
+            ),
+            chunk_schema_version_snapshot INTEGER NOT NULL CHECK(
+                chunk_schema_version_snapshot = 1
+            ),
+            text_snapshot TEXT CHECK(
+                text_snapshot IS NULL OR (
+                    length(trim(text_snapshot)) > 0
+                    AND length(CAST(text_snapshot AS BLOB)) <= 65536
+                )
+            ),
+            snapshot_at TEXT NOT NULL,
+            source_deleted INTEGER NOT NULL DEFAULT 0 CHECK(source_deleted IN (0, 1)),
+            redacted_at TEXT,
+            UNIQUE(id, summary_id, meeting_id),
+            UNIQUE(
+                id, summary_id, meeting_id, document_id_snapshot,
+                document_chunk_id_snapshot, chunk_ordinal, global_ordinal
+            ),
+            UNIQUE(summary_id, document_chunk_id_snapshot),
+            UNIQUE(summary_id, global_ordinal),
+            CHECK(
+                (page_start_snapshot IS NULL AND page_end_snapshot IS NULL)
+                OR (
+                    page_start_snapshot IS NOT NULL AND page_end_snapshot IS NOT NULL
+                    AND page_end_snapshot >= page_start_snapshot
+                )
+            ),
+            CHECK(
+                (chunk_kind_snapshot IN ('heading', 'paragraph', 'list_item')
+                    AND table_ordinal_snapshot IS NULL)
+                OR (chunk_kind_snapshot = 'table' AND table_ordinal_snapshot IS NOT NULL)
+            ),
+            CHECK(
+                (source_deleted = 0 AND document_display_name_snapshot IS NOT NULL
+                    AND section_path_json_snapshot IS NOT NULL
+                    AND text_snapshot IS NOT NULL AND redacted_at IS NULL)
+                OR (source_deleted = 1 AND document_display_name_snapshot IS NULL
+                    AND section_path_json_snapshot IS NULL
+                    AND text_snapshot IS NULL AND redacted_at IS NOT NULL)
+            ),
+            FOREIGN KEY(summary_id, meeting_id)
+                REFERENCES summaries(id, meeting_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX idx_summary_document_sources_summary_order
+            ON summary_document_sources(summary_id, global_ordinal, id);
+        CREATE INDEX idx_summary_document_sources_live_document
+            ON summary_document_sources(meeting_id, document_id_snapshot, summary_id);
+
+        CREATE TABLE document_evidence_items (
+            id TEXT PRIMARY KEY NOT NULL CHECK(length(id) = 36),
+            summary_id TEXT NOT NULL CHECK(length(summary_id) = 36),
+            meeting_id TEXT NOT NULL CHECK(length(meeting_id) = 36),
+            summary_document_source_id TEXT NOT NULL CHECK(
+                length(summary_document_source_id) = 36
+            ),
+            kind TEXT NOT NULL CHECK(kind = 'document'),
+            document_id_snapshot TEXT NOT NULL CHECK(length(document_id_snapshot) = 36),
+            document_chunk_id_snapshot TEXT NOT NULL CHECK(
+                length(document_chunk_id_snapshot) = 36
+            ),
+            label TEXT NOT NULL CHECK(
+                length(trim(label)) > 0 AND length(CAST(label AS BLOB)) <= 255
+            ),
+            parser_version_snapshot TEXT NOT NULL CHECK(
+                length(trim(parser_version_snapshot)) > 0
+                AND length(CAST(parser_version_snapshot AS BLOB)) <= 64
+                AND parser_version_snapshot NOT GLOB '*[^A-Za-z0-9._+-]*'
+            ),
+            page_start INTEGER CHECK(page_start IS NULL OR page_start BETWEEN 1 AND 300),
+            page_end INTEGER CHECK(page_end IS NULL OR page_end BETWEEN 1 AND 300),
+            section_path_json TEXT NOT NULL CHECK(
+                length(CAST(section_path_json AS BLOB)) BETWEEN 2 AND 4096
+                AND json_valid(section_path_json)
+                AND json_type(section_path_json) = 'array'
+            ),
+            table_ordinal INTEGER CHECK(
+                table_ordinal IS NULL OR table_ordinal BETWEEN 0 AND 19999
+            ),
+            ordinal INTEGER NOT NULL CHECK(ordinal BETWEEN 0 AND 19999),
+            global_ordinal INTEGER NOT NULL CHECK(global_ordinal BETWEEN 0 AND 19999),
+            excerpt TEXT NOT NULL CHECK(
+                length(trim(excerpt)) > 0
+                AND length(CAST(excerpt AS BLOB)) <= 1024
+            ),
+            source_deleted INTEGER NOT NULL DEFAULT 0 CHECK(source_deleted IN (0, 1)),
+            created_at TEXT NOT NULL,
+            UNIQUE(summary_id, summary_document_source_id),
+            CHECK(id = summary_document_source_id),
+            CHECK(
+                (page_start IS NULL AND page_end IS NULL)
+                OR (page_start IS NOT NULL AND page_end IS NOT NULL AND page_end >= page_start)
+            ),
+            FOREIGN KEY(
+                summary_document_source_id, summary_id, meeting_id,
+                document_id_snapshot, document_chunk_id_snapshot, ordinal, global_ordinal
+            ) REFERENCES summary_document_sources(
+                id, summary_id, meeting_id, document_id_snapshot,
+                document_chunk_id_snapshot, chunk_ordinal, global_ordinal
+            ) ON DELETE CASCADE,
+            FOREIGN KEY(summary_id, meeting_id)
+                REFERENCES summaries(id, meeting_id) ON DELETE CASCADE
+        );
+
+        CREATE INDEX idx_document_evidence_items_summary_order
+            ON document_evidence_items(summary_id, global_ordinal, id);
+        CREATE INDEX idx_document_evidence_items_source
+            ON document_evidence_items(meeting_id, document_id_snapshot, summary_id);
+    "#,
+    },
 ];
 
 pub(crate) fn run(connection: &mut Connection) -> DataResult<()> {
@@ -843,6 +1076,11 @@ pub(crate) fn run_through_v4(connection: &mut Connection) -> DataResult<()> {
 #[cfg(test)]
 pub(crate) fn run_through_v5(connection: &mut Connection) -> DataResult<()> {
     apply(connection, &MIGRATIONS[..5])
+}
+
+#[cfg(test)]
+pub(crate) fn run_through_v6(connection: &mut Connection) -> DataResult<()> {
+    apply(connection, &MIGRATIONS[..6])
 }
 
 fn apply(connection: &mut Connection, migrations: &[Migration]) -> DataResult<()> {
@@ -992,7 +1230,7 @@ mod tests {
                 row.get(0)
             })
             .expect("migration count should be readable");
-        assert_eq!(count, 6);
+        assert_eq!(count, 7);
     }
 
     #[test]
@@ -1019,6 +1257,23 @@ mod tests {
         connection
             .execute(
                 "UPDATE schema_migrations SET checksum = 'changed' WHERE version = 6",
+                [],
+            )
+            .expect("test should alter the checksum");
+
+        assert_eq!(
+            apply(&mut connection, MIGRATIONS),
+            Err(DataError::MigrationConflict)
+        );
+    }
+
+    #[test]
+    fn rejects_a_changed_schema_v7_migration_checksum() {
+        let mut connection = Connection::open_in_memory().expect("in-memory database should open");
+        apply(&mut connection, MIGRATIONS).expect("migration should succeed");
+        connection
+            .execute(
+                "UPDATE schema_migrations SET checksum = 'changed' WHERE version = 7",
                 [],
             )
             .expect("test should alter the checksum");
@@ -1170,7 +1425,7 @@ mod tests {
             )
             .expect("populated schema-v5 fixture should insert");
 
-        apply(&mut connection, MIGRATIONS).expect("schema v6 should apply");
+        apply(&mut connection, &MIGRATIONS[..6]).expect("schema v6 should apply");
 
         let migration_state: (i64, i64) = connection
             .query_row(
@@ -1277,6 +1532,326 @@ mod tests {
     }
 
     #[test]
+    fn schema_v7_upgrades_v6_and_enforces_document_chunk_snapshot_boundaries() {
+        let mut connection = Connection::open_in_memory().expect("in-memory database should open");
+        connection
+            .pragma_update(None, "foreign_keys", "ON")
+            .expect("foreign keys should enable");
+        run_through_v6(&mut connection).expect("schema v6 should apply");
+        seed_schema_v4_summary(&connection);
+        connection
+            .execute_batch(
+                r#"
+                INSERT INTO documents(
+                    id, meeting_id, original_filename, safe_extension,
+                    detected_media_type, size_bytes, sha256, status,
+                    storage_relative_path, imported_at, updated_at,
+                    parser_version_optional, page_count_optional, created_at
+                ) VALUES (
+                    '77000000-0000-4000-8000-000000000001',
+                    '71000000-0000-4000-8000-000000000001',
+                    'synthetic.txt', 'txt', 'text/plain', 24,
+                    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                    'staged',
+                    'meeting-data/meetings/71000000-0000-4000-8000-000000000001/documents/77000000-0000-4000-8000-000000000001.txt',
+                    '2026-08-01T00:00:00.000Z', '2026-08-01T00:00:00.000Z',
+                    NULL, NULL, '2026-08-01T00:00:00.000Z'
+                );
+                "#,
+            )
+            .expect("schema-v6 document fixture should insert");
+
+        apply(&mut connection, MIGRATIONS).expect("schema v7 should apply");
+
+        let migration_state: (i64, i64, String) = connection
+            .query_row(
+                "SELECT COUNT(*), MAX(version), checksum FROM schema_migrations \
+                 WHERE version = 7",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("schema-v7 migration should record");
+        assert_eq!(migration_state.0, 1);
+        assert_eq!(migration_state.1, 7);
+        assert!(migration_state.2.starts_with("fnv1a64:"));
+        let legacy_counts: (i64, i64, i64) = connection
+            .query_row(
+                "SELECT document_count, input_document_chunk_count, document_input_bytes \
+                 FROM summaries WHERE id = '72000000-0000-4000-8000-000000000001'",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("legacy summary document counters should default safely");
+        assert_eq!(legacy_counts, (0, 0, 0));
+
+        for invalid_counters in [
+            "UPDATE summaries SET document_count = 1 WHERE id = '72000000-0000-4000-8000-000000000001'",
+            "UPDATE summaries SET document_count = 2, input_document_chunk_count = 1, document_input_bytes = 1 WHERE id = '72000000-0000-4000-8000-000000000001'",
+            "UPDATE summaries SET document_count = 1, input_document_chunk_count = 20000, document_input_bytes = 1 WHERE id = '72000000-0000-4000-8000-000000000001'",
+            "UPDATE summaries SET document_count = 1, input_document_chunk_count = 1, document_input_bytes = 10485760 WHERE id = '72000000-0000-4000-8000-000000000001'",
+        ] {
+            assert!(
+                connection.execute(invalid_counters, []).is_err(),
+                "inconsistent or over-limit document counters must fail closed"
+            );
+        }
+
+        connection
+            .execute_batch(
+                r#"
+                UPDATE documents
+                SET status = 'parsed', parser_version_optional = '2.117.0',
+                    page_count_optional = 2
+                WHERE id = '77000000-0000-4000-8000-000000000001';
+
+                INSERT INTO document_chunks(
+                    id, document_id, meeting_id, ordinal, kind, text,
+                    content_sha256, page_start, page_end, section_path_json,
+                    table_ordinal, parser_version, chunk_schema_version, created_at
+                ) VALUES (
+                    '78000000-0000-4000-8000-000000000001',
+                    '77000000-0000-4000-8000-000000000001',
+                    '71000000-0000-4000-8000-000000000001',
+                    0, 'paragraph', 'Synthetic document chunk',
+                    'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+                    1, 1, '["Synthetic section"]', NULL, '2.117.0', 1,
+                    '2026-08-01T00:00:00.000Z'
+                );
+
+                INSERT INTO document_chunks(
+                    id, document_id, meeting_id, ordinal, kind, text,
+                    content_sha256, page_start, page_end, section_path_json,
+                    table_ordinal, parser_version, chunk_schema_version, created_at
+                ) VALUES
+                (
+                    '78000000-0000-4000-8000-000000000010',
+                    '77000000-0000-4000-8000-000000000001',
+                    '71000000-0000-4000-8000-000000000001',
+                    1, 'table', 'Synthetic split table one',
+                    'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc',
+                    2, 2, '["Synthetic section"]', 0, '2.117.0', 1,
+                    '2026-08-01T00:00:00.000Z'
+                ),
+                (
+                    '78000000-0000-4000-8000-000000000011',
+                    '77000000-0000-4000-8000-000000000001',
+                    '71000000-0000-4000-8000-000000000001',
+                    2, 'table', 'Synthetic split table two',
+                    'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd',
+                    2, 2, '["Synthetic section"]', 0, '2.117.0', 1,
+                    '2026-08-01T00:00:00.000Z'
+                );
+
+                UPDATE summaries
+                SET document_count = 1, input_document_chunk_count = 1,
+                    document_input_bytes = 24
+                WHERE id = '72000000-0000-4000-8000-000000000001';
+
+                INSERT INTO summary_document_sources(
+                    id, summary_id, meeting_id, document_id_snapshot,
+                    document_chunk_id_snapshot, document_ordinal, chunk_ordinal,
+                    global_ordinal, chunk_kind_snapshot,
+                    document_display_name_snapshot, document_sha256_snapshot,
+                    chunk_sha256_snapshot, page_start_snapshot, page_end_snapshot,
+                    section_path_json_snapshot, table_ordinal_snapshot,
+                    parser_version_snapshot, chunk_schema_version_snapshot,
+                    text_snapshot, snapshot_at
+                ) VALUES (
+                    '79000000-0000-4000-8000-000000000001',
+                    '72000000-0000-4000-8000-000000000001',
+                    '71000000-0000-4000-8000-000000000001',
+                    '77000000-0000-4000-8000-000000000001',
+                    '78000000-0000-4000-8000-000000000001',
+                    0, 0, 1, 'paragraph', 'synthetic.txt',
+                    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                    'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+                    1, 1, '["Synthetic section"]', NULL, '2.117.0', 1,
+                    'Synthetic document chunk', '2026-08-01T00:00:00.000Z'
+                );
+
+                INSERT INTO document_evidence_items(
+                    id, summary_id, meeting_id, summary_document_source_id, kind,
+                    document_id_snapshot, document_chunk_id_snapshot, label,
+                    parser_version_snapshot, page_start, page_end, section_path_json,
+                    table_ordinal, ordinal, global_ordinal, excerpt, created_at
+                ) VALUES (
+                    '79000000-0000-4000-8000-000000000001',
+                    '72000000-0000-4000-8000-000000000001',
+                    '71000000-0000-4000-8000-000000000001',
+                    '79000000-0000-4000-8000-000000000001', 'document',
+                    '77000000-0000-4000-8000-000000000001',
+                    '78000000-0000-4000-8000-000000000001',
+                    'Synthetic document chunk', '2.117.0', 1, 1,
+                    '["Synthetic section"]', NULL, 0, 1,
+                    'Synthetic document chunk', '2026-08-01T00:00:01.000Z'
+                );
+                "#,
+            )
+            .expect("valid document chunks and immutable evidence should insert");
+
+        for invalid_evidence_update in [
+            "UPDATE document_evidence_items SET summary_id = '72000000-0000-4000-8000-000000000099' WHERE id = '79000000-0000-4000-8000-000000000001'",
+            "UPDATE document_evidence_items SET meeting_id = '71000000-0000-4000-8000-000000000099' WHERE id = '79000000-0000-4000-8000-000000000001'",
+            "UPDATE document_evidence_items SET document_id_snapshot = '77000000-0000-4000-8000-000000000099' WHERE id = '79000000-0000-4000-8000-000000000001'",
+            "UPDATE document_evidence_items SET document_chunk_id_snapshot = '78000000-0000-4000-8000-000000000099' WHERE id = '79000000-0000-4000-8000-000000000001'",
+            "UPDATE document_evidence_items SET ordinal = 9 WHERE id = '79000000-0000-4000-8000-000000000001'",
+            "UPDATE document_evidence_items SET global_ordinal = 9 WHERE id = '79000000-0000-4000-8000-000000000001'",
+        ] {
+            assert!(
+                connection.execute(invalid_evidence_update, []).is_err(),
+                "document evidence locator must remain bound to its exact snapshot"
+            );
+        }
+
+        for invalid in [
+            "INSERT INTO document_chunks(id, document_id, meeting_id, ordinal, kind, text, content_sha256, section_path_json, table_ordinal, parser_version, chunk_schema_version, created_at) VALUES ('78000000-0000-4000-8000-000000000002', '77000000-0000-4000-8000-000000000001', '71000000-0000-4000-8000-000000000001', 1, 'heading', 'Invalid table locator', 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', '[]', 1, '2.117.0', 1, '2026-08-01T00:00:00.000Z')",
+            "INSERT INTO document_chunks(id, document_id, meeting_id, ordinal, kind, text, content_sha256, section_path_json, table_ordinal, parser_version, chunk_schema_version, created_at) VALUES ('78000000-0000-4000-8000-000000000003', '77000000-0000-4000-8000-000000000001', '71000000-0000-4000-8000-000000000099', 1, 'paragraph', 'Wrong meeting', 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', '[]', NULL, '2.117.0', 1, '2026-08-01T00:00:00.000Z')",
+            "INSERT INTO document_chunks(id, document_id, meeting_id, ordinal, kind, text, content_sha256, section_path_json, table_ordinal, parser_version, chunk_schema_version, created_at) VALUES ('78000000-0000-4000-8000-000000000004', '77000000-0000-4000-8000-000000000001', '71000000-0000-4000-8000-000000000001', 1, 'paragraph', 'Invalid section', 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', '{}', NULL, '2.117.0', 1, '2026-08-01T00:00:00.000Z')",
+            "INSERT INTO document_chunks(id, document_id, meeting_id, ordinal, kind, text, content_sha256, section_path_json, table_ordinal, parser_version, chunk_schema_version, created_at) VALUES ('78000000-0000-4000-8000-000000000005', '77000000-0000-4000-8000-000000000001', '71000000-0000-4000-8000-000000000001', 3, 'paragraph', 'Invalid parser version', 'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc', '[]', NULL, '2.117.0 invalid', 1, '2026-08-01T00:00:00.000Z')",
+        ] {
+            assert!(
+                connection.execute(invalid, []).is_err(),
+                "invalid document chunk must fail closed"
+            );
+        }
+
+        assert!(
+            connection
+                .execute(
+                    "UPDATE summary_document_sources
+                     SET source_deleted = 1, document_display_name_snapshot = NULL,
+                         text_snapshot = NULL,
+                         redacted_at = '2026-08-01T00:00:02.000Z'
+                     WHERE id = '79000000-0000-4000-8000-000000000001'",
+                    [],
+                )
+                .is_err(),
+            "partial document snapshot redaction must fail closed"
+        );
+        connection
+            .execute_batch(
+                "
+                UPDATE summary_document_sources
+                SET source_deleted = 1, document_display_name_snapshot = NULL,
+                    section_path_json_snapshot = NULL, text_snapshot = NULL,
+                    redacted_at = '2026-08-01T00:00:02.000Z'
+                WHERE id = '79000000-0000-4000-8000-000000000001';
+                UPDATE document_evidence_items
+                SET source_deleted = 1
+                WHERE id = '79000000-0000-4000-8000-000000000001';
+                ",
+            )
+            .expect("complete document snapshot redaction should succeed");
+
+        connection
+            .execute(
+                "DELETE FROM documents WHERE id = '77000000-0000-4000-8000-000000000001'",
+                [],
+            )
+            .expect("live document should delete");
+        let retained: (i64, i64, i64) = connection
+            .query_row(
+                "SELECT
+                    (SELECT COUNT(*) FROM document_chunks),
+                    (SELECT COUNT(*) FROM summary_document_sources),
+                    (SELECT COUNT(*) FROM document_evidence_items)",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+            )
+            .expect("live and immutable rows should count");
+        assert_eq!(retained, (0, 1, 1));
+        connection
+            .execute(
+                "DELETE FROM summaries WHERE id = '72000000-0000-4000-8000-000000000001'",
+                [],
+            )
+            .expect("summary should delete");
+        let cascaded: (i64, i64) = connection
+            .query_row(
+                "SELECT
+                    (SELECT COUNT(*) FROM summary_document_sources),
+                    (SELECT COUNT(*) FROM document_evidence_items)",
+                [],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .expect("summary document rows should count after cascade");
+        assert_eq!(cascaded, (0, 0));
+        let integrity: String = connection
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .expect("integrity should check");
+        let foreign_key_violations: i64 = connection
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })
+            .expect("foreign keys should check");
+        assert_eq!(integrity, "ok");
+        assert_eq!(foreign_key_violations, 0);
+    }
+
+    #[test]
+    fn failed_schema_v7_rolls_back_without_touching_schema_v6() {
+        let mut connection = Connection::open_in_memory().expect("in-memory database should open");
+        run_through_v6(&mut connection).expect("schema v6 should apply");
+        seed_schema_v4_summary(&connection);
+        let failing_v7 = [Migration {
+            version: 7,
+            sql: "ALTER TABLE summaries ADD COLUMN synthetic_v7 INTEGER NOT NULL DEFAULT 0; \
+                  CREATE TABLE synthetic_v7_transient(id INTEGER); INVALID SQL;",
+        }];
+
+        assert_eq!(
+            apply(&mut connection, &failing_v7),
+            Err(DataError::Database)
+        );
+        let migration_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM schema_migrations WHERE version = 7",
+                [],
+                |row| row.get(0),
+            )
+            .expect("migration records should read");
+        let transient_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'synthetic_v7_transient'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("schema should inspect");
+        let added_column_count: i64 = connection
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('summaries') \
+                 WHERE name = 'synthetic_v7'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("columns should inspect");
+        assert_eq!(
+            (migration_count, transient_count, added_column_count),
+            (0, 0, 0)
+        );
+        let retained_summary: String = connection
+            .query_row(
+                "SELECT meeting_title_snapshot FROM summaries \
+                 WHERE id = '72000000-0000-4000-8000-000000000001'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("schema-v6 summary should survive failed v7");
+        assert_eq!(retained_summary, "Synthetic v4 consent upgrade");
+        apply(&mut connection, MIGRATIONS).expect("real schema v7 should still apply");
+        let integrity: String = connection
+            .query_row("PRAGMA integrity_check", [], |row| row.get(0))
+            .expect("integrity should check");
+        let foreign_key_violations: i64 = connection
+            .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
+                row.get(0)
+            })
+            .expect("foreign keys should check");
+        assert_eq!(integrity, "ok");
+        assert_eq!(foreign_key_violations, 0);
+    }
+
+    #[test]
     fn failed_schema_v6_rolls_back_without_touching_schema_v5_data() {
         let mut connection = Connection::open_in_memory().expect("in-memory database should open");
         connection
@@ -1320,7 +1895,7 @@ mod tests {
         assert_eq!(evidence_count, 1);
         assert_eq!(renamed_table_count, 0);
 
-        apply(&mut connection, MIGRATIONS).expect("real schema v6 should still apply");
+        run_through_v6(&mut connection).expect("real schema v6 should still apply");
         let foreign_key_violations: i64 = connection
             .query_row("SELECT COUNT(*) FROM pragma_foreign_key_check", [], |row| {
                 row.get(0)
@@ -1731,7 +2306,7 @@ mod tests {
                 row.get(0)
             })
             .expect("migration records should be readable");
-        assert_eq!(migration_count, 6);
+        assert_eq!(migration_count, 7);
         let integrity: String = connection
             .query_row("PRAGMA integrity_check", [], |row| row.get(0))
             .expect("integrity check should run");
@@ -1808,7 +2383,7 @@ mod tests {
             })
             .expect("foreign keys should check");
         assert_eq!(transcript_count, 1);
-        assert_eq!(migration_count, 6);
+        assert_eq!(migration_count, 7);
         assert_eq!(summary_table_count, 3);
         assert_eq!(integrity, "ok");
         assert_eq!(foreign_key_violations, 0);

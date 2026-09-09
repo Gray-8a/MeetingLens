@@ -15,7 +15,7 @@ from meetinglens_docling_worker.worker import BoundedDiscardSink, run_once
 
 def _request(operation: str = "health") -> dict[str, object]:
     return {
-        "protocolVersion": "1",
+        "protocolVersion": "2",
         "requestId": str(uuid.uuid4()),
         "operation": operation,
     }

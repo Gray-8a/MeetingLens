@@ -174,6 +174,18 @@ export function DeepSeekConsentDialog({
             <dd>{formatNumber(disclosure.segmentCount)}</dd>
           </div>
           <div>
+            <dt>{t("summaryConsent.documents")}</dt>
+            <dd>{formatNumber(disclosure.documentCount)}</dd>
+          </div>
+          <div>
+            <dt>{t("summaryConsent.documentChunks")}</dt>
+            <dd>{formatNumber(disclosure.documentChunkCount)}</dd>
+          </div>
+          <div>
+            <dt>{t("summaryConsent.documentInputSize")}</dt>
+            <dd>{formatFileSize(disclosure.documentInputBytes)}</dd>
+          </div>
+          <div>
             <dt>{t("summaryConsent.inputSize")}</dt>
             <dd>{formatFileSize(disclosure.inputBytes)}</dd>
           </div>
@@ -255,6 +267,10 @@ function dataCategoryKey(category: SummaryExternalDataCategory) {
       return "summaryConsent.dataCategory.speaker_labels_and_names" as const;
     case "time_offsets":
       return "summaryConsent.dataCategory.time_offsets" as const;
+    case "document_text":
+      return "summaryConsent.dataCategory.document_text" as const;
+    case "document_structure_locations":
+      return "summaryConsent.dataCategory.document_structure_locations" as const;
     case "evidence_ids":
       return "summaryConsent.dataCategory.evidence_ids" as const;
     case "summary_template":

@@ -10,13 +10,13 @@
 
 首页保留三个主要入口和历史记录，但路线状态不同：
 
-| 模式     | 路线状态         | 默认输入                                             | 首要输出                                    |
-| -------- | ---------------- | ---------------------------------------------------- | ------------------------------------------- |
-| 总结模式 | Current/近期主线 | 粘贴文本、TXT/SRT/VTT 或本地录音文件转写；后续为文档 | 可编辑、可追溯、可复制/保存的 Markdown 纪要 |
-| 翻译模式 | Frozen/Deferred  | 若未来解冻，复用同一转录管线                         | 原文/译文字幕、阶段摘要和会后纪要           |
-| 会议模式 | Frozen/Deferred  | 若未来解冻，复用录音/转录与可选窗口上下文            | 阶段记录和同一 Summary pipeline 的最终纪要  |
+| 模式     | 路线状态         | 默认输入                                                | 首要输出                                    |
+| -------- | ---------------- | ------------------------------------------------------- | ------------------------------------------- |
+| 总结模式 | Current/近期主线 | 粘贴文本、TXT/SRT/VTT、本地录音转写；可选已解析参考文档 | 可编辑、可追溯、可复制/保存的 Markdown 纪要 |
+| 翻译模式 | Frozen/Deferred  | 若未来解冻，复用同一转录管线                            | 原文/译文字幕、阶段摘要和会后纪要           |
+| 会议模式 | Frozen/Deferred  | 若未来解冻，复用录音/转录与可选窗口上下文               | 阶段记录和同一 Summary pipeline 的最终纪要  |
 
-模式只是界面布局和能力默认值，不创建三套数据模型或状态机。未来解冻翻译或会议能力时，底层仍复用统一的来源、转录片段、快照、证据和摘要对象。schema v5 只为 DeepSeek 的“记住我的选择”增加最小 `provider_consent_preferences` 当前偏好表；schema v6 只在既有 transcript/frozen Summary 来源类型中增加 `imported_audio`。一次性确认仍是按 run 绑定、10 分钟有效、单次消费的 Rust 内存状态，不建立通用 Consent schema、任务表或审计事件模型。
+模式只是界面布局和能力默认值，不创建三套数据模型或状态机。未来解冻翻译或会议能力时，底层仍复用统一的来源、转录片段、快照、证据和摘要对象。schema v5 只为 DeepSeek 的“记住我的选择”增加最小 `provider_consent_preferences` 当前偏好表；schema v6 只增加 `imported_audio`；append-only schema v7 加入与 transcript 分离的 `document_chunks`、不可变 document snapshots 和 typed document evidence。一次性确认仍是按 run 绑定、10 分钟有效、单次消费的 Rust 内存状态；Consent v2 只把 document text/structure 加入固定披露/fingerprint，不建立通用 Consent schema、任务表或审计事件模型。
 
 `draft/recording/ready` 等内部状态只用于数据一致性和错误处理，普通用户界面必须使用“尚未开始、会议中、已结束、正在删除”等可理解文案；不得把内部枚举作为三个模式的主要导航或操作名称。
 
@@ -26,8 +26,9 @@
 进入总结模式
 → 粘贴、导入 TXT/SRT/VTT，或本地转写 WAV/MP3/M4A/含音轨 MP4
 → 预览并修正规范化 transcript segments
-→ 冻结最终纪要输入快照
-→ 确认第一次 DeepSeek 外发或使用已记住的选择
+→ 可选导入并明确本地解析参考文档
+→ 至少选择一个 transcript，可选已解析 documents，冻结两类输入快照
+→ 按 Consent v2 确认 DeepSeek 外发或使用已记住的选择
 → 生成、核验并修改正文
 → 复制或保存 Markdown
 → 保留或完整删除
@@ -41,26 +42,29 @@ Personal Edition 首先把总结模式做成真实可用闭环：
 
 1. 粘贴严格 UTF-8 文本、通过 Rust 原生选择器导入 TXT/SRT/VTT，或选择 WAV/MP3/M4A/含音轨 MP4 在本地批量转写。
 2. 预览片段、时间范围和已有说话人标签；允许手动修正标签。
-3. 选择纪要模板和输出语言，由 Rust 在本地创建 queued run 并冻结不可变快照；冻结不读取 Key 或发起网络。
-4. 第一次准备发送该快照时，显示固定外部 Provider 与冻结范围，并提供本次同意、记住我的选择或取消；没有有效确认时 fail closed。授权后从该快照生成会议纪要，关键决定、行动项和争议链接到原始片段。
-5. 查看纪要、修改正文、保存当前结果、复制或保存 Markdown；整份重新生成创建同一 series 的新 revision，不覆盖旧 revision。
-6. 日常可用闭环已由 PR #25 完成；当前加入录音文件本地批量转写。该功能经审查合并后才接入简化 Docling 编排与 document evidence；可选窗口上下文只有在用户确认真实需求后启动。
+3. 如有需要，导入 PDF/DOCX/PPTX/XLSX/TXT/MD/CSV/PNG/JPG/JPEG 并明确启动本地离线解析；document 是默认未选的可选 reference，不替代 transcript。
+4. 选择至少一个 transcript、可选已解析 documents、纪要模板和输出语言，由 Rust 在本地创建 queued run 并冻结两类不可变快照；combined ordinal 固定 transcript first，冻结不读取 Key 或发起网络。
+5. 第一次准备发送该快照时，显示固定外部 Provider、transcript 与 document 冻结范围及 Consent v2 八类数据，并提供本次同意、记住我的选择或取消；没有有效确认时 fail closed。授权后从该快照生成会议纪要，每个决定/行动项必须至少链接一条 transcript evidence，document evidence 只能补充背景。
+6. 查看纪要、修改正文、保存当前结果、复制或保存 Markdown；整份重新生成创建同一 series 的新 revision，不覆盖旧 revision。
+7. 日常 Summary 闭环和音频转写已由 PR #25/#26 完成；当前 PR #27 接入简化 Docling 编排与 document evidence。它经用户审查合并后，只有用户确认真实需要时才可选启动 window context。
 
-第一版不把 TXT/SRT/VTT 强制交给 Docling。参考文档与转录保持不同语义和信任边界；在 Docling 产品接线完成前，界面必须明确提示“参考材料尚未参与本次总结”。
+TXT/SRT/VTT transcript 不经过或重新经过 Docling。参考文档与转录保持不同语义和信任边界；文档默认未选，用户只有在当次 Summary run 中明确选择后才把冻结的规范化 document text/structure 纳入外发范围。
 
-计划中的简化 Docling 编排只负责调用已有 Worker、生成 document chunks/evidence、失败自动重试一次，并在再次失败时提示用户手动重新导入；当前不建设通用任务调度器、多级恢复、长期 checkpoint 或企业监控面板。
+当前简化 Docling 编排由 Rust 管理私有 per-attempt staging 与一次性无网络 Worker，复验后原子生成 document chunks。一次解析最多两次 attempt：只有 retryable 的第一次失败自动重试，第二次失败提示用户删除/重新导入。取消会终止进程树并清理；启动时遗留 `parsing` 安全失败而不重放。当前不建设通用任务调度器、多级恢复、长期 checkpoint 或企业监控面板。
 
-PR #20 已完成总结模式入口、粘贴/原生文本导入、来源/分页片段、正文和说话人显示名称修正。PR #21 的 schema v4 Run Core 保留 run/series/revision、完整正文快照、evidence allowlist 与 Rust zero-network Mock 历史基础；PR #24 完成 schema v5、固定 Rust DeepSeek Provider、SecretStore、严格结果校验、最小 Consent、取消和稳定错误；PR #25 已接通正式 Generate、五区结果/evidence、受限编辑、Markdown 复制/原生 Save As 和整份重新生成，并在合并后通过一次用户授权的极短纯合成 live smoke。当前 `feat/audio-file-transcription` 通过 schema v6、显式 Worker/模型 provisioning、本地 faster-whisper CPU int8、进度/取消/清理与原子 `imported_audio` 提交扩展同一输入管线。
+PR #20 已完成总结模式入口、粘贴/原生文本导入、来源/分页片段、正文和说话人显示名称修正。PR #21 的 schema v4 Run Core 保留 run/series/revision、完整正文快照、evidence allowlist 与 Rust zero-network Mock 历史基础；PR #24 完成 schema v5、固定 Rust DeepSeek Provider、SecretStore、严格结果校验、最小 Consent、取消和稳定错误；PR #25 已接通正式 Generate、五区结果/evidence、受限编辑、Markdown 复制/原生 Save As 和整份重新生成，并在合并后通过一次用户授权的极短纯合成 live smoke。PR #26 通过 schema v6、本地 faster-whisper CPU int8 与原子 `imported_audio` 提交扩展同一输入管线。当前 PR #27 追加 schema v7 并接入已完成的 Docling Worker，不创建第二套 transcript/Summary 模型。
 
-Run core 继续固定 `final/manual`，运行状态是 queued/running/completed/failed/cancelled；异常退出后遗留 running 以 `summary_interrupted` 失败恢复，queued 只能由用户明确继续或取消。集中式 `summaryApi` 固定为十六个方法：原十二个 run/policy/Consent commands，再增加精确 evidence、受限正文更新、canonical Markdown 获取和 Rust 原生 Markdown 保存。remembered Consent 不能触发页面加载、重启或后台自动发送。
+Run core 继续固定 `final/manual`，运行状态是 queued/running/completed/failed/cancelled；异常退出后遗留 running 以 `summary_interrupted` 失败恢复，queued 只能由用户明确继续或取消。集中式 `summaryApi` 只暴露固定 typed run/policy/Consent/evidence/edit/Markdown commands。remembered Consent 不能触发页面加载、重启或后台自动发送。
 
-结果契约保持 `overview/decisions/actionItems/risks/openQuestions` 五区。正文保存只 overlay 现有文本和行动项 owner/due date，以 Rust 派生 `contentVersion` 防止并发覆盖，不修改 evidence、状态、顺序或 Provider 元数据，也不增加 schema/migration。第一次实际编辑在当前 revision 内设置 `is_user_edited`；同 revision 不另存 Provider 原稿或编辑历史。旧 revision 继续可读，历史 Mock 严格只读；整份重新生成只允许 latest terminal DeepSeek revision。
+结果契约保持 `overview/decisions/actionItems/risks/openQuestions` 五区。正文保存只 overlay 现有文本和行动项 owner/due date，以 Rust 派生 `contentVersion` 防止并发覆盖，不修改 evidence、状态、顺序或 Provider 元数据。第一次实际编辑在当前 revision 内设置 `is_user_edited`；同 revision 不另存 Provider 原稿或编辑历史。旧 revision 继续可读，历史 Mock 严格只读；整份重新生成只允许 latest terminal DeepSeek revision。新 run 固定 `summary-deepseek-v2`；历史同 provider/mode/model 的 v1 terminal run 仍可作 parent，旧 revision 保留 v1 provenance，新 child 冻结当前 v2。
 
 Markdown 预览、显式剪贴板写入和原生 Save As 使用同一 Rust renderer；React 不读取剪贴板、不接收路径，也不执行模型 HTML。用户保存到应用外的 `.md` 和剪贴板副本不随会议删除。
 
-单个来源最多允许 20,000 个 segments，检查页面必须使用后端稳定分页且单页不超过 200 条，不能在 React 中加载全量后切片。单个 Summary run 跨来源最多冻结 20,000 个 final segments 和 10 MiB UTF-8 正文，超限、空输入、重复或跨 meeting source 整体拒绝，不截断。用户可以为当前 source 中相同 `speaker_label` 批量设置或清空 `speaker_name`；该操作保留原始 label、逐条递增 revision、不跨 source/meeting，也不是说话人分离、真实身份推断或跨会议声纹。
+单个 transcript source 最多允许 20,000 个 segments，检查页面必须使用后端稳定分页且单页不超过 200 条，不能在 React 中加载全量后切片。单个 Summary run 的 transcript segments 与可选 document chunks 合计最多 20,000 项和 10 MiB UTF-8 正文，并必须至少包含一个 transcript；超限、空 transcript、重复或跨 meeting source 整体拒绝，不截断。用户可以为当前 source 中相同 `speaker_label` 批量设置或清空 `speaker_name`；该操作保留原始 label、逐条递增 revision、不跨 source/meeting，也不是说话人分离、真实身份推断或跨会议声纹。
 
 音频入口每次只选一个 WAV/MP3/M4A/含音轨 MP4，最多 2 GiB/四小时；MP4 只处理音轨。Rust 持有原生路径、类型/音轨校验、私有 UUID staging、资源/超时/进度/并行取消、Worker 进程树和终态/启动清理；React 不接收路径、音频、Worker artifact 或音频 Command 返回的 segments。固定模型需通过脚本显式 provision 到仓库外，runtime 离线且不自动下载。失败/取消不留下部分 transcript，成功进入同一 Transcript Workspace 和 Summary pipeline。首版 speaker/confidence 为 null，不做 diarization。
+
+参考文档解析只支持源码 checkout 下的 debug/`tauri dev`。Docling 模型必须显式 provision 到仓库外 `%LOCALAPPDATA%\MeetingLens\docling\models\2.117.0`；它不位于普通 app-data，runtime 无网络且不自动下载。release Worker/model bundle、安装包和商业分发继续 Frozen。
 
 ### 3.2 翻译模式（Frozen/Deferred）
 
@@ -99,7 +103,7 @@ Windows 透明、置顶、点击穿透和多显示器浮窗、自动话题能力
 
 “不导出逐字稿文件”不等于完全不处理转录。规范化逐字稿默认只在本地保留，直到用户明确删除会话或执行其主动设置的保留策略；应用不得因纪要生成完毕而静默删除。若未来提供“不保存转录”的隐私模式，必须明确说明证据能力会降低，不能声称与完整模式等价。
 
-Summary run 的输入正文快照在普通编辑和重生成期间不可变；正文编辑只更新当前 completed result，重新生成重新读取 live transcript 并创建同一 series 的新 revision。segment 修正只把旧 run 标记 `segment_revised` stale，并允许 latest DeepSeek revision 由用户明确重生成。queued/running run 使用的 source 不能删除；terminal source 删除只保留结果实际引用的最小 evidence，清理完整正文快照并显示来源已删除，此后历史结果仍可查看/编辑/复制/保存但不能同 series regenerate。整场会议删除则协调清理全部 runs、snapshots 和 evidence，不清理用户保存到应用外的文件或剪贴板。
+Summary run 的 transcript/document 正文快照在普通编辑和重生成期间不可变；正文编辑只更新当前 completed result，重新生成重新读取 live transcript 与当次明确选择的 parsed documents，并创建同一 series 的新 revision。segment 修正只把旧 run 标记 `segment_revised` stale，并允许 latest DeepSeek revision 由用户明确重生成。queued/running run 使用的 transcript 或 document 不能删除；terminal source/document 删除清理完整 snapshot 正文与显示元数据，保留脱敏 evidence excerpt 和最小定位器并显示来源已删除，此后历史结果仍可查看/编辑/复制/保存但不能同 series regenerate。整场会议删除则协调清理全部 runs、两类 snapshots/evidence 与本地文档，不清理用户保存到应用外的文件或剪贴板。
 
 ## 5. 阶段摘要与 Structured Visuals（Frozen/Deferred）
 
@@ -110,7 +114,7 @@ Summary run 的输入正文快照在普通编辑和重生成期间不可变；�
 
 ## 6. 权限、隐私与降级
 
-应用启动时不自动申请录音或屏幕权限。当前最小 DeepSeek 外发确认由 Rust 执行最终授权：发送前必须说明固定 Provider、host、model、数据类型和冻结范围，并提供本次同意、记住我的选择或取消；没有有效确认、Key 或可发送输入时 fail closed。设置页可撤销 remembered Consent，撤销只影响后续发送且清除所有尚未消费的一次性确认。该状态只服务单人自用，不是企业合规审计体系。
+应用启动时不自动申请录音或屏幕权限。当前 Consent v2 由 Rust 执行 DeepSeek 最终授权：发送前必须说明固定 Provider、host、model、transcript text/structure、可选 document text/structure 和冻结范围，并提供本次同意、记住我的选择或取消；没有有效确认、Key 或至少一个 transcript 时 fail closed。只有用户主动 Generate 后才可发送；本地解析本身不外发。设置页可撤销 remembered Consent，撤销只影响后续发送且清除所有尚未消费的一次性确认。该状态只服务单人自用，不是企业合规审计体系。
 
 以下实时能力当前 Frozen/Deferred；未来如解冻，仍必须分别解释并分别获得本次会话同意：
 
@@ -141,7 +145,7 @@ Summary run 的输入正文快照在普通编辑和重生成期间不可变；�
 
 ## 8. 验收路径
 
-总结模式首个真实闭环：
+总结模式与可选参考文档的当前闭环：
 
 ```text
 打开应用
@@ -149,15 +153,17 @@ Summary run 的输入正文快照在普通编辑和重生成期间不可变；�
 → 粘贴/导入 TXT/SRT/VTT，或选择短合成 WAV/MP3/M4A/含音轨 MP4 本地转写
 → 查看进度（需要时取消并确认无部分来源/临时残留）
 → 预览并修正片段
-→ 确认外发范围
+→ 可选导入并明确解析一个合成 PDF/DOCX/PPTX/XLSX/TXT/MD/CSV/PNG/JPG/JPEG
+→ 选择至少一个 transcript、可选 parsed documents
+→ 确认 Consent v2 外发范围
 → 生成带证据的会议纪要
 → 查看、修改、复制或保存 Markdown
 → 重启后仍可查看
 → 删除后无本地残留
 ```
 
-PR #25 已达到原日常 Summary 闭环并通过一次用户授权的短合成 DeepSeek live smoke。当前 `feat/audio-file-transcription` 还必须在 Windows 11 以合成媒体完成 v5→v6、四种格式、picker cancel、Worker/model missing、progress/cancel/busy、类型/音轨/配额错误、进程树/staging 清理、重启恢复以及 `imported_audio` → 修正 → Summary 接入验收。翻译和独立会议模式保持 Frozen/Deferred；Mock 页面或 CI 不能替代本机验收。新的付费 DeepSeek 请求仍需用户针对当次请求明确批准。
+PR #25 已达到原日常 Summary 闭环并通过一次用户授权的短合成 DeepSeek live smoke；PR #26 的四格式本地音频转写已经完成。当前 PR #27 必须以合成文档验证 v6→v7、全部 allowlist 格式、显式 Parse、模型/Worker 缺失、retryable 一次重试、取消/重启恢复、进程树/staging 清理、document snapshots/evidence、Consent v2 与删除语义。翻译和独立会议模式保持 Frozen/Deferred；Mock 页面或 CI 不能替代 Windows 本机验收。新的付费 DeepSeek 请求仍需用户针对当次请求明确批准。
 
 ## 9. 交付顺序
 
-权威分支顺序、每个 PR 的停止线和风险分级验收见 `DEVELOPMENT_PLAN.md`。PR #23 Personal Edition、PR #24 DeepSeek/最小 Consent 和 PR #25 Summary Minutes 已完成；当前交付是 `feat/audio-file-transcription`。只有该功能经用户审查并决定合并后，下一阶段才是 `feat/document-parsing-orchestration` → 可选 `feat/window-context`。未来 PR 编号只表示预期顺序，分支名和能力范围才是权威标识。不得恢复独立 `feat/consent-data-core`；实时采集/ASR、说话人分离、实时翻译、checkpoint、浮窗、独立翻译/会议工作区、Structured Visuals、商业分发及 DOCX/PDF 保持 Frozen/Deferred。
+权威分支顺序、每个 PR 的停止线和风险分级验收见 `DEVELOPMENT_PLAN.md`。PR #23 Personal Edition、PR #24 DeepSeek/最小 Consent、PR #25 Summary Minutes 和 PR #26 Audio File Transcription 已完成；当前交付是 `feat/document-parsing-orchestration`（预期 PR #27）。只有该功能经用户审查并决定合并后，`feat/window-context` 才是唯一可选下一阶段，而且必须由用户确认实际经常需要。未来 PR 编号只表示预期顺序，分支名和能力范围才是权威标识。不得恢复独立 `feat/consent-data-core`；实时采集/ASR、说话人分离、实时翻译、checkpoint、浮窗、独立翻译/会议工作区、Structured Visuals、release packaging、商业分发及 DOCX/PDF 导出保持 Frozen/Deferred。
