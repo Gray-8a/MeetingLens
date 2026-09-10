@@ -558,6 +558,7 @@
       "label": "[E{{number}}]",
       "open": "打开 Evidence {{number}}",
       "speaker": "冻结的说话人",
+      "startTime": "转录起始时间",
       "ordinal": "来源段落",
       "kind": "Evidence 来源",
       "transcript": "转录",

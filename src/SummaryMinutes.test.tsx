@@ -871,7 +871,9 @@ describe("Summary Minutes workspace", () => {
         }),
       }),
     );
-    summaryApi.seedEvidence(syntheticSummaryEvidence());
+    summaryApi.seedEvidence(
+      syntheticSummaryEvidence({ startOffsetMs: 67_000, endOffsetMs: null }),
+    );
     const user = userEvent.setup();
     const { view } = renderMinutes({
       summaryApi,
@@ -887,6 +889,8 @@ describe("Summary Minutes workspace", () => {
       name: "Synthetic evidence",
     });
     expect(evidence).toHaveTextContent("Synthetic transcript evidence");
+    expect(evidence).toHaveTextContent("Start in transcript");
+    expect(evidence).toHaveTextContent("01:07");
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 

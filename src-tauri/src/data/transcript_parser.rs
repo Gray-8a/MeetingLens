@@ -8,6 +8,9 @@ const HASH_DOMAIN_CUES: &[u8] = b"meetinglens-transcript-cues-v1\0";
 const MAX_SPEAKER_LABEL_BYTES: usize = 200;
 const MAX_SPEAKER_LABEL_CHARS: usize = 80;
 
+#[path = "transcript_text_export.rs"]
+mod text_export;
+
 #[derive(Clone, PartialEq)]
 #[cfg_attr(test, derive(Debug))]
 pub(crate) struct ParsedTranscript {
@@ -53,10 +56,20 @@ pub(crate) fn parse(
 
     match source_type {
         TranscriptSourceType::PastedText | TranscriptSourceType::ImportedTxt => {
-            let segments = parse_plain_text(&normalized, policy)?;
+            let exported = text_export::parse_export(&normalized, policy)?;
+            let is_export = exported.is_some();
+            let segments = match exported {
+                Some(segments) => segments,
+                None => parse_plain_text(&normalized, policy)?,
+            };
             Ok(ParsedTranscript {
                 content_sha256: hash_plain(&normalized),
-                parser_name: "plain_text".to_string(),
+                parser_name: if is_export {
+                    "speaker_time_text"
+                } else {
+                    "plain_text"
+                }
+                .to_string(),
                 parser_version: "1".to_string(),
                 segments,
             })

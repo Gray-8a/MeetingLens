@@ -14,6 +14,7 @@ import {
 import i18n from "../i18n";
 import { summaryErrorMessage } from "../i18n/errors";
 import { formatLocalDate, formatNumber } from "../i18n/formatters";
+import { formatTranscriptOffset } from "../lib/transcriptPresentation";
 import { ErrorNotice, InfoNotice } from "./UiState";
 
 export interface SummaryResultViewProps {
@@ -518,6 +519,14 @@ export function SummaryResultView({
                       <dt>{t("summaryMinutes.evidence.speaker")}</dt>
                       <dd>
                         {evidence.speakerSnapshot ?? t("common.notAvailable")}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>{t("summaryMinutes.evidence.startTime")}</dt>
+                      <dd>
+                        {evidence.startOffsetMs === null
+                          ? t("common.notAvailable")
+                          : formatTranscriptOffset(evidence.startOffsetMs)}
                       </dd>
                     </div>
                   </>

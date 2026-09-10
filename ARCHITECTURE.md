@@ -1,5 +1,7 @@
 # MeetingLens 架构设计
 
+当前 `fix/transcript-turns` 修复已合并 PR #27 后的 TXT 分段问题：Rust 仅在至少两组一致的“姓名 / 中文时长与时钟 / 重复姓名与时长”标题建立格式后识别导出发言，写入既有 speaker_label/start_offset_ms；同秒发言保留，结束时间未知时为空。普通 TXT 保持原段落解析，未知正文和前言保留。Summary 继续冻结既有字段；Evidence 界面显示可用的起始时间，不新增 Provider 请求或来源读取权限。
+
 ## 1. 架构目标
 
 MeetingLens 当前采用 Personal Edition / 自用版基线：“轻量桌面壳 + 本地转录工作区 + Rust Summary 执行边界 + 本地数据库 + 按需受控 Worker + 可选外部 AI”。Tauri/Rust 控制系统权限、转录导入、SQLite、SecretStore、持久 Summary run 和 Provider 调用，React 负责交互；Python 只用于现有认证健康 Sidecar 和按功能启动的隔离 Worker。

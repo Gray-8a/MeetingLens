@@ -558,6 +558,7 @@
       "label": "[E{{number}}]",
       "open": "Open evidence {{number}}",
       "speaker": "Speaker snapshot",
+      "startTime": "Start in transcript",
       "ordinal": "Source paragraph",
       "kind": "Evidence source",
       "transcript": "Transcript",

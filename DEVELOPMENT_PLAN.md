@@ -421,12 +421,6 @@ PR #25 合并后的用户授权 live smoke 已用极短纯合成转录验证一�
 
 ## 14. 当前下一步
 
-当前任务是完成并审查 `feat/document-parsing-orchestration`：在 PR #26 的日常 Summary + 本地录音输入基线上，交付 schema v7、明确本地 Docling 解析、document chunks/evidence、可选 Summary reference、Consent v2、取消/中断恢复与删除协调。
+PR #27 已由用户确认合并。当前用户授权的修复分支为 `fix/transcript-turns`：仅修复中文说话人/时间导出 TXT 的分段、持久化起始时间和说话人，以及 Evidence 起始时间显示。普通 TXT/SRT/VTT 行为、schema v7、旧来源/快照、Provider 与 Consent 边界保持不变。使用纯合成回归与隔离 Windows 验收，完成后创建单一修复 PR、等待 CI 全绿并停在待审状态。
 
-该功能通过审查并由用户决定合并后，只有用户确认经常需要时才可开始的唯一可选下一阶段为：
-
-```text
-feat/window-context
-```
-
-在用户审查并明确决定是否合并当前功能前，不得创建或开始该可选分支。不得创建 `feat/consent-data-core`，不得在本 PR 顺带做 release packaging、商业分发、实时能力、DOCX/PDF 导出或其他 Frozen / Deferred 阶段。
+引用标签/就近展开、纪要阅读布局、模板抽取质量是后续独立审查方向，不混入本次 parser 修复。`feat/window-context` 仍只在用户确认经常需要时可选启动；不解冻实时功能、DOCX/PDF 导出或 release packaging。

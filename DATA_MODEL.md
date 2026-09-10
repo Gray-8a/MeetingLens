@@ -1,5 +1,7 @@
 # MeetingLens 数据模型
 
+`fix/transcript-turns` 不修改 schema v7 或既有 migration。识别出的中文说话人/时间导出文本记录 parser_name=`speaker_time_text`、parser_version=`1`，来源类型仍是 pasted_text/imported_txt。普通文本仍为 plain_text/1；规范化原文哈希和重复导入规则不变。发言起始时间写入既有 start_offset_ms，end_offset_ms 保持 NULL，不用下一发言推测结束时间。旧来源、用户修订及 Summary 快照不自动重写。
+
 ## 1. 设计原则
 
 MeetingLens 当前采用 Personal Edition 基线，近期只推进总结模式。本文件定义当前已实现的数据真相、状态和删除语义；翻译、实时能力和独立会议模式工作区为 Frozen / Deferred，未来如解冻也不得建立平行模型。
