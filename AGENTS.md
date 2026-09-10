@@ -100,6 +100,8 @@
 
 ## Personal Edition 产品基线与近期顺序
 
+- PR #27 已合并。当前用户授权 `fix/transcript-turns` 修复中文时间标题导出 TXT 的发言分段和 Evidence 起始时间显示；不重写旧来源/快照，不新增 schema/Provider/外发。其余阅读体验和模板质量改进分开审查；窗口上下文仍是需用户确认真实需求的可选功能。
+
 - MeetingLens 当前采用 Personal Edition / 自用版基线：Windows-first、local-first、transcript-first，优先让单个用户日常完成“粘贴或导入转录 → DeepSeek 生成纪要 → 查看和修改 → Markdown 复制或保存”。
 - PR #1–#26 已完成工程/安全基础、Personal Edition 重定基线、粘贴与 TXT/SRT/VTT 转录工作区、schema v4 Summary Run Core、schema v5 Rust-only DeepSeek Provider/SecretStore/最小外发 Consent、正式 Summary Minutes，以及 schema v6 `imported_audio` 本地音频批量转写。音频通过 Rust 原生选择/私有 staging、本地 faster-whisper CPU int8 一次性受控 Worker写入既有 transcript 模型；支持 WAV/MP3/M4A/含音轨 MP4。
 - 当前 `feat/document-parsing-orchestration` 追加 append-only schema v7，并将已有离线 Docling Worker 接入正式数据流：用户明确本地解析 PDF/DOCX/PPTX/XLSX/TXT/MD/CSV/PNG/JPG/JPEG，Rust 管理受控 staging、一次性无网络 Worker、进度/取消/清理与结果复验，原子写入独立 `document_chunks`。每次解析最多两次 attempt，只有 retryable 的第一次失败自动重试；重启安全失败并清理，不重放、不建立通用调度平台。

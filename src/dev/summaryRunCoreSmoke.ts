@@ -99,7 +99,7 @@ async function runFirstPass(
       primaryLanguage,
       displayName: "Synthetic summary smoke source",
       pastedText:
-        "Speaker 1: Synthetic opening point\n\nSpeaker 2: Synthetic follow-up point",
+        "Speaker One\n0 秒0:00\nSpeaker One 0 秒\nSynthetic opening point\nSpeaker Two\n1 分钟1:00\nSpeaker Two 1 分钟\nSynthetic follow-up point",
       language: primaryLanguage,
       baseStartedAt: "2026-08-07T00:00:00.000Z",
     }),
@@ -133,6 +133,10 @@ async function runFirstPass(
   requireCondition(evidence.totalCount >= 1);
   const frozenExcerpt = evidence.items[0]?.excerpt;
   requireCondition(frozenExcerpt !== undefined);
+  requireCondition(evidence.items[0]?.kind === "transcript");
+  requireCondition(evidence.items[0]?.speakerSnapshot === "Speaker One");
+  requireCondition(evidence.items[0]?.startOffsetMs === 0);
+  requireCondition(evidence.items[0]?.endOffsetMs === null);
 
   smokeCheckpoint = "stale-revision";
   const segments = await transcriptApi.listSegments(
@@ -142,6 +146,10 @@ async function runFirstPass(
   );
   const segment = segments.items[0];
   requireCondition(segment !== undefined);
+  requireCondition(segments.items.length === 2);
+  requireCondition(segment.speakerLabel === "Speaker One");
+  requireCondition(segment.startOffsetMs === 0);
+  requireCondition(segments.items[1]?.startOffsetMs === 60_000);
   requireCondition(frozenExcerpt === segment.originalText);
   await transcriptApi.updateSegment({
     meetingId: imported.meeting.id,

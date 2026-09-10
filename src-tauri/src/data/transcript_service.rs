@@ -912,6 +912,46 @@ mod tests {
     }
 
     #[test]
+    fn exported_txt_persists_turn_metadata_across_reopen_and_deduplicates() {
+        let (directory, meetings, meeting_id) = setup();
+        let body = "Alice Sample\n0 秒0:00\nAlice Sample 0 秒\nSynthetic opening.\nBob Example\n1 分钟1:00\nBob Example 1 分钟\nSynthetic follow-up.";
+        let source = imported_source(
+            meetings
+                .transcripts()
+                .import_txt(
+                    &meeting_id,
+                    input("Synthetic export", Some("synthetic.txt"), body.as_bytes()),
+                )
+                .unwrap(),
+        );
+        assert_eq!(source.parser_name, "speaker_time_text");
+        drop(meetings);
+        let reopened = MeetingService::initialize(&directory.0).unwrap();
+        let transcripts = reopened.transcripts();
+        let segments = transcripts.list_segments(&meeting_id, &source.id).unwrap();
+        assert_eq!(segments.len(), 2);
+        assert_eq!(segments[0].speaker_label.as_deref(), Some("Alice Sample"));
+        assert_eq!(segments[1].start_offset_ms, Some(60000));
+        assert_eq!(segments[1].end_offset_ms, None);
+        assert_eq!(segments[1].original_text, "Synthetic follow-up.");
+        assert_eq!(
+            transcripts
+                .import_txt(
+                    &meeting_id,
+                    input(
+                        "Synthetic duplicate",
+                        Some("synthetic.txt"),
+                        body.as_bytes()
+                    )
+                )
+                .unwrap(),
+            TranscriptImportOutcome::Duplicate {
+                source_id: source.id
+            }
+        );
+    }
+
+    #[test]
     fn returns_stable_duplicate_and_allows_same_hash_in_another_meeting() {
         let (_directory, meetings, meeting_id) = setup();
         let transcripts = meetings.transcripts();

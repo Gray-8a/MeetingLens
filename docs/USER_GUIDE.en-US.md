@@ -94,6 +94,8 @@ Meeting history remains available. Create meeting manually is an advanced previe
 
 The absolute source path never returns to the WebView, and the source file is not copied, changed, or deleted. TXT, SRT, and VTT use the bounded Rust parser, not Docling, the Python Sidecar, or external AI.
 
+Copied TXT or pasted exports with Chinese time headers can split into speaker turns automatically: at least two matching name, elapsed-time/clock, and repeated-name headers must establish the format. Consecutive timed turns by the same speaker are separated too. Ordinary prose still uses paragraphs and unknown content is retained. Transcript review shows speakers and start offsets; Summary evidence also shows the frozen start when available, without guessing end times. Existing transcripts and minutes do not change automatically. Create a new meeting and re-import to try the fix while keeping the original history; the same file in the same meeting still deduplicates.
+
 ### Transcribe a recording locally
 
 This workflow currently requires a source checkout and debug/`tauri dev` build. Release builds do not yet package or resolve the Worker/model and report audio transcription as unavailable.
